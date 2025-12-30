@@ -9,13 +9,13 @@ Unlike static HTML generators, this tool provides real-time updates as your Clau
 ## Installation
 
 ```bash
-uv tool install claude-code-live
+uv tool install git+https://github.com/tijszwinkels/claude-code-live
 ```
 
 Or run directly:
 
 ```bash
-uvx claude-code-live
+uvx git+https://github.com/tijszwinkels/claude-code-live
 ```
 
 ## Usage
