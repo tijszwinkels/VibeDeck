@@ -146,7 +146,8 @@
                 name: name,
                 container: container,
                 tab: tab,
-                messageCount: 0
+                messageCount: 0,
+                lastActivity: Date.now()
             };
             sessions.set(sessionId, session);
             updateSessionCount();
@@ -177,6 +178,39 @@
                     activeSessionId = null;
                 }
             }
+        }
+
+        function reorderTabs() {
+            // Sort sessions by lastActivity (most recent first)
+            const sortedSessions = Array.from(sessions.values()).sort((a, b) => b.lastActivity - a.lastActivity);
+
+            // FLIP animation: capture initial positions
+            const positions = new Map();
+            sortedSessions.forEach(session => {
+                positions.set(session.id, session.tab.getBoundingClientRect().left);
+            });
+
+            // Reorder tabs in DOM
+            sortedSessions.forEach(session => {
+                tabsContainer.appendChild(session.tab);
+            });
+
+            // FLIP animation: animate from old position to new
+            sortedSessions.forEach(session => {
+                const oldLeft = positions.get(session.id);
+                const newLeft = session.tab.getBoundingClientRect().left;
+                const deltaX = oldLeft - newLeft;
+
+                if (Math.abs(deltaX) > 1) {
+                    session.tab.style.transform = `translateX(${deltaX}px)`;
+                    session.tab.style.transition = 'none';
+
+                    requestAnimationFrame(() => {
+                        session.tab.style.transition = 'transform 0.3s ease';
+                        session.tab.style.transform = '';
+                    });
+                }
+            });
         }
 
         function switchToSession(sessionId, scrollToBottom = false) {
@@ -216,6 +250,12 @@
                 session.container.appendChild(msg);
                 processNewElement(msg);
                 session.messageCount++;
+
+                // Update last activity and reorder tabs (only after catchup)
+                if (catchupComplete) {
+                    session.lastActivity = Date.now();
+                    reorderTabs();
+                }
 
                 // Prune old messages if over limit
                 while (session.container.children.length > MAX_MESSAGES) {

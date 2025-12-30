@@ -356,7 +356,7 @@ pre code { background: none; padding: 0; }
 .tab-bar { position: fixed; top: 40px; left: 0; right: 0; background: var(--card-bg); border-bottom: 1px solid #e0e0e0; display: flex; align-items: center; z-index: 999; padding: 0 8px; }
 .tabs { display: flex; overflow-x: auto; flex: 1; gap: 2px; scrollbar-width: none; -ms-overflow-style: none; }
 .tabs::-webkit-scrollbar { display: none; }
-.tab { display: flex; align-items: center; gap: 6px; padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; font-size: 0.85rem; color: var(--text-muted); transition: all 0.15s ease; position: relative; }
+.tab { display: flex; align-items: center; gap: 6px; padding: 10px 14px; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; font-size: 0.85rem; color: var(--text-muted); transition: all 0.15s ease, transform 0.3s ease; position: relative; }
 .tab:hover { background: rgba(0,0,0,0.04); color: var(--text-color); }
 .tab.active { color: var(--user-border); border-bottom-color: var(--user-border); font-weight: 500; }
 .tab .close-btn { opacity: 0; margin-left: 4px; padding: 2px 4px; border-radius: 3px; font-size: 0.75rem; line-height: 1; }
