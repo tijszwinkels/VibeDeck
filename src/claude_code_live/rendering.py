@@ -366,6 +366,10 @@ pre code { background: none; padding: 0; }
 .auto-follow input { margin: 0; cursor: pointer; }
 .auto-follow:hover { color: var(--text-color); }
 .auto-follow.active { color: var(--user-border); }
+.tab-bar-right { display: flex; align-items: center; gap: 8px; }
+.search-input { padding: 6px 10px; border: 1px solid #e0e0e0; border-radius: 4px; font-size: 0.8rem; width: 150px; outline: none; }
+.search-input:focus { border-color: var(--user-border); box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.1); }
+.search-input::placeholder { color: var(--text-muted); }
 /* Session containers */
 .session-container { display: none; }
 .session-container.active { display: block; }

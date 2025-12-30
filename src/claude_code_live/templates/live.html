@@ -16,10 +16,13 @@
     </div>
     <div class="tab-bar" id="tab-bar">
         <div class="tabs" id="tabs"></div>
-        <label class="auto-follow" id="auto-follow-label">
-            <input type="checkbox" id="auto-follow" checked>
-            Auto-follow
-        </label>
+        <div class="tab-bar-right">
+            <input type="text" id="search-input" placeholder="Search..." class="search-input">
+            <label class="auto-follow" id="auto-follow-label">
+                <input type="checkbox" id="auto-follow" checked>
+                Auto-follow
+            </label>
+        </div>
     </div>
     <div class="container">
         <h1>Claude Code Live</h1>
@@ -34,6 +37,7 @@
         const sessionInfo = document.getElementById('session-info');
         const autoFollowCheckbox = document.getElementById('auto-follow');
         const autoFollowLabel = document.getElementById('auto-follow-label');
+        const searchInput = document.getElementById('search-input');
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
@@ -56,6 +60,30 @@
         }
         autoFollowCheckbox.addEventListener('change', updateAutoFollowUI);
         updateAutoFollowUI();
+
+        // Search functionality
+        function filterTabs(query) {
+            const lowerQuery = query.toLowerCase().trim();
+            sessions.forEach(function(session) {
+                if (!lowerQuery) {
+                    // No search query - show all tabs
+                    session.tab.style.display = '';
+                    return;
+                }
+
+                // Search in session name
+                const nameMatch = session.name.toLowerCase().includes(lowerQuery);
+
+                // Search in session content (text content of messages)
+                const contentMatch = session.container.textContent.toLowerCase().includes(lowerQuery);
+
+                session.tab.style.display = (nameMatch || contentMatch) ? '' : 'none';
+            });
+        }
+
+        searchInput.addEventListener('input', function() {
+            filterTabs(this.value);
+        });
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
