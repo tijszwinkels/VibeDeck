@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 MAX_SESSIONS = 10
+CATCHUP_TIMEOUT = 30  # seconds - max time for catchup before telling client to reinitialize
 
 
 @dataclass
@@ -62,10 +64,19 @@ class SessionInfo:
 
 # Global state
 _sessions: dict[str, SessionInfo] = {}  # session_id -> SessionInfo
+_sessions_lock: asyncio.Lock | None = None  # Protects _sessions during iteration
 _clients: set[asyncio.Queue] = set()
 _watch_task: asyncio.Task | None = None
 _projects_dir: Path | None = None
 _known_session_files: set[Path] = set()  # Track known files to detect new ones
+
+
+def _get_sessions_lock() -> asyncio.Lock:
+    """Get or create the sessions lock (must be created in event loop context)."""
+    global _sessions_lock
+    if _sessions_lock is None:
+        _sessions_lock = asyncio.Lock()
+    return _sessions_lock
 
 
 def get_projects_dir() -> Path:
@@ -207,11 +218,12 @@ async def check_for_new_sessions() -> None:
         if f.name.startswith("agent-"):
             continue
         if f not in _known_session_files:
-            info, evicted_id = add_session(f)
-            if evicted_id:
-                await broadcast_session_removed(evicted_id)
-            if info:
-                await broadcast_session_added(info)
+            async with _get_sessions_lock():
+                info, evicted_id = add_session(f)
+                if evicted_id:
+                    await broadcast_session_removed(evicted_id)
+                if info:
+                    await broadcast_session_added(info)
 
 
 async def watch_loop() -> None:
@@ -235,26 +247,27 @@ async def watch_loop() -> None:
                 if changed_path.name.startswith("agent-"):
                     continue
 
-                if change_type == watchfiles.Change.added:
-                    # New session file
-                    info, evicted_id = add_session(changed_path)
-                    if evicted_id:
-                        await broadcast_session_removed(evicted_id)
-                    if info:
-                        await broadcast_session_added(info)
-
-                elif change_type == watchfiles.Change.modified:
-                    # Existing file modified
-                    session_id = get_session_id(changed_path)
-                    if session_id in _sessions:
-                        await process_session_messages(session_id)
-                    elif changed_path not in _known_session_files:
-                        # File we haven't seen - might be new
+                async with _get_sessions_lock():
+                    if change_type == watchfiles.Change.added:
+                        # New session file
                         info, evicted_id = add_session(changed_path)
                         if evicted_id:
                             await broadcast_session_removed(evicted_id)
                         if info:
                             await broadcast_session_added(info)
+
+                    elif change_type == watchfiles.Change.modified:
+                        # Existing file modified
+                        session_id = get_session_id(changed_path)
+                        if session_id in _sessions:
+                            await process_session_messages(session_id)
+                        elif changed_path not in _known_session_files:
+                            # File we haven't seen - might be new
+                            info, evicted_id = add_session(changed_path)
+                            if evicted_id:
+                                await broadcast_session_removed(evicted_id)
+                            if info:
+                                await broadcast_session_added(info)
 
     except asyncio.CancelledError:
         logger.info("Watch loop cancelled")
@@ -320,19 +333,38 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
         }
 
         # Send existing messages for each session (catchup)
-        for session_id, info in _sessions.items():
-            existing = info.tailer.read_all()
-            for entry in existing:
-                html = render_message(entry)
-                if html:
-                    yield {
-                        "event": "message",
-                        "data": json.dumps({
-                            "type": "html",
-                            "content": html,
-                            "session_id": session_id,
-                        }),
-                    }
+        # Hold lock to prevent _sessions modification during iteration
+        catchup_start = time.monotonic()
+        catchup_timed_out = False
+
+        async with _get_sessions_lock():
+            for session_id, info in _sessions.items():
+                existing = info.tailer.read_all()
+                for entry in existing:
+                    # Check if catchup is taking too long (slow client)
+                    if time.monotonic() - catchup_start > CATCHUP_TIMEOUT:
+                        catchup_timed_out = True
+                        break
+                    html = render_message(entry)
+                    if html:
+                        yield {
+                            "event": "message",
+                            "data": json.dumps({
+                                "type": "html",
+                                "content": html,
+                                "session_id": session_id,
+                            }),
+                        }
+                if catchup_timed_out:
+                    break
+
+        if catchup_timed_out:
+            logger.warning("Catchup timeout - client too slow, requesting reinitialize")
+            yield {
+                "event": "reinitialize",
+                "data": json.dumps({"reason": "catchup_timeout"}),
+            }
+            return
 
         # Signal catchup complete
         yield {"event": "catchup_complete", "data": "{}"}

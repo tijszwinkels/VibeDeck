@@ -383,6 +383,13 @@
                 // Keep-alive, no action needed
             });
 
+            eventSource.addEventListener('reinitialize', function(e) {
+                // Server requested we reconnect (e.g., catchup took too long)
+                console.warn('Server requested reinitialize:', JSON.parse(e.data));
+                eventSource.close();
+                setTimeout(connect, 1000);  // Reconnect after brief delay
+            });
+
             eventSource.onopen = function() {
                 updateStatus('', 'Connected');
             };
