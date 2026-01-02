@@ -17,10 +17,11 @@
     <div class="tab-bar" id="tab-bar">
         <div class="tabs" id="tabs"></div>
         <div class="tab-bar-right">
+            <button class="new-session-btn" id="new-session-btn" title="New session">+</button>
             <input type="text" id="search-input" placeholder="Search..." class="search-input">
             <label class="auto-follow" id="auto-follow-label">
                 <input type="checkbox" id="auto-follow" checked>
-                Auto-follow
+                <span>Auto-follow</span>
             </label>
         </div>
     </div>
@@ -38,12 +39,14 @@
             ></textarea>
             <div class="input-status" id="input-status"></div>
         </div>
-        <button class="send-btn" id="send-btn">
-            <span>Send</span>
-        </button>
-        <button class="interrupt-btn hidden" id="interrupt-btn">
-            <span>Stop</span>
-        </button>
+        <div class="input-bar-buttons">
+            <button class="send-btn" id="send-btn">
+                <span>Send</span>
+            </button>
+            <button class="interrupt-btn hidden" id="interrupt-btn">
+                <span>Stop</span>
+            </button>
+        </div>
     </div>
     <script>
     (function() {
@@ -60,6 +63,7 @@
         const inputStatus = document.getElementById('input-status');
         const sendBtn = document.getElementById('send-btn');
         const interruptBtn = document.getElementById('interrupt-btn');
+        const newSessionBtn = document.getElementById('new-session-btn');
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
@@ -226,6 +230,38 @@
 
         sendBtn.addEventListener('click', sendMessage);
         interruptBtn.addEventListener('click', interruptSession);
+
+        // New session functionality
+        async function startNewSession() {
+            newSessionBtn.disabled = true;
+            try {
+                // Get cwd from active session if available
+                const activeSession = activeSessionId ? sessions.get(activeSessionId) : null;
+                const body = {};
+                if (activeSession && activeSession.name) {
+                    body.from_session = activeSessionId;
+                }
+
+                const response = await fetch('/sessions/new', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    alert('Error: ' + (data.detail || 'Failed to start new session'));
+                }
+                // Session will appear via SSE when it's created
+            } catch (e) {
+                alert('Error: Failed to start new session');
+                console.error('New session error:', e);
+            } finally {
+                newSessionBtn.disabled = false;
+            }
+        }
+
+        newSessionBtn.addEventListener('click', startNewSession);
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;

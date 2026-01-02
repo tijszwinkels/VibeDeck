@@ -55,6 +55,35 @@ class SendMessageRequest(BaseModel):
     message: str
 
 
+class NewSessionRequest(BaseModel):
+    """Request body for starting a new session."""
+    from_session: str | None = None
+
+
+def get_working_dir_from_session(session_path: Path) -> Path | None:
+    """Extract the working directory from a session path.
+
+    Session paths look like:
+    ~/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl
+
+    The folder name uses dashes for path separators.
+    """
+    import urllib.parse
+
+    folder = session_path.parent.name
+    folder = urllib.parse.unquote(folder)
+
+    # Convert dash-separated path back to real path
+    # The path starts with a dash (e.g., "-Users-..." -> "/Users/...")
+    if folder.startswith("-"):
+        potential_path = folder.replace("-", "/")
+        path = Path(potential_path)
+        if path.exists() and path.is_dir():
+            return path
+
+    return None
+
+
 @dataclass
 class SessionInfo:
     """Information about a tracked session."""
@@ -594,6 +623,54 @@ async def interrupt_session(session_id: str) -> dict:
     await broadcast_session_status(session_id)
 
     return {"status": "interrupted", "session_id": session_id}
+
+
+@app.post("/sessions/new")
+async def create_new_session(request: NewSessionRequest) -> dict:
+    """Start a new Claude session."""
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    # Determine working directory
+    cwd: Path | None = None
+    if request.from_session:
+        info = _sessions.get(request.from_session)
+        if info:
+            cwd = get_working_dir_from_session(info.path)
+
+    # Build command
+    cmd_args = ["claude"]
+    if _skip_permissions:
+        cmd_args.append("--dangerously-skip-permissions")
+
+    try:
+        # Start Claude in the working directory
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            cwd=cwd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        # Don't wait for completion - the session will appear via file watcher
+        # Just check it started okay
+        await asyncio.sleep(0.5)
+        if proc.returncode is not None and proc.returncode != 0:
+            stderr = await proc.stderr.read() if proc.stderr else b""
+            logger.error(f"Claude failed to start: {stderr.decode()}")
+            raise HTTPException(status_code=500, detail="Failed to start Claude session")
+
+        return {"status": "started", "cwd": str(cwd) if cwd else None}
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="Claude CLI not found")
+    except Exception as e:
+        logger.error(f"Error starting new session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Legacy single-session API for backwards compatibility
