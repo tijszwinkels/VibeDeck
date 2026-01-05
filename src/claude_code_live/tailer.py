@@ -64,6 +64,32 @@ def get_session_id(session_path: Path) -> str:
     return session_path.stem
 
 
+def has_messages(session_path: Path) -> bool:
+    """Check if a session file has any user or assistant messages.
+
+    Args:
+        session_path: Path to the session JSONL file
+
+    Returns:
+        True if the session has at least one user or assistant message.
+    """
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") in ("user", "assistant"):
+                        return True
+                except json.JSONDecodeError:
+                    continue
+    except (FileNotFoundError, IOError):
+        pass
+    return False
+
+
 def get_first_user_message(session_path: Path, max_length: int = 200) -> str | None:
     """Read the first user message from a session file.
 

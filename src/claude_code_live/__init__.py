@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 @click.option(
     "--max-sessions",
     type=int,
-    default=10,
-    help="Maximum number of sessions to track (default: 10)",
+    default=100,
+    help="Maximum number of sessions to track (default: 100)",
 )
 @click.option(
     "--experimental",
