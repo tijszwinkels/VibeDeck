@@ -255,28 +255,82 @@ class TestGetSessionName:
     def test_extracts_project_name_with_dashes(self):
         """Test extraction of project name that contains dashes."""
         path = Path("/home/user/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl")
-        # Should preserve dashes in project name
-        assert get_session_name(path) == "claude-code-live"
+        # Returns tuple (name, path) - fallback since path doesn't exist
+        name, project_path = get_session_name(path)
+        assert name == "Users-tijs-projects-claude-code-live"
 
     def test_handles_simple_path(self):
         """Test with simple project path."""
         path = Path("/home/user/.claude/projects/-Users-tijs-projects-myproject/session.jsonl")
-        assert get_session_name(path) == "myproject"
+        name, project_path = get_session_name(path)
+        # Fallback since path doesn't exist
+        assert name == "Users-tijs-projects-myproject"
 
     def test_handles_tmp_path(self):
         """Test with tmp directory path."""
         path = Path("/home/user/.claude/projects/-Users-tijs-tmp-llm-council/session.jsonl")
-        assert get_session_name(path) == "llm-council"
+        name, project_path = get_session_name(path)
+        # Fallback since path doesn't exist
+        assert name == "Users-tijs-tmp-llm-council"
 
     def test_handles_nested_code_path(self):
         """Test with code directory path."""
         path = Path("/home/user/.claude/projects/-home-user-code-python-webapp/session.jsonl")
-        assert get_session_name(path) == "python-webapp"
+        name, project_path = get_session_name(path)
+        # Fallback since path doesn't exist
+        assert name == "home-user-code-python-webapp"
 
     def test_fallback_to_folder_name(self):
         """Test fallback when no markers found."""
         path = Path("/tmp/some-folder/session.jsonl")
         # Should handle gracefully
-        result = get_session_name(path)
-        assert result is not None
-        assert len(result) > 0
+        name, project_path = get_session_name(path)
+        assert name is not None
+        assert len(name) > 0
+
+    def test_resolves_existing_path(self):
+        """Test that existing paths are resolved correctly."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a test directory structure
+            tmppath = Path(tmpdir)
+            test_project = tmppath / "test_project"
+            test_project.mkdir()
+
+            # Simulate a Claude projects path pointing to the test_project
+            # The encoded path would be like -tmp-xxx-test_project
+            encoded_name = str(tmppath).replace("/", "-").lstrip("-") + "-test_project"
+            claude_projects = tmppath / ".claude" / "projects" / f"-{encoded_name}"
+            claude_projects.mkdir(parents=True)
+
+            session_file = claude_projects / "session.jsonl"
+            session_file.write_text('{"type": "user"}\n')
+
+            name, project_path = get_session_name(session_file)
+            # Should resolve to the actual directory
+            assert name == "test_project"
+            assert project_path == str(test_project)
+
+    def test_handles_underscores_in_path(self):
+        """Test that paths with underscores (encoded as dashes) are resolved."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            # Create a directory with underscores
+            test_project = tmppath / "my_cool_project"
+            test_project.mkdir()
+
+            # Simulate the Claude-encoded path (underscores become dashes)
+            encoded_name = str(tmppath).replace("/", "-").lstrip("-") + "-my-cool-project"
+            claude_projects = tmppath / ".claude" / "projects" / f"-{encoded_name}"
+            claude_projects.mkdir(parents=True)
+
+            session_file = claude_projects / "session.jsonl"
+            session_file.write_text('{"type": "user"}\n')
+
+            name, project_path = get_session_name(session_file)
+            # Should resolve to the actual directory with underscores
+            assert name == "my_cool_project"
+            assert project_path == str(test_project)

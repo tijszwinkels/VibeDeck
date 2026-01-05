@@ -509,10 +509,16 @@ async def create_new_session(request: NewSessionRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Determine working directory
+    # Determine working directory - create if it doesn't exist
     cwd: Path | None = None
     if request.cwd:
         potential_cwd = Path(request.cwd)
+        if not potential_cwd.exists():
+            try:
+                potential_cwd.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created directory: {potential_cwd}")
+            except OSError as e:
+                raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
         if potential_cwd.is_dir():
             cwd = potential_cwd
 

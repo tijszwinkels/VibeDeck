@@ -18,6 +18,7 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
     ~/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl
 
     The folder name encodes the original path with slashes replaced by dashes.
+    Additionally, underscores in directory names are also replaced with dashes.
     We check if decoded paths actually exist on the filesystem to find the
     correct project directory.
 
@@ -35,8 +36,10 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
     folder = folder.lstrip("-")
 
     # Try to find the actual directory by testing different dash positions
-    # Some dashes are path separators, some are part of directory names
+    # Some dashes are path separators, some are part of directory names,
+    # and some were originally underscores.
     # Strategy: try replacing each dash with / and see if the resulting path exists
+    # Also try replacing remaining dashes with underscores
 
     # Find all dash positions
     dash_positions = [i for i, c in enumerate(folder) if c == "-"]
@@ -54,6 +57,14 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
             candidate_path = "/" + "".join(candidate)
             if Path(candidate_path).is_dir():
                 return Path(candidate_path).name, candidate_path
+
+            # Also try with remaining dashes as underscores
+            candidate_with_underscores = [
+                "_" if c == "-" else c for c in candidate
+            ]
+            candidate_path_underscore = "/" + "".join(candidate_with_underscores)
+            if Path(candidate_path_underscore).is_dir():
+                return Path(candidate_path_underscore).name, candidate_path_underscore
 
     # Fallback: return the folder name as-is
     return folder or session_path.parent.name, folder

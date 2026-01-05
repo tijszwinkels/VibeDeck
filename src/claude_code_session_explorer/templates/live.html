@@ -26,7 +26,7 @@
                     <input type="checkbox" id="auto-switch" checked>
                     <span>Auto-switch</span>
                 </label>
-                <button class="new-session-btn" id="new-session-btn" title="New session">+ New</button>
+                <button class="new-session-btn" id="new-session-btn" title="New session in custom directory">+ New</button>
             </div>
         </div>
         <div class="project-list" id="project-list"></div>
@@ -423,26 +423,29 @@
         interruptBtn.addEventListener('click', interruptSession);
 
         // New session functionality
-        function createPendingSession() {
+        function createPendingSession(cwd, projectName) {
             pendingSessionCounter++;
             const pendingId = 'pending-' + pendingSessionCounter;
 
-            let cwd = null;
-            if (activeSessionId) {
+            // Use provided cwd/projectName, or fall back to active session's project
+            if (!cwd && activeSessionId) {
                 const activeSession = sessions.get(activeSessionId);
                 if (activeSession && activeSession.cwd) {
                     cwd = activeSession.cwd;
+                    projectName = projectName || activeSession.projectName;
                 }
             }
 
-            const session = createSession(pendingId, 'New Session', 'Pending', null, null, null, null);
+            const displayProjectName = projectName || 'New Session';
+            const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd);
             session.pending = true;
             session.cwd = cwd;
 
             session.sidebarItem.classList.add('pending');
             session.container.innerHTML = '<div class="pending-session-placeholder">' +
-                '<p>Type a message below to start this Claude session</p>' +
-                '</div>';
+                '<p>Type a message below to start this Claude session' +
+                (cwd ? ' in <strong>' + escapeHtml(displayProjectName) + '</strong>' : '') +
+                '</p></div>';
 
             switchToSession(pendingId);
             messageInput.focus();
@@ -454,7 +457,32 @@
             }
         }
 
-        newSessionBtn.addEventListener('click', createPendingSession);
+        function promptForNewSession() {
+            // Get a default directory from active session if available
+            let defaultDir = '';
+            if (activeSessionId) {
+                const activeSession = sessions.get(activeSessionId);
+                if (activeSession && activeSession.cwd) {
+                    defaultDir = activeSession.cwd;
+                }
+            }
+
+            const dir = prompt('Enter working directory for new session:', defaultDir);
+            if (dir === null) return; // Cancelled
+
+            const trimmedDir = dir.trim();
+            if (!trimmedDir) {
+                alert('Please enter a directory path');
+                return;
+            }
+
+            // Extract project name from path (last component)
+            const projectName = trimmedDir.split('/').filter(s => s).pop() || 'New Session';
+
+            createPendingSession(trimmedDir, projectName);
+        }
+
+        newSessionBtn.addEventListener('click', promptForNewSession);
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
@@ -527,9 +555,14 @@
             return text.substring(0, maxLength) + '...';
         }
 
-        function getOrCreateProject(projectName) {
+        function getOrCreateProject(projectName, projectPath) {
             if (projects.has(projectName)) {
-                return projects.get(projectName);
+                const project = projects.get(projectName);
+                // Update path if we have a better one
+                if (projectPath && !project.path) {
+                    project.path = projectPath;
+                }
+                return project;
             }
 
             const projectItem = document.createElement('div');
@@ -538,19 +571,30 @@
                 <div class="project-header">
                     <span class="project-icon">&#9660;</span>
                     <span class="project-name">${escapeHtml(projectName)}</span>
+                    <button class="project-new-btn" title="New session in ${escapeHtml(projectName)}">+</button>
                 </div>
                 <div class="session-list"></div>
             `;
 
             const projectHeader = projectItem.querySelector('.project-header');
-            projectHeader.addEventListener('click', function() {
+            const projectNewBtn = projectItem.querySelector('.project-new-btn');
+
+            projectHeader.addEventListener('click', function(e) {
+                // Don't toggle when clicking the new button
+                if (e.target === projectNewBtn) return;
                 projectItem.classList.toggle('collapsed');
+            });
+
+            projectNewBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                createPendingSession(projectPath || null, projectName);
             });
 
             projectListContainer.appendChild(projectItem);
 
             const project = {
                 name: projectName,
+                path: projectPath || null,
                 sessions: new Set(),
                 lastActivity: 0,
                 element: projectItem,
@@ -561,7 +605,7 @@
             return project;
         }
 
-        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt) {
+        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath) {
             if (sessions.has(sessionId)) return sessions.get(sessionId);
 
             // Create container with session header
@@ -611,7 +655,7 @@
             });
 
             // Add to project
-            const project = getOrCreateProject(projectName || 'Unknown');
+            const project = getOrCreateProject(projectName || 'Unknown', projectPath);
             project.sessions.add(sessionId);
             project.sessionListElement.appendChild(sidebarItem);
 
@@ -626,7 +670,8 @@
                 messageCount: 0,
                 lastActivity: lastUpdatedAt ? lastUpdatedAt * 1000 : Date.now(),
                 startedAt: startedAt || null,
-                lastUpdatedAt: lastUpdatedAt || null
+                lastUpdatedAt: lastUpdatedAt || null,
+                cwd: projectPath || null
             };
             sessions.set(sessionId, session);
 
@@ -887,7 +932,8 @@
                         session.projectName,
                         session.firstMessage,
                         session.startedAt,
-                        session.lastUpdatedAt
+                        session.lastUpdatedAt,
+                        session.projectPath
                     );
                 });
                 reorderSidebar();
@@ -925,7 +971,8 @@
                         data.projectName,
                         data.firstMessage,
                         data.startedAt,
-                        data.lastUpdatedAt
+                        data.lastUpdatedAt,
+                        data.projectPath
                     );
 
                     if (wasPendingActive && session) {
@@ -938,7 +985,8 @@
                         data.projectName,
                         data.firstMessage,
                         data.startedAt,
-                        data.lastUpdatedAt
+                        data.lastUpdatedAt,
+                        data.projectPath
                     );
                     if (autoSwitch && session) {
                         switchToSession(data.id, true);
@@ -955,7 +1003,7 @@
                 const data = JSON.parse(e.data);
                 if (data.type === 'html' && data.session_id) {
                     if (!sessions.has(data.session_id)) {
-                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null);
+                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null);
                     }
                     appendMessage(data.session_id, data.content);
                 }
