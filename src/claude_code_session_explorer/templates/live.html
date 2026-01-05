@@ -841,8 +841,8 @@
             session.sidebarItem.classList.add('active');
             activeSessionId = sessionId;
 
-            // Clear unread state
-            session.sidebarItem.classList.remove('unread');
+            // Clear unread/waiting state
+            session.sidebarItem.classList.remove('unread', 'waiting');
             updateProjectUnreadState(session.projectName);
 
             // Update header title
@@ -857,23 +857,52 @@
             }
         }
 
+        function updateSessionWaitingState(sessionId) {
+            const session = sessions.get(sessionId);
+            if (!session) return;
+
+            const status = sessionStatus.get(sessionId);
+            const isWaiting = status && status.waiting_for_input;
+            const hasUnread = session.sidebarItem.classList.contains('unread') ||
+                              session.sidebarItem.classList.contains('waiting');
+
+            // Update session item: waiting takes precedence over unread
+            if (hasUnread && isWaiting) {
+                session.sidebarItem.classList.remove('unread');
+                session.sidebarItem.classList.add('waiting');
+            } else if (hasUnread && !isWaiting) {
+                session.sidebarItem.classList.remove('waiting');
+                session.sidebarItem.classList.add('unread');
+            }
+
+            // Update project state
+            updateProjectUnreadState(session.projectName);
+        }
+
         function updateProjectUnreadState(projectName) {
             const project = projects.get(projectName);
             if (!project) return;
 
-            // Check if any session in this project has unread messages
+            // Check if any session in this project has unread/waiting messages
             let hasUnread = false;
+            let hasWaiting = false;
             project.sessions.forEach(function(sessionId) {
                 const session = sessions.get(sessionId);
-                if (session && session.sidebarItem.classList.contains('unread')) {
-                    hasUnread = true;
+                if (session) {
+                    if (session.sidebarItem.classList.contains('waiting')) {
+                        hasWaiting = true;
+                    } else if (session.sidebarItem.classList.contains('unread')) {
+                        hasUnread = true;
+                    }
                 }
             });
 
-            if (hasUnread) {
+            // waiting takes precedence over unread for projects
+            project.element.classList.remove('unread', 'waiting');
+            if (hasWaiting) {
+                project.element.classList.add('waiting');
+            } else if (hasUnread) {
                 project.element.classList.add('unread');
-            } else {
-                project.element.classList.remove('unread');
             }
         }
 
@@ -905,9 +934,14 @@
                         project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
                     }
 
-                    // Mark as unread if not the active session
+                    // Mark as unread/waiting if not the active session
                     if (!isActiveSession) {
-                        session.sidebarItem.classList.add('unread');
+                        const status = sessionStatus.get(sessionId);
+                        if (status && status.waiting_for_input) {
+                            session.sidebarItem.classList.add('waiting');
+                        } else {
+                            session.sidebarItem.classList.add('unread');
+                        }
                         updateProjectUnreadState(session.projectName);
                     }
 
@@ -1089,11 +1123,14 @@
                 const data = JSON.parse(e.data);
                 sessionStatus.set(data.session_id, {
                     running: data.running,
-                    queued_messages: data.queued_messages
+                    queued_messages: data.queued_messages,
+                    waiting_for_input: data.waiting_for_input
                 });
                 if (data.session_id === activeSessionId) {
                     updateInputBarUI();
                 }
+                // Update waiting state on sidebar
+                updateSessionWaitingState(data.session_id);
             });
 
             eventSource.addEventListener('reinitialize', function(e) {

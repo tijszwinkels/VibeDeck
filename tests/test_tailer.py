@@ -132,6 +132,106 @@ class TestSessionTailer:
         messages = tailer.read_new_lines()
         assert messages == []
 
+    def test_waiting_for_input_after_assistant_text(self):
+        """Test that waiting_for_input is True after assistant text message."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # User sends a message
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "1",
+                "message": {"content": "Hello"}
+            }) + "\n")
+            # Assistant responds with text
+            f.write(json.dumps({
+                "type": "assistant",
+                "timestamp": "2",
+                "message": {"content": [{"type": "text", "text": "Hi there!"}]}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.read_new_lines()
+            assert tailer.waiting_for_input is True
+        finally:
+            path.unlink()
+
+    def test_waiting_for_input_false_after_tool_use(self):
+        """Test that waiting_for_input is False after assistant tool_use."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # User sends a message
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "1",
+                "message": {"content": "Run a command"}
+            }) + "\n")
+            # Assistant calls a tool
+            f.write(json.dumps({
+                "type": "assistant",
+                "timestamp": "2",
+                "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.read_new_lines()
+            assert tailer.waiting_for_input is False
+        finally:
+            path.unlink()
+
+    def test_waiting_for_input_false_after_user_input(self):
+        """Test that waiting_for_input is False after new user input."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # Assistant was waiting
+            f.write(json.dumps({
+                "type": "assistant",
+                "timestamp": "1",
+                "message": {"content": [{"type": "text", "text": "What would you like?"}]}
+            }) + "\n")
+            # User sends new input
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2",
+                "message": {"content": "Do something else"}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.read_new_lines()
+            assert tailer.waiting_for_input is False
+        finally:
+            path.unlink()
+
+    def test_waiting_for_input_false_after_tool_result(self):
+        """Test that waiting_for_input is False after tool_result (agent processing)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            # Assistant calls a tool
+            f.write(json.dumps({
+                "type": "assistant",
+                "timestamp": "1",
+                "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}
+            }) + "\n")
+            # Tool result comes back
+            f.write(json.dumps({
+                "type": "user",
+                "timestamp": "2",
+                "message": {"content": [{"type": "tool_result", "content": "file1.txt\nfile2.txt"}]}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.read_new_lines()
+            assert tailer.waiting_for_input is False
+        finally:
+            path.unlink()
+
 
 class TestFindMostRecentSession:
     """Tests for find_most_recent_session."""

@@ -118,7 +118,7 @@ async def broadcast_session_removed(session_id: str) -> None:
 
 
 async def broadcast_session_status(session_id: str) -> None:
-    """Broadcast session status (running state, queue size)."""
+    """Broadcast session status (running state, queue size, waiting state)."""
     info = get_session(session_id)
     if info is None:
         return
@@ -126,6 +126,7 @@ async def broadcast_session_status(session_id: str) -> None:
         "session_id": session_id,
         "running": info.process is not None,
         "queued_messages": len(info.message_queue),
+        "waiting_for_input": info.tailer.waiting_for_input,
     })
 
 
@@ -192,6 +193,10 @@ async def process_session_messages(session_id: str) -> None:
         html = render_message(entry)
         if html:
             await broadcast_message(session_id, html)
+
+    # Broadcast updated waiting state after processing messages
+    if new_entries:
+        await broadcast_session_status(session_id)
 
 
 async def check_for_new_sessions() -> None:

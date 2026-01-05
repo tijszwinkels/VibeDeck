@@ -156,6 +156,8 @@ class SessionTailer:
         self.buffer = ""  # Incomplete line buffer
         self.message_index = 0  # Count of messages yielded
         self._first_timestamp: str | None = None  # Cached first message timestamp
+        self._last_message_type: str | None = None  # 'assistant_text', 'assistant_tool', 'user', etc.
+        self._waiting_for_input: bool = False  # True when agent finished and waiting
 
     def get_first_timestamp(self) -> str | None:
         """Get the timestamp of the first message in the session."""
@@ -178,6 +180,55 @@ class SessionTailer:
         except (FileNotFoundError, IOError):
             pass
         return None
+
+    def _update_waiting_state(self, entry: dict) -> None:
+        """Update the waiting-for-input state based on a message entry.
+
+        Agent is waiting for input when the last message is an assistant
+        message with text content (not tool_use).
+        """
+        entry_type = entry.get("type")
+        message_data = entry.get("message", {})
+        content = message_data.get("content", [])
+
+        if entry_type == "assistant":
+            # Check the content type
+            if isinstance(content, list) and content:
+                last_content = content[-1] if content else {}
+                content_type = last_content.get("type", "") if isinstance(last_content, dict) else ""
+
+                if content_type == "tool_use":
+                    self._last_message_type = "assistant_tool"
+                    self._waiting_for_input = False
+                elif content_type == "text":
+                    self._last_message_type = "assistant_text"
+                    self._waiting_for_input = True
+                else:
+                    # thinking, etc - keep previous state
+                    pass
+            else:
+                self._last_message_type = "assistant_other"
+                self._waiting_for_input = False
+
+        elif entry_type == "user":
+            # Check if it's a tool result or actual user input
+            if isinstance(content, list) and content:
+                first_content = content[0] if content else {}
+                content_type = first_content.get("type", "") if isinstance(first_content, dict) else ""
+                if content_type == "tool_result":
+                    self._last_message_type = "user_tool_result"
+                    self._waiting_for_input = False
+                else:
+                    self._last_message_type = "user_input"
+                    self._waiting_for_input = False
+            elif isinstance(content, str):
+                self._last_message_type = "user_input"
+                self._waiting_for_input = False
+
+    @property
+    def waiting_for_input(self) -> bool:
+        """Check if the session is waiting for user input."""
+        return self._waiting_for_input
 
     def read_new_lines(self) -> list[dict]:
         """Read and parse new complete lines from the file.
@@ -217,6 +268,7 @@ class SessionTailer:
                 if entry_type in ("user", "assistant"):
                     results.append(obj)
                     self.message_index += 1
+                    self._update_waiting_state(obj)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse JSON line: {e}")
                 continue
@@ -228,10 +280,15 @@ class SessionTailer:
 
         Does NOT modify the current position - reads a fresh copy.
         Returns list of all parsed message objects.
+        Also updates the waiting_for_input state based on all messages.
         """
         # Create a fresh tailer to read from start without affecting our position
         fresh_tailer = SessionTailer(self.path)
-        return fresh_tailer.read_new_lines()
+        results = fresh_tailer.read_new_lines()
+        # Copy the waiting state from the fresh tailer
+        self._waiting_for_input = fresh_tailer._waiting_for_input
+        self._last_message_type = fresh_tailer._last_message_type
+        return results
 
 
 async def watch_file(path: Path, callback: Callable[[], None]) -> AsyncGenerator[None, None]:
