@@ -77,6 +77,7 @@
         let sendEnabled = false;  // Whether sending messages is enabled
         const sessionStatus = new Map();  // session_id -> {running, queued_messages}
         let pendingSessionCounter = 0;  // Counter for unique pending session IDs
+        const pendingMessages = [];  // Array of {sessionId, messageText, element} for placeholder messages
 
         // Update auto-follow UI
         function updateAutoFollowUI() {
@@ -190,6 +191,13 @@
                 return;
             }
 
+            // Create placeholder message immediately
+            const placeholder = createPlaceholderMessage(activeSessionId, message);
+
+            // Clear input immediately for better UX
+            messageInput.value = '';
+            autoResizeTextarea();
+
             try {
                 const response = await fetch('/sessions/' + activeSessionId + '/send', {
                     method: 'POST',
@@ -197,16 +205,25 @@
                     body: JSON.stringify({ message: message })
                 });
 
-                if (response.ok) {
-                    messageInput.value = '';
-                    autoResizeTextarea();
-                } else {
+                if (!response.ok) {
                     const data = await response.json();
                     alert('Error: ' + (data.detail || 'Failed to send message'));
+                    // Remove placeholder on error
+                    if (placeholder) {
+                        placeholder.element.remove();
+                        const idx = pendingMessages.indexOf(placeholder);
+                        if (idx > -1) pendingMessages.splice(idx, 1);
+                    }
                 }
             } catch (e) {
                 alert('Error: Failed to send message');
                 console.error('Send error:', e);
+                // Remove placeholder on error
+                if (placeholder) {
+                    placeholder.element.remove();
+                    const idx = pendingMessages.indexOf(placeholder);
+                    if (idx > -1) pendingMessages.splice(idx, 1);
+                }
             }
 
             updateInputBarUI();
@@ -532,6 +549,9 @@
             const msg = temp.firstElementChild;
 
             if (msg) {
+                // Check if this message matches a placeholder and remove it
+                removePlaceholderIfMatches(sessionId, msg);
+
                 session.container.appendChild(msg);
                 processNewElement(msg);
                 session.messageCount++;
@@ -569,6 +589,61 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function createPlaceholderMessage(sessionId, messageText) {
+            const session = sessions.get(sessionId);
+            if (!session) return null;
+
+            const timestamp = new Date().toISOString();
+            const msgId = 'placeholder-' + Date.now();
+
+            // Create placeholder HTML similar to real user message
+            const html = '<div class="message user placeholder-message" id="' + msgId + '">' +
+                '<div class="message-header">' +
+                '<span class="role-label">User</span>' +
+                '<time datetime="' + timestamp + '">Sending...</time>' +
+                '</div>' +
+                '<div class="message-content">' +
+                '<div class="user-content"><p>' + escapeHtml(messageText) + '</p></div>' +
+                '</div>' +
+                '</div>';
+
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+            const element = temp.firstElementChild;
+
+            // Add to session container
+            session.container.appendChild(element);
+
+            // Track the placeholder
+            const placeholder = { sessionId: sessionId, messageText: messageText, element: element };
+            pendingMessages.push(placeholder);
+
+            // Scroll to bottom
+            element.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+            return placeholder;
+        }
+
+        function removePlaceholderIfMatches(sessionId, messageElement) {
+            // Check if the incoming message matches any placeholder
+            // Look for user messages with matching content
+            const incomingContent = messageElement.querySelector('.user-content');
+            if (!incomingContent) return;  // Not a user message
+
+            const incomingText = incomingContent.textContent.trim();
+
+            for (let i = 0; i < pendingMessages.length; i++) {
+                const pending = pendingMessages[i];
+                if (pending.sessionId === sessionId && pending.messageText.trim() === incomingText) {
+                    // Found a match - remove the placeholder
+                    pending.element.remove();
+                    pendingMessages.splice(i, 1);
+                    return true;
+                }
+            }
+            return false;
         }
 
         function connect() {
