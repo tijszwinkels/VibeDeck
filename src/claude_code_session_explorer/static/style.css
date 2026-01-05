@@ -128,6 +128,8 @@ pre code { background: none; padding: 0; }
 .project-item.collapsed .project-icon { transform: rotate(-90deg); }
 .project-item.collapsed .session-list { display: none; }
 .project-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-header .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--user-border); flex-shrink: 0; display: none; }
+.project-item.unread > .project-header .unread-dot { display: block; }
 .project-new-btn { opacity: 0; padding: 2px 8px; border: 1px solid #e0e0e0; border-radius: 4px; background: var(--card-bg); color: var(--text-muted); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
 .project-header:hover .project-new-btn { opacity: 0.7; }
 .project-new-btn:hover { opacity: 1 !important; border-color: var(--user-border); color: var(--user-border); background: rgba(25, 118, 210, 0.05); }
@@ -139,6 +141,8 @@ pre code { background: none; padding: 0; }
 .session-item.active { background: rgba(25, 118, 210, 0.08); color: var(--user-border); border-left-color: var(--user-border); font-weight: 500; }
 .session-item.pending { font-style: italic; opacity: 0.7; }
 .session-item .session-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item .unread-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--user-border); flex-shrink: 0; margin-right: 6px; display: none; }
+.session-item.unread .unread-dot { display: block; }
 .session-item .close-btn { opacity: 0; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem; margin-left: 4px; }
 .session-item:hover .close-btn { opacity: 0.5; }
 .session-item .close-btn:hover { opacity: 1; background: rgba(0,0,0,0.1); }

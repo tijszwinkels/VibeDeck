@@ -570,6 +570,7 @@
             projectItem.innerHTML = `
                 <div class="project-header">
                     <span class="project-icon">&#9660;</span>
+                    <span class="unread-dot"></span>
                     <span class="project-name">${escapeHtml(projectName)}</span>
                     <button class="project-new-btn" title="New session in ${escapeHtml(projectName)}">+</button>
                 </div>
@@ -628,6 +629,7 @@
             sidebarItem.className = 'session-item';
             sidebarItem.dataset.session = sessionId;
             sidebarItem.innerHTML = `
+                <span class="unread-dot"></span>
                 <span class="session-title">${escapeHtml(displayTitle)}</span>
                 <span class="close-btn" title="Close">&times;</span>
             `;
@@ -799,6 +801,10 @@
             session.sidebarItem.classList.add('active');
             activeSessionId = sessionId;
 
+            // Clear unread state
+            session.sidebarItem.classList.remove('unread');
+            updateProjectUnreadState(session.projectName);
+
             // Update header title
             sessionTitleBar.textContent = session.displayTitle || session.name;
 
@@ -808,6 +814,26 @@
                 requestAnimationFrame(function() {
                     window.scrollTo(0, document.body.scrollHeight);
                 });
+            }
+        }
+
+        function updateProjectUnreadState(projectName) {
+            const project = projects.get(projectName);
+            if (!project) return;
+
+            // Check if any session in this project has unread messages
+            let hasUnread = false;
+            project.sessions.forEach(function(sessionId) {
+                const session = sessions.get(sessionId);
+                if (session && session.sidebarItem.classList.contains('unread')) {
+                    hasUnread = true;
+                }
+            });
+
+            if (hasUnread) {
+                project.element.classList.add('unread');
+            } else {
+                project.element.classList.remove('unread');
             }
         }
 
@@ -837,6 +863,12 @@
                     const project = projects.get(session.projectName);
                     if (project) {
                         project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
+                    }
+
+                    // Mark as unread if not the active session
+                    if (!isActiveSession) {
+                        session.sidebarItem.classList.add('unread');
+                        updateProjectUnreadState(session.projectName);
                     }
 
                     reorderSidebar();
