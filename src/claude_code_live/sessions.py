@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .tailer import SessionTailer, get_session_id, get_session_name
+from .tailer import SessionTailer, get_first_user_message, get_session_id, get_session_name
 
 if TYPE_CHECKING:
     pass
@@ -37,15 +37,26 @@ class SessionInfo:
     tailer: SessionTailer
     name: str = ""
     session_id: str = ""
+    project_name: str = ""
+    project_path: str = ""
+    first_message: str | None = None
     # Process management for sending messages
     process: asyncio.subprocess.Process | None = None
     message_queue: list[str] = field(default_factory=list)
 
     def __post_init__(self):
-        if not self.name:
-            self.name = get_session_name(self.path)
+        if not self.name or not self.project_name:
+            name, path = get_session_name(self.path)
+            if not self.name:
+                self.name = name
+            if not self.project_name:
+                self.project_name = name
+            if not self.project_path:
+                self.project_path = path
         if not self.session_id:
             self.session_id = get_session_id(self.path)
+        if self.first_message is None:
+            self.first_message = get_first_user_message(self.path)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -60,6 +71,9 @@ class SessionInfo:
             "id": self.session_id,
             "name": self.name,
             "path": str(self.path),
+            "projectName": self.project_name,
+            "projectPath": self.project_path,
+            "firstMessage": self.first_message,
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
         }

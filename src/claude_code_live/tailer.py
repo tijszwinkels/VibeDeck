@@ -11,15 +11,19 @@ import watchfiles
 logger = logging.getLogger(__name__)
 
 
-def get_session_name(session_path: Path) -> str:
-    """Extract a human-readable name from a session path.
+def get_session_name(session_path: Path) -> tuple[str, str]:
+    """Extract project name and path from a session path.
 
     Session paths look like:
     ~/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl
 
-    The folder name uses dashes for path separators, but project names can
-    also contain dashes. We use heuristics to find common directory markers
-    and extract the project name after them.
+    The folder name encodes the original path with slashes replaced by dashes.
+    We check if decoded paths actually exist on the filesystem to find the
+    correct project directory.
+
+    Returns:
+        Tuple of (project_name, project_path) where project_name is the
+        directory name and project_path is the full path.
     """
     # Get the parent folder name (the project identifier)
     folder = session_path.parent.name
@@ -27,28 +31,83 @@ def get_session_name(session_path: Path) -> str:
     # URL decode any percent-encoded chars first
     folder = urllib.parse.unquote(folder)
 
-    # Look for common directory markers and take everything after
-    # Order matters - check more specific patterns first
-    markers = ["-projects-", "-repos-", "-src-", "-code-", "-github-", "-tmp-", "-os-"]
-    for marker in markers:
-        if marker in folder:
-            # Take everything after the marker
-            project_name = folder.split(marker, 1)[1]
-            return project_name if project_name else folder
+    # Remove leading dash
+    folder = folder.lstrip("-")
 
-    # Fallback: try to extract after username pattern (-Users-xxx- or -home-xxx-)
-    import re
-    match = re.match(r"^-(?:Users|home)-[^-]+-(.+)$", folder)
-    if match:
-        return match.group(1)
+    # Try to find the actual directory by testing different dash positions
+    # Some dashes are path separators, some are part of directory names
+    # Strategy: try replacing each dash with / and see if the resulting path exists
 
-    # Last resort: return the folder name as-is (strip leading dash)
-    return folder.lstrip("-") or folder
+    # Find all dash positions
+    dash_positions = [i for i, c in enumerate(folder) if c == "-"]
+
+    # Try combinations of dashes that could be path separators
+    # Start with trying each individual dash position from the end
+    # (most likely the project name is at the end)
+    for num_path_seps in range(len(dash_positions), 0, -1):
+        # Try the last N dashes as path separators
+        for i in range(len(dash_positions) - num_path_seps + 1):
+            positions_to_replace = dash_positions[i : i + num_path_seps]
+            candidate = list(folder)
+            for pos in positions_to_replace:
+                candidate[pos] = "/"
+            candidate_path = "/" + "".join(candidate)
+            if Path(candidate_path).is_dir():
+                return Path(candidate_path).name, candidate_path
+
+    # Fallback: return the folder name as-is
+    return folder or session_path.parent.name, folder
 
 
 def get_session_id(session_path: Path) -> str:
     """Get the session ID (filename without extension)."""
     return session_path.stem
+
+
+def get_first_user_message(session_path: Path, max_length: int = 200) -> str | None:
+    """Read the first user message from a session file.
+
+    Args:
+        session_path: Path to the session JSONL file
+        max_length: Maximum length of message to return
+
+    Returns:
+        The first user message text, truncated to max_length, or None if not found.
+    """
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") == "user":
+                        content = entry.get("message", {}).get("content", [])
+
+                        # Content can be a string or a list of blocks
+                        if isinstance(content, str):
+                            # Skip command messages (start with <command-)
+                            if content.startswith("<command-"):
+                                continue
+                            text = content.strip()
+                            if text:
+                                return text[:max_length] if len(text) > max_length else text
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    text = block.get("text", "").strip()
+                                    if text:
+                                        return (
+                                            text[:max_length]
+                                            if len(text) > max_length
+                                            else text
+                                        )
+                except json.JSONDecodeError:
+                    continue
+    except (FileNotFoundError, IOError):
+        pass
+    return None
 
 
 class SessionTailer:

@@ -9,26 +9,38 @@
 <body>
     <div class="status-bar" id="status-bar">
         <div class="status-indicator">
+            <button class="hamburger-btn" id="hamburger-btn" title="Toggle sidebar">&#9776;</button>
             <span class="status-dot"></span>
             <span id="status-text">Connecting...</span>
         </div>
         <div id="session-info">last 10 sessions</div>
     </div>
-    <div class="tab-bar" id="tab-bar">
-        <div class="tabs" id="tabs"></div>
-        <div class="tab-bar-right">
-            <button class="new-session-btn" id="new-session-btn" title="New session">+</button>
-            <input type="text" id="search-input" placeholder="Search..." class="search-input">
-            <label class="auto-follow" id="auto-follow-label">
-                <input type="checkbox" id="auto-follow" checked>
-                <span>Auto-follow</span>
-            </label>
+
+    <!-- Sidebar -->
+    <div class="sidebar-overlay" id="sidebar-overlay"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <input type="text" id="sidebar-search" placeholder="Search sessions..." class="sidebar-search">
+            <div class="sidebar-controls">
+                <label class="auto-switch" id="auto-switch-label">
+                    <input type="checkbox" id="auto-switch" checked>
+                    <span>Auto-switch</span>
+                </label>
+                <button class="new-session-btn" id="new-session-btn" title="New session">+ New</button>
+            </div>
+        </div>
+        <div class="project-list" id="project-list"></div>
+    </div>
+
+    <!-- Main content -->
+    <div class="main-content" id="main-content">
+        <div class="container">
+            <h1>Claude Code Live</h1>
+            <div id="sessions"></div>
         </div>
     </div>
-    <div class="container">
-        <h1>Claude Code Live</h1>
-        <div id="sessions"></div>
-    </div>
+
+    <!-- Input bar -->
     <div class="input-bar hidden" id="input-bar">
         <div class="input-bar-left">
             <textarea
@@ -48,71 +60,149 @@
             </button>
         </div>
     </div>
+
+    <!-- Session tooltip (hidden, shown on hover) -->
+    <div class="session-tooltip" id="session-tooltip" style="display: none;"></div>
+
     <script>
     (function() {
+        // DOM elements
         const sessionsContainer = document.getElementById('sessions');
-        const tabsContainer = document.getElementById('tabs');
+        const projectListContainer = document.getElementById('project-list');
         const statusBar = document.getElementById('status-bar');
         const statusText = document.getElementById('status-text');
         const sessionInfo = document.getElementById('session-info');
-        const autoFollowCheckbox = document.getElementById('auto-follow');
-        const autoFollowLabel = document.getElementById('auto-follow-label');
-        const searchInput = document.getElementById('search-input');
+        const sidebar = document.getElementById('sidebar');
+        const sidebarOverlay = document.getElementById('sidebar-overlay');
+        const hamburgerBtn = document.getElementById('hamburger-btn');
+        const autoSwitchCheckbox = document.getElementById('auto-switch');
+        const autoSwitchLabel = document.getElementById('auto-switch-label');
+        const searchInput = document.getElementById('sidebar-search');
         const inputBar = document.getElementById('input-bar');
+        const mainContent = document.getElementById('main-content');
         const messageInput = document.getElementById('message-input');
         const inputStatus = document.getElementById('input-status');
         const sendBtn = document.getElementById('send-btn');
         const interruptBtn = document.getElementById('interrupt-btn');
         const newSessionBtn = document.getElementById('new-session-btn');
+        const sessionTooltip = document.getElementById('session-tooltip');
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
+        const MAX_TITLE_LENGTH = 50;
 
         // State
-        const sessions = new Map();  // session_id -> {name, container, messageCount, unread}
+        const sessions = new Map();  // session_id -> session object
+        const projects = new Map();  // project_name -> { name, sessions: Set, lastActivity, element }
         let activeSessionId = null;
-        let autoFollow = true;
-        let autoFollowDebounce = null;
-        let catchupComplete = false;  // Don't auto-follow during initial catchup
-        let sendEnabled = false;  // Whether sending messages is enabled
-        const sessionStatus = new Map();  // session_id -> {running, queued_messages}
-        let pendingSessionCounter = 0;  // Counter for unique pending session IDs
-        const pendingMessages = [];  // Array of {sessionId, messageText, element} for placeholder messages
+        let sidebarOpen = localStorage.getItem('sidebarOpen') !== 'false';  // default open
+        let autoSwitch = localStorage.getItem('autoSwitch') !== 'false';    // default on
+        let autoScroll = localStorage.getItem('autoScroll') !== 'false';    // default on
+        let autoSwitchDebounce = null;
+        let catchupComplete = false;
+        let sendEnabled = false;
+        const sessionStatus = new Map();
+        let pendingSessionCounter = 0;
+        const pendingMessages = [];
+        let tooltipTimeout = null;
 
-        // Update auto-follow UI
-        function updateAutoFollowUI() {
-            autoFollow = autoFollowCheckbox.checked;
-            if (autoFollow) {
-                autoFollowLabel.classList.add('active');
-            } else {
-                autoFollowLabel.classList.remove('active');
-            }
+        // Check if mobile
+        function isMobile() {
+            return window.innerWidth <= 768;
         }
-        autoFollowCheckbox.addEventListener('change', updateAutoFollowUI);
-        updateAutoFollowUI();
+
+        // Sidebar toggle
+        function updateSidebarState() {
+            if (sidebarOpen) {
+                sidebar.classList.remove('closed');
+                mainContent.classList.remove('sidebar-closed');
+                inputBar.classList.remove('sidebar-closed');
+                if (isMobile()) {
+                    sidebarOverlay.classList.add('visible');
+                }
+            } else {
+                sidebar.classList.add('closed');
+                mainContent.classList.add('sidebar-closed');
+                inputBar.classList.add('sidebar-closed');
+                sidebarOverlay.classList.remove('visible');
+            }
+            localStorage.setItem('sidebarOpen', sidebarOpen);
+        }
+
+        function toggleSidebar() {
+            sidebarOpen = !sidebarOpen;
+            updateSidebarState();
+        }
+
+        hamburgerBtn.addEventListener('click', toggleSidebar);
+        sidebarOverlay.addEventListener('click', function() {
+            sidebarOpen = false;
+            updateSidebarState();
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (!isMobile()) {
+                sidebarOverlay.classList.remove('visible');
+            } else if (sidebarOpen) {
+                sidebarOverlay.classList.add('visible');
+            }
+        });
+
+        // Initialize sidebar state
+        updateSidebarState();
+
+        // Auto-switch UI
+        function updateAutoSwitchUI() {
+            autoSwitch = autoSwitchCheckbox.checked;
+            if (autoSwitch) {
+                autoSwitchLabel.classList.add('active');
+            } else {
+                autoSwitchLabel.classList.remove('active');
+            }
+            localStorage.setItem('autoSwitch', autoSwitch);
+        }
+        autoSwitchCheckbox.checked = autoSwitch;
+        autoSwitchCheckbox.addEventListener('change', updateAutoSwitchUI);
+        updateAutoSwitchUI();
 
         // Search functionality
-        function filterTabs(query) {
+        function filterSidebar(query) {
             const lowerQuery = query.toLowerCase().trim();
-            sessions.forEach(function(session) {
-                if (!lowerQuery) {
-                    // No search query - show all tabs
-                    session.tab.style.display = '';
-                    return;
+
+            projects.forEach(function(project) {
+                let projectHasMatch = false;
+
+                project.sessions.forEach(function(sessionId) {
+                    const session = sessions.get(sessionId);
+                    if (!session) return;
+
+                    if (!lowerQuery) {
+                        session.sidebarItem.style.display = '';
+                        projectHasMatch = true;
+                        return;
+                    }
+
+                    const titleMatch = (session.displayTitle || '').toLowerCase().includes(lowerQuery);
+                    const projectMatch = project.name.toLowerCase().includes(lowerQuery);
+                    const contentMatch = session.container.textContent.toLowerCase().includes(lowerQuery);
+
+                    if (titleMatch || projectMatch || contentMatch) {
+                        session.sidebarItem.style.display = '';
+                        projectHasMatch = true;
+                    } else {
+                        session.sidebarItem.style.display = 'none';
+                    }
+                });
+
+                if (project.element) {
+                    project.element.style.display = projectHasMatch ? '' : 'none';
                 }
-
-                // Search in session name
-                const nameMatch = session.name.toLowerCase().includes(lowerQuery);
-
-                // Search in session content (text content of messages)
-                const contentMatch = session.container.textContent.toLowerCase().includes(lowerQuery);
-
-                session.tab.style.display = (nameMatch || contentMatch) ? '' : 'none';
             });
         }
 
         searchInput.addEventListener('input', function() {
-            filterTabs(this.value);
+            filterSidebar(this.value);
         });
 
         // Send functionality
@@ -145,7 +235,6 @@
             const session = sessions.get(activeSessionId);
             const status = sessionStatus.get(activeSessionId) || { running: false, queued_messages: 0 };
 
-            // Handle pending session that is starting (waiting for real session to appear)
             if (session && session.pending && session.starting) {
                 inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
                 inputStatus.className = 'input-status running';
@@ -185,16 +274,12 @@
 
             sendBtn.disabled = true;
 
-            // Check if this is a pending (not yet started) session
             if (session.pending) {
                 await startPendingSession(session, message);
                 return;
             }
 
-            // Create placeholder message immediately
             const placeholder = createPlaceholderMessage(activeSessionId, message);
-
-            // Clear input immediately for better UX
             messageInput.value = '';
             autoResizeTextarea();
 
@@ -208,7 +293,6 @@
                 if (!response.ok) {
                     const data = await response.json();
                     alert('Error: ' + (data.detail || 'Failed to send message'));
-                    // Remove placeholder on error
                     if (placeholder) {
                         placeholder.element.remove();
                         const idx = pendingMessages.indexOf(placeholder);
@@ -218,7 +302,6 @@
             } catch (e) {
                 alert('Error: Failed to send message');
                 console.error('Send error:', e);
-                // Remove placeholder on error
                 if (placeholder) {
                     placeholder.element.remove();
                     const idx = pendingMessages.indexOf(placeholder);
@@ -230,7 +313,6 @@
         }
 
         async function startPendingSession(pendingSession, message) {
-            // Show loading state
             inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
             inputStatus.className = 'input-status running';
 
@@ -247,7 +329,6 @@
                 if (response.ok) {
                     messageInput.value = '';
                     autoResizeTextarea();
-                    // Mark this pending session as "starting" so we can merge it later
                     pendingSession.starting = true;
                     pendingSession.startedAt = Date.now();
                 } else {
@@ -288,7 +369,6 @@
             messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
         }
 
-        // Input event handlers
         messageInput.addEventListener('input', function() {
             autoResizeTextarea();
             updateInputBarUI();
@@ -306,12 +386,11 @@
         sendBtn.addEventListener('click', sendMessage);
         interruptBtn.addEventListener('click', interruptSession);
 
-        // New session functionality - creates a pending tab (Claude not started yet)
+        // New session functionality
         function createPendingSession() {
             pendingSessionCounter++;
             const pendingId = 'pending-' + pendingSessionCounter;
 
-            // Get cwd from active session if available
             let cwd = null;
             if (activeSessionId) {
                 const activeSession = sessions.get(activeSessionId);
@@ -320,22 +399,23 @@
                 }
             }
 
-            // Create the pending session in the UI
-            const session = createSession(pendingId, 'New Session', null, null);
+            const session = createSession(pendingId, 'New Session', 'Pending', null, null, null, null);
             session.pending = true;
             session.cwd = cwd;
 
-            // Add pending styling to the tab
-            session.tab.classList.add('pending');
-
-            // Show empty state in the container
+            session.sidebarItem.classList.add('pending');
             session.container.innerHTML = '<div class="pending-session-placeholder">' +
                 '<p>Type a message below to start this Claude session</p>' +
                 '</div>';
 
-            // Switch to the new pending session
             switchToSession(pendingId);
             messageInput.focus();
+
+            // Close sidebar on mobile after selecting
+            if (isMobile()) {
+                sidebarOpen = false;
+                updateSidebarState();
+            }
         }
 
         newSessionBtn.addEventListener('click', createPendingSession);
@@ -351,7 +431,6 @@
         }
 
         function processNewElement(element) {
-            // Localize timestamps
             element.querySelectorAll('time[data-timestamp]').forEach(function(el) {
                 const timestamp = el.getAttribute('data-timestamp');
                 const date = new Date(timestamp);
@@ -362,7 +441,6 @@
                 else { el.textContent = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + timeStr; }
             });
 
-            // Syntax highlight JSON
             element.querySelectorAll('pre.json').forEach(function(el) {
                 let text = el.textContent;
                 text = text.replace(/"([^"]+)":/g, '<span style="color: #ce93d8">"$1"</span>:');
@@ -372,7 +450,6 @@
                 el.innerHTML = text;
             });
 
-            // Setup truncatable content
             element.querySelectorAll('.truncatable').forEach(function(wrapper) {
                 const content = wrapper.querySelector('.truncatable-content');
                 const btn = wrapper.querySelector('.expand-btn');
@@ -406,51 +483,137 @@
             return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + timeStr;
         }
 
-        function updateTabTooltip(session) {
-            const started = formatTimestamp(session.startedAt);
-            const updated = formatTimestamp(session.lastUpdatedAt);
-            session.tab.title = 'Started: ' + started + '\nLast updated: ' + updated;
+        function truncateTitle(text, maxLength) {
+            if (!text) return 'Untitled';
+            // Remove newlines and excess whitespace
+            text = text.replace(/\s+/g, ' ').trim();
+            if (text.length <= maxLength) return text;
+            return text.substring(0, maxLength) + '...';
         }
 
-        function createSession(sessionId, name, startedAt, lastUpdatedAt) {
+        function getOrCreateProject(projectName) {
+            if (projects.has(projectName)) {
+                return projects.get(projectName);
+            }
+
+            const projectItem = document.createElement('div');
+            projectItem.className = 'project-item';
+            projectItem.innerHTML = `
+                <div class="project-header">
+                    <span class="project-icon">&#9660;</span>
+                    <span class="project-name">${escapeHtml(projectName)}</span>
+                </div>
+                <div class="session-list"></div>
+            `;
+
+            const projectHeader = projectItem.querySelector('.project-header');
+            projectHeader.addEventListener('click', function() {
+                projectItem.classList.toggle('collapsed');
+            });
+
+            projectListContainer.appendChild(projectItem);
+
+            const project = {
+                name: projectName,
+                sessions: new Set(),
+                lastActivity: 0,
+                element: projectItem,
+                sessionListElement: projectItem.querySelector('.session-list')
+            };
+            projects.set(projectName, project);
+
+            return project;
+        }
+
+        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt) {
             if (sessions.has(sessionId)) return sessions.get(sessionId);
 
-            // Create container
+            // Create container with session header
             const container = document.createElement('div');
             container.className = 'session-container';
             container.dataset.session = sessionId;
+
+            const displayTitle = truncateTitle(firstMessage || name, MAX_TITLE_LENGTH);
+
+            // Add session header with auto-scroll control
+            const sessionHeader = document.createElement('div');
+            sessionHeader.className = 'session-header';
+            sessionHeader.innerHTML = `
+                <span class="session-title-display">${escapeHtml(displayTitle)}</span>
+                <label class="auto-scroll${autoScroll ? ' active' : ''}">
+                    <input type="checkbox" ${autoScroll ? 'checked' : ''}>
+                    <span>Auto-scroll</span>
+                </label>
+            `;
+            container.appendChild(sessionHeader);
+
+            const autoScrollCheckbox = sessionHeader.querySelector('input');
+            const autoScrollLabel = sessionHeader.querySelector('.auto-scroll');
+            autoScrollCheckbox.addEventListener('change', function() {
+                autoScroll = this.checked;
+                if (autoScroll) {
+                    autoScrollLabel.classList.add('active');
+                } else {
+                    autoScrollLabel.classList.remove('active');
+                }
+                localStorage.setItem('autoScroll', autoScroll);
+            });
+
             sessionsContainer.appendChild(container);
 
-            // Create tab
-            const tab = document.createElement('div');
-            tab.className = 'tab';
-            tab.dataset.session = sessionId;
-            tab.innerHTML = `
-                <span class="tab-name">${escapeHtml(name)}</span>
-                <span class="close-btn" title="Close tab">&times;</span>
+            // Create sidebar item
+            const sidebarItem = document.createElement('div');
+            sidebarItem.className = 'session-item';
+            sidebarItem.dataset.session = sessionId;
+            sidebarItem.innerHTML = `
+                <span class="session-title">${escapeHtml(displayTitle)}</span>
+                <span class="close-btn" title="Close">&times;</span>
             `;
-            tab.addEventListener('click', function(e) {
+
+            sidebarItem.addEventListener('click', function(e) {
                 if (e.target.classList.contains('close-btn')) {
                     removeSession(sessionId);
                 } else {
                     switchToSession(sessionId);
+                    // Close sidebar on mobile
+                    if (isMobile()) {
+                        sidebarOpen = false;
+                        updateSidebarState();
+                    }
                 }
             });
-            tabsContainer.appendChild(tab);
+
+            // Tooltip handlers
+            sidebarItem.addEventListener('mouseenter', function(e) {
+                showTooltip(sessionId, e);
+            });
+            sidebarItem.addEventListener('mouseleave', hideTooltip);
+            sidebarItem.addEventListener('mousemove', function(e) {
+                positionTooltip(e);
+            });
+
+            // Add to project
+            const project = getOrCreateProject(projectName || 'Unknown');
+            project.sessions.add(sessionId);
+            project.sessionListElement.appendChild(sidebarItem);
 
             const session = {
                 id: sessionId,
                 name: name,
+                projectName: projectName || 'Unknown',
+                displayTitle: displayTitle,
+                firstMessage: firstMessage,
                 container: container,
-                tab: tab,
+                sidebarItem: sidebarItem,
                 messageCount: 0,
-                // Use server's lastUpdatedAt (file mtime) for initial ordering, convert to ms
                 lastActivity: lastUpdatedAt ? lastUpdatedAt * 1000 : Date.now(),
                 startedAt: startedAt || null,
                 lastUpdatedAt: lastUpdatedAt || null
             };
             sessions.set(sessionId, session);
-            updateTabTooltip(session);
+
+            // Update project's last activity
+            project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
 
             // If this is the first session, activate it
             if (sessions.size === 1) {
@@ -460,15 +623,77 @@
             return session;
         }
 
+        function showTooltip(sessionId, e) {
+            const session = sessions.get(sessionId);
+            if (!session) return;
+
+            if (tooltipTimeout) clearTimeout(tooltipTimeout);
+
+            tooltipTimeout = setTimeout(function() {
+                const started = formatTimestamp(session.startedAt);
+                const updated = formatTimestamp(session.lastUpdatedAt);
+                const fullMessage = session.firstMessage || 'No message';
+
+                sessionTooltip.innerHTML = `
+                    <div class="tooltip-label">Created</div>
+                    <div class="tooltip-value">${escapeHtml(started)}</div>
+                    <div class="tooltip-label">Last updated</div>
+                    <div class="tooltip-value">${escapeHtml(updated)}</div>
+                    <div class="tooltip-label">First message</div>
+                    <div class="tooltip-value tooltip-message">${escapeHtml(fullMessage)}</div>
+                `;
+                sessionTooltip.style.display = 'block';
+                positionTooltip(e);
+            }, 300);
+        }
+
+        function positionTooltip(e) {
+            const tooltip = sessionTooltip;
+            const padding = 10;
+
+            let left = e.clientX + padding;
+            let top = e.clientY + padding;
+
+            // Adjust if tooltip goes off-screen
+            const rect = tooltip.getBoundingClientRect();
+            if (left + rect.width > window.innerWidth) {
+                left = e.clientX - rect.width - padding;
+            }
+            if (top + rect.height > window.innerHeight) {
+                top = e.clientY - rect.height - padding;
+            }
+
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+        }
+
+        function hideTooltip() {
+            if (tooltipTimeout) {
+                clearTimeout(tooltipTimeout);
+                tooltipTimeout = null;
+            }
+            sessionTooltip.style.display = 'none';
+        }
+
         function removeSession(sessionId) {
             const session = sessions.get(sessionId);
             if (!session) return;
 
+            // Remove from project
+            const project = projects.get(session.projectName);
+            if (project) {
+                project.sessions.delete(sessionId);
+                // Remove project if empty
+                if (project.sessions.size === 0) {
+                    project.element.remove();
+                    projects.delete(session.projectName);
+                }
+            }
+
             session.container.remove();
-            session.tab.remove();
+            session.sidebarItem.remove();
             sessions.delete(sessionId);
 
-            // If we removed the active session, switch to another
             if (activeSessionId === sessionId) {
                 const firstSession = sessions.keys().next().value;
                 if (firstSession) {
@@ -479,36 +704,22 @@
             }
         }
 
-        function reorderTabs() {
-            // Sort sessions by lastActivity (most recent first)
-            const sortedSessions = Array.from(sessions.values()).sort((a, b) => b.lastActivity - a.lastActivity);
+        function reorderSidebar() {
+            // Sort projects by lastActivity
+            const sortedProjects = Array.from(projects.values()).sort((a, b) => b.lastActivity - a.lastActivity);
 
-            // FLIP animation: capture initial positions
-            const positions = new Map();
-            sortedSessions.forEach(session => {
-                positions.set(session.id, session.tab.getBoundingClientRect().left);
-            });
+            sortedProjects.forEach(function(project) {
+                projectListContainer.appendChild(project.element);
 
-            // Reorder tabs in DOM
-            sortedSessions.forEach(session => {
-                tabsContainer.appendChild(session.tab);
-            });
+                // Sort sessions within project
+                const sortedSessions = Array.from(project.sessions)
+                    .map(id => sessions.get(id))
+                    .filter(s => s)
+                    .sort((a, b) => b.lastActivity - a.lastActivity);
 
-            // FLIP animation: animate from old position to new
-            sortedSessions.forEach(session => {
-                const oldLeft = positions.get(session.id);
-                const newLeft = session.tab.getBoundingClientRect().left;
-                const deltaX = oldLeft - newLeft;
-
-                if (Math.abs(deltaX) > 1) {
-                    session.tab.style.transform = `translateX(${deltaX}px)`;
-                    session.tab.style.transition = 'none';
-
-                    requestAnimationFrame(() => {
-                        session.tab.style.transition = 'transform 0.3s ease';
-                        session.tab.style.transform = '';
-                    });
-                }
+                sortedSessions.forEach(function(session) {
+                    project.sessionListElement.appendChild(session.sidebarItem);
+                });
             });
         }
 
@@ -519,23 +730,20 @@
             // Update containers
             sessions.forEach(function(s) {
                 s.container.classList.remove('active');
-                s.tab.classList.remove('active');
+                s.sidebarItem.classList.remove('active');
             });
             session.container.classList.add('active');
-            session.tab.classList.add('active');
+            session.sidebarItem.classList.add('active');
             activeSessionId = sessionId;
 
-            // Update input bar for new active session
             updateInputBarUI();
 
-            // Scroll to bottom if requested (e.g., after auto-follow switch)
             if (scrollToBottom) {
                 requestAnimationFrame(function() {
                     window.scrollTo(0, document.body.scrollHeight);
                 });
             }
         }
-
 
         function appendMessage(sessionId, html) {
             const session = sessions.get(sessionId);
@@ -549,37 +757,39 @@
             const msg = temp.firstElementChild;
 
             if (msg) {
-                // Check if this message matches a placeholder and remove it
                 removePlaceholderIfMatches(sessionId, msg);
 
                 session.container.appendChild(msg);
                 processNewElement(msg);
                 session.messageCount++;
 
-                // Update last activity and reorder tabs (only after catchup)
                 if (catchupComplete) {
                     session.lastActivity = Date.now();
-                    session.lastUpdatedAt = Date.now() / 1000;  // Unix timestamp in seconds
-                    updateTabTooltip(session);
-                    reorderTabs();
+                    session.lastUpdatedAt = Date.now() / 1000;
+
+                    // Update project's last activity
+                    const project = projects.get(session.projectName);
+                    if (project) {
+                        project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
+                    }
+
+                    reorderSidebar();
                 }
 
-                // Prune old messages if over limit
-                while (session.container.children.length > MAX_MESSAGES) {
-                    session.container.removeChild(session.container.firstChild);
+                while (session.container.children.length > MAX_MESSAGES + 1) {  // +1 for header
+                    session.container.removeChild(session.container.children[1]);  // Skip header
                 }
 
-                // Handle auto-follow (only after initial catchup is complete)
-                if (catchupComplete && autoFollow && !isActiveSession) {
-                    // Debounce auto-follow to avoid thrashing
-                    if (autoFollowDebounce) clearTimeout(autoFollowDebounce);
-                    autoFollowDebounce = setTimeout(function() {
-                        switchToSession(sessionId, true);  // Scroll to bottom on auto-follow
+                // Handle auto-switch (only after initial catchup)
+                if (catchupComplete && autoSwitch && !isActiveSession) {
+                    if (autoSwitchDebounce) clearTimeout(autoSwitchDebounce);
+                    autoSwitchDebounce = setTimeout(function() {
+                        switchToSession(sessionId, true);
                     }, 100);
                 }
 
-                // Auto-scroll: always scroll if auto-follow is on, or if near bottom
-                if (isActiveSession && (autoFollow || wasNearBottom)) {
+                // Auto-scroll within session
+                if (isActiveSession && (autoScroll || wasNearBottom)) {
                     msg.scrollIntoView({ behavior: 'smooth', block: 'end' });
                 }
             }
@@ -598,7 +808,6 @@
             const timestamp = new Date().toISOString();
             const msgId = 'placeholder-' + Date.now();
 
-            // Create placeholder HTML similar to real user message
             const html = '<div class="message user placeholder-message" id="' + msgId + '">' +
                 '<div class="message-header">' +
                 '<span class="role-label">User</span>' +
@@ -613,31 +822,25 @@
             temp.innerHTML = html;
             const element = temp.firstElementChild;
 
-            // Add to session container
             session.container.appendChild(element);
 
-            // Track the placeholder
             const placeholder = { sessionId: sessionId, messageText: messageText, element: element };
             pendingMessages.push(placeholder);
 
-            // Scroll to bottom
             element.scrollIntoView({ behavior: 'smooth', block: 'end' });
 
             return placeholder;
         }
 
         function removePlaceholderIfMatches(sessionId, messageElement) {
-            // Check if the incoming message matches any placeholder
-            // Look for user messages with matching content
             const incomingContent = messageElement.querySelector('.user-content');
-            if (!incomingContent) return;  // Not a user message
+            if (!incomingContent) return;
 
             const incomingText = incomingContent.textContent.trim();
 
             for (let i = 0; i < pendingMessages.length; i++) {
                 const pending = pendingMessages[i];
                 if (pending.sessionId === sessionId && pending.messageText.trim() === incomingText) {
-                    // Found a match - remove the placeholder
                     pending.element.remove();
                     pendingMessages.splice(i, 1);
                     return true;
@@ -648,9 +851,8 @@
 
         function connect() {
             updateStatus('reconnecting', 'Connecting...');
-            catchupComplete = false;  // Reset for new connection
+            catchupComplete = false;
 
-            // Check if sending is enabled
             checkSendEnabled();
 
             eventSource = new EventSource('/events');
@@ -658,16 +860,21 @@
             eventSource.addEventListener('sessions', function(e) {
                 const data = JSON.parse(e.data);
                 data.sessions.forEach(function(session) {
-                    createSession(session.id, session.name, session.startedAt, session.lastUpdatedAt);
+                    createSession(
+                        session.id,
+                        session.name,
+                        session.projectName,
+                        session.firstMessage,
+                        session.startedAt,
+                        session.lastUpdatedAt
+                    );
                 });
-                // Reorder tabs based on file modification times
-                reorderTabs();
+                reorderSidebar();
                 updateStatus('', 'Connected');
             });
 
             eventSource.addEventListener('catchup_complete', function(e) {
                 catchupComplete = true;
-                // Scroll the active session to bottom after catchup
                 if (activeSessionId) {
                     window.scrollTo(0, document.body.scrollHeight);
                 }
@@ -676,9 +883,8 @@
             eventSource.addEventListener('session_added', function(e) {
                 const data = JSON.parse(e.data);
 
-                // Check if we have a pending session that was starting - merge with it
                 let mergedPendingId = null;
-                const MERGE_WINDOW_MS = 30000;  // 30 seconds
+                const MERGE_WINDOW_MS = 30000;
                 sessions.forEach(function(session, sessionId) {
                     if (session.pending && session.starting &&
                         (Date.now() - session.startedAt) < MERGE_WINDOW_MS) {
@@ -687,28 +893,34 @@
                 });
 
                 if (mergedPendingId) {
-                    // Merge: remove the pending session, the real one takes its place
                     const pendingSession = sessions.get(mergedPendingId);
                     const wasPendingActive = (activeSessionId === mergedPendingId);
 
-                    // Remove the pending session
-                    pendingSession.container.remove();
-                    pendingSession.tab.remove();
-                    sessions.delete(mergedPendingId);
+                    removeSession(mergedPendingId);
 
-                    // Create the real session
-                    const session = createSession(data.id, data.name, data.startedAt, data.lastUpdatedAt);
+                    const session = createSession(
+                        data.id,
+                        data.name,
+                        data.projectName,
+                        data.firstMessage,
+                        data.startedAt,
+                        data.lastUpdatedAt
+                    );
 
-                    // If the pending tab was active, switch to the real one
                     if (wasPendingActive && session) {
                         switchToSession(data.id, true);
                     }
                 } else {
-                    // Normal case: just create the session
-                    const session = createSession(data.id, data.name, data.startedAt, data.lastUpdatedAt);
-                    // Auto-switch to newly added sessions (they're likely the active one)
-                    if (autoFollow && session) {
-                        switchToSession(data.id, true);  // Scroll to bottom on auto-follow
+                    const session = createSession(
+                        data.id,
+                        data.name,
+                        data.projectName,
+                        data.firstMessage,
+                        data.startedAt,
+                        data.lastUpdatedAt
+                    );
+                    if (autoSwitch && session) {
+                        switchToSession(data.id, true);
                     }
                 }
             });
@@ -721,16 +933,15 @@
             eventSource.addEventListener('message', function(e) {
                 const data = JSON.parse(e.data);
                 if (data.type === 'html' && data.session_id) {
-                    // Ensure session exists
                     if (!sessions.has(data.session_id)) {
-                        createSession(data.session_id, data.session_id.substring(0, 8), null, null);
+                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null);
                     }
                     appendMessage(data.session_id, data.content);
                 }
             });
 
             eventSource.addEventListener('ping', function(e) {
-                // Keep-alive, no action needed
+                // Keep-alive
             });
 
             eventSource.addEventListener('session_status', function(e) {
@@ -739,17 +950,15 @@
                     running: data.running,
                     queued_messages: data.queued_messages
                 });
-                // Update UI if this is the active session
                 if (data.session_id === activeSessionId) {
                     updateInputBarUI();
                 }
             });
 
             eventSource.addEventListener('reinitialize', function(e) {
-                // Server requested we reconnect (e.g., catchup took too long)
                 console.warn('Server requested reinitialize:', JSON.parse(e.data));
                 eventSource.close();
-                setTimeout(connect, 1000);  // Reconnect after brief delay
+                setTimeout(connect, 1000);
             });
 
             eventSource.onopen = function() {
@@ -765,10 +974,8 @@
             };
         }
 
-        // Start connection
         connect();
 
-        // Handle visibility change to reconnect when tab becomes visible
         document.addEventListener('visibilitychange', function() {
             if (document.visibilityState === 'visible' && eventSource.readyState === EventSource.CLOSED) {
                 connect();
