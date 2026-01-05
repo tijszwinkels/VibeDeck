@@ -396,8 +396,9 @@ async def lifespan(app: FastAPI):
 
     # Startup: find recent sessions
     recent = find_recent_sessions(get_projects_dir(), limit=MAX_SESSIONS)
-    for path in recent:
-        add_session(path, evict_oldest=False)  # No eviction needed at startup
+    async with _get_sessions_lock():
+        for path in recent:
+            add_session(path, evict_oldest=False)  # No eviction needed at startup
 
     if not _sessions:
         logger.warning("No session files found")
@@ -430,7 +431,8 @@ async def index() -> HTMLResponse:
 @app.get("/sessions")
 async def list_sessions() -> dict:
     """List all tracked sessions."""
-    return {"sessions": get_sessions_list()}
+    async with _get_sessions_lock():
+        return {"sessions": get_sessions_list()}
 
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
@@ -440,9 +442,11 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
 
     try:
         # Send sessions list
+        async with _get_sessions_lock():
+            sessions_data = get_sessions_list()
         yield {
             "event": "sessions",
-            "data": json.dumps({"sessions": get_sessions_list()}),
+            "data": json.dumps({"sessions": sessions_data}),
         }
 
         # Send existing messages for each session (catchup)
@@ -676,9 +680,3 @@ async def create_new_session(request: NewSessionRequest) -> dict:
     except Exception as e:
         logger.error(f"Error starting new session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# Legacy single-session API for backwards compatibility
-def set_session_path(path: Path) -> None:
-    """Set a single session file to watch (legacy API)."""
-    add_session(path, evict_oldest=False)
