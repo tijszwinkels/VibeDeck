@@ -13,7 +13,7 @@ import markdown
 
 # Set up Jinja2 environment
 _jinja_env = Environment(
-    loader=PackageLoader("claude_code_live", "templates"),
+    loader=PackageLoader("claude_code_session_explorer", "templates"),
     autoescape=True,
 )
 
@@ -256,7 +256,7 @@ def get_template(name: str):
 
 def _load_static_file(filename: str) -> str:
     """Load a static file from the package."""
-    return files("claude_code_live").joinpath("static", filename).read_text()
+    return files("claude_code_session_explorer").joinpath("static", filename).read_text()
 
 
 # Load CSS and JS from static files

@@ -4,9 +4,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from claude_code_live import server, sessions
-from claude_code_live.server import app
-from claude_code_live.sessions import add_session
+from claude_code_session_explorer import server, sessions
+from claude_code_session_explorer.server import app
+from claude_code_session_explorer.sessions import add_session
 
 
 @pytest.fixture(autouse=True)
@@ -34,7 +34,7 @@ class TestServerEndpoints:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "Claude Code Live" in response.text
+        assert "Claude Code Session Explorer" in response.text
 
     def test_index_includes_css(self, temp_jsonl_file):
         """Test that index includes CSS."""

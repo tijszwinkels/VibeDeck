@@ -1,4 +1,4 @@
-"""Session management for Claude Code Live.
+"""Session management for Claude Code Session Explorer.
 
 Handles tracking of Claude Code sessions, including adding, removing,
 and querying session state.

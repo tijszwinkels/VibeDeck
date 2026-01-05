@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_code_live.rendering import (
+from claude_code_session_explorer.rendering import (
     render_message,
     render_content_block,
     render_markdown_text,

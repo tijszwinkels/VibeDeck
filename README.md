@@ -1,4 +1,4 @@
-# claude-code-live
+# Claude Code Session Explorer
 
 Live-updating transcript viewer for Claude Code sessions.
 
@@ -9,32 +9,32 @@ This tool provides real-time updates as your Claude Code session progresses. New
 ## Installation
 
 ```bash
-uv tool install git+https://github.com/tijszwinkels/claude-code-live
+uv tool install git+https://github.com/tijszwinkels/claude-code-session-explorer
 ```
 
 Or run directly:
 
 ```bash
-uvx git+https://github.com/tijszwinkels/claude-code-live
+uvx git+https://github.com/tijszwinkels/claude-code-session-explorer
 ```
 
 ## Usage
 
 ```bash
 # Watch all recent sessions (auto-detected, up to 10)
-claude-code-live
+claude-code-session-explorer
 
 # Watch a specific session file (in addition to auto-discovered ones)
-claude-code-live --session ~/.claude/projects/.../session.jsonl
+claude-code-session-explorer --session ~/.claude/projects/.../session.jsonl
 
 # Limit number of sessions
-claude-code-live --max-sessions 5
+claude-code-session-explorer --max-sessions 5
 
 # Custom port
-claude-code-live --port 8765
+claude-code-session-explorer --port 8765
 
 # Don't auto-open browser
-claude-code-live --no-open
+claude-code-session-explorer --no-open
 ```
 
 ## Features
@@ -57,7 +57,7 @@ uv sync
 uv run pytest
 
 # Run development server
-uv run claude-code-live --debug
+uv run claude-code-session-explorer --debug
 ```
 
 ## Credits

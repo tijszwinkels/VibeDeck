@@ -284,7 +284,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Claude Code Live", lifespan=lifespan)
+app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
 
 
 @app.get("/", response_class=HTMLResponse)

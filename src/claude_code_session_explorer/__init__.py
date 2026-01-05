@@ -1,4 +1,4 @@
-"""Claude Code Live - Live-updating transcript viewer for Claude Code sessions."""
+"""Claude Code Session Explorer - Live-updating transcript viewer for Claude Code sessions."""
 
 import logging
 import webbrowser
