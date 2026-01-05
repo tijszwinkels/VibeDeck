@@ -1,6 +1,7 @@
 # Notes and specs (private)
 notes/
 specs/
+todo.txt
 
 # Python
 __pycache__/
@@ -26,3 +27,6 @@ htmlcov/
 
 # Reference project (not part of this repo)
 claude-code-transcripts/
+
+# MCP server data
+.playwright-mcp/
