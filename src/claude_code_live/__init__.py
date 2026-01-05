@@ -49,6 +49,24 @@ logger = logging.getLogger(__name__)
     default=10,
     help="Maximum number of sessions to track (default: 10)",
 )
+@click.option(
+    "--experimental",
+    is_flag=True,
+    hidden=True,
+    help="Enable experimental features (required for --enable-send)",
+)
+@click.option(
+    "--enable-send",
+    is_flag=True,
+    hidden=True,
+    help="Enable sending messages to Claude Code sessions (requires --experimental)",
+)
+@click.option(
+    "--dangerously-skip-permissions",
+    is_flag=True,
+    hidden=True,
+    help="Pass --dangerously-skip-permissions to Claude CLI (requires --experimental --enable-send)",
+)
 def main(
     session: Path | None,
     port: int,
@@ -56,6 +74,9 @@ def main(
     no_open: bool,
     debug: bool,
     max_sessions: int,
+    experimental: bool,
+    enable_send: bool,
+    dangerously_skip_permissions: bool,
 ) -> None:
     """Start a live-updating transcript viewer for Claude Code sessions.
 
@@ -72,9 +93,27 @@ def main(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    # Validate experimental flag requirements
+    if enable_send and not experimental:
+        click.echo("Error: --enable-send requires --experimental flag", err=True)
+        click.echo("This feature is experimental and has known security limitations.", err=True)
+        raise SystemExit(1)
+
+    if dangerously_skip_permissions and not enable_send:
+        click.echo("Error: --dangerously-skip-permissions requires --enable-send", err=True)
+        raise SystemExit(1)
+
     # Configure server
     from . import server
     server.MAX_SESSIONS = max_sessions
+    server.set_send_enabled(enable_send)
+    server.set_skip_permissions(dangerously_skip_permissions)
+
+    if enable_send:
+        click.echo("⚠️  EXPERIMENTAL: Send feature enabled - messages can be sent to Claude Code sessions")
+        click.echo("   This feature has known security limitations. Use with caution.")
+    if dangerously_skip_permissions:
+        click.echo("⚠️  WARNING: --dangerously-skip-permissions enabled - Claude will skip permission prompts")
 
     # If a specific session is provided, add it first
     if session is not None:

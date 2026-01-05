@@ -14,10 +14,12 @@ def reset_server_state():
     server._sessions.clear()
     server._clients.clear()
     server._known_session_files.clear()
+    server.set_send_enabled(False)  # Reset send feature state
     yield
     server._sessions.clear()
     server._clients.clear()
     server._known_session_files.clear()
+    server.set_send_enabled(False)
 
 
 class TestServerEndpoints:
@@ -105,6 +107,17 @@ class TestSessionManagement:
         assert info2 is None
         assert evicted_id is None
 
+    def test_add_empty_session_skipped(self, tmp_path):
+        """Test that empty session files are skipped."""
+        empty_file = tmp_path / "empty.jsonl"
+        empty_file.write_text("")  # 0 bytes
+
+        info, evicted_id = add_session(empty_file)
+
+        assert info is None
+        assert evicted_id is None
+        assert "empty" not in server._sessions
+
     def test_session_limit_with_eviction(self, tmp_path):
         """Test that session limit evicts oldest sessions."""
         import time
@@ -151,6 +164,129 @@ class TestSessionManagement:
 
         assert len(sessions) == 1
         assert sessions[0]["id"] == temp_jsonl_file.stem
+
+
+class TestSendFeature:
+    """Tests for the send message feature."""
+
+    def test_send_enabled_endpoint_disabled(self):
+        """Test /send-enabled returns false when disabled."""
+        client = TestClient(app)
+        response = client.get("/send-enabled")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False}
+
+    def test_send_enabled_endpoint_enabled(self):
+        """Test /send-enabled returns true when enabled."""
+        server.set_send_enabled(True)
+        client = TestClient(app)
+        response = client.get("/send-enabled")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": True}
+
+    def test_send_returns_403_when_disabled(self, temp_jsonl_file):
+        """Test that send endpoint returns 403 when feature is disabled."""
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.post(
+            f"/sessions/{temp_jsonl_file.stem}/send",
+            json={"message": "test message"}
+        )
+        assert response.status_code == 403
+        assert "disabled" in response.json()["detail"].lower()
+
+    def test_send_returns_404_for_unknown_session(self, temp_jsonl_file):
+        """Test that send returns 404 for unknown session."""
+        server.set_send_enabled(True)
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.post(
+            "/sessions/nonexistent/send",
+            json={"message": "test message"}
+        )
+        assert response.status_code == 404
+
+    def test_send_returns_400_for_empty_message(self, temp_jsonl_file):
+        """Test that send returns 400 for empty message."""
+        server.set_send_enabled(True)
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.post(
+            f"/sessions/{temp_jsonl_file.stem}/send",
+            json={"message": "   "}
+        )
+        assert response.status_code == 400
+        assert "empty" in response.json()["detail"].lower()
+
+    def test_session_status_endpoint(self, temp_jsonl_file):
+        """Test session status endpoint."""
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.get(f"/sessions/{temp_jsonl_file.stem}/status")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["session_id"] == temp_jsonl_file.stem
+        assert data["running"] is False
+        assert data["queued_messages"] == 0
+
+    def test_session_status_404_for_unknown(self):
+        """Test session status returns 404 for unknown session."""
+        client = TestClient(app)
+        response = client.get("/sessions/nonexistent/status")
+        assert response.status_code == 404
+
+    def test_interrupt_returns_403_when_disabled(self, temp_jsonl_file):
+        """Test that interrupt returns 403 when feature is disabled."""
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.post(f"/sessions/{temp_jsonl_file.stem}/interrupt")
+        assert response.status_code == 403
+
+    def test_interrupt_returns_404_for_unknown_session(self):
+        """Test that interrupt returns 404 for unknown session."""
+        server.set_send_enabled(True)
+        client = TestClient(app)
+
+        response = client.post("/sessions/nonexistent/interrupt")
+        assert response.status_code == 404
+
+    def test_interrupt_returns_409_when_not_running(self, temp_jsonl_file):
+        """Test that interrupt returns 409 when no process is running."""
+        server.set_send_enabled(True)
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.post(f"/sessions/{temp_jsonl_file.stem}/interrupt")
+        assert response.status_code == 409
+        assert "no process running" in response.json()["detail"].lower()
+
+    def test_new_session_returns_403_when_disabled(self):
+        """Test that new session returns 403 when feature is disabled."""
+        client = TestClient(app)
+
+        response = client.post(
+            "/sessions/new",
+            json={"message": "Hello"}
+        )
+        assert response.status_code == 403
+        assert "disabled" in response.json()["detail"].lower()
+
+    def test_new_session_returns_400_for_empty_message(self):
+        """Test that new session returns 400 for empty message."""
+        server.set_send_enabled(True)
+        client = TestClient(app)
+
+        response = client.post(
+            "/sessions/new",
+            json={"message": "   "}
+        )
+        assert response.status_code == 400
+        assert "empty" in response.json()["detail"].lower()
 
 
 # Note: SSE endpoint streaming tests are skipped because TestClient

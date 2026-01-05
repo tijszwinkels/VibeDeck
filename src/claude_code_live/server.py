@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import shutil
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -10,8 +11,9 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import watchfiles
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from .rendering import CSS, render_message, get_template
@@ -27,6 +29,36 @@ logger = logging.getLogger(__name__)
 # Configuration
 MAX_SESSIONS = 10
 CATCHUP_TIMEOUT = 30  # seconds - max time for catchup before telling client to reinitialize
+_send_enabled = False  # Enable with --enable-send CLI flag
+_skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
+
+
+def set_send_enabled(enabled: bool) -> None:
+    """Set whether sending messages to Claude is enabled."""
+    global _send_enabled
+    _send_enabled = enabled
+
+
+def set_skip_permissions(enabled: bool) -> None:
+    """Set whether to skip permission prompts when running Claude."""
+    global _skip_permissions
+    _skip_permissions = enabled
+
+
+def is_send_enabled() -> bool:
+    """Check if sending messages is enabled."""
+    return _send_enabled
+
+
+class SendMessageRequest(BaseModel):
+    """Request body for sending a message to a session."""
+    message: str
+
+
+class NewSessionRequest(BaseModel):
+    """Request body for starting a new session."""
+    message: str  # Initial message to send (required)
+    cwd: str | None = None  # Working directory (optional)
 
 
 @dataclass
@@ -37,6 +69,9 @@ class SessionInfo:
     tailer: SessionTailer
     name: str = ""
     session_id: str = ""
+    # Process management for sending messages
+    process: asyncio.subprocess.Process | None = None
+    message_queue: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.name:
@@ -108,12 +143,20 @@ def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | No
     """Add a session to track.
 
     Returns a tuple of (SessionInfo if added, evicted_session_id if one was removed).
-    Returns (None, None) if already tracked.
+    Returns (None, None) if already tracked or if file is empty.
     If at the session limit and evict_oldest=True, removes the oldest session to make room.
     """
     session_id = get_session_id(path)
 
     if session_id in _sessions:
+        return None, None
+
+    # Skip empty files (claude --resume creates empty files before connecting)
+    try:
+        if path.stat().st_size == 0:
+            logger.debug(f"Skipping empty session file: {path}")
+            return None, None
+    except OSError:
         return None, None
 
     evicted_id = None
@@ -189,9 +232,76 @@ async def broadcast_session_added(info: SessionInfo) -> None:
     await broadcast_event("session_added", info.to_dict())
 
 
+async def broadcast_session_catchup(info: SessionInfo) -> None:
+    """Broadcast existing messages for a newly added session.
+
+    When a session is added while clients are already connected, those clients
+    need to receive the existing messages (catchup) for that session.
+    """
+    existing = info.tailer.read_all()
+    for entry in existing:
+        html = render_message(entry)
+        if html:
+            await broadcast_message(info.session_id, html)
+
+
 async def broadcast_session_removed(session_id: str) -> None:
     """Broadcast that a session was removed."""
     await broadcast_event("session_removed", {"id": session_id})
+
+
+async def broadcast_session_status(session_id: str) -> None:
+    """Broadcast session status (running state, queue size)."""
+    info = _sessions.get(session_id)
+    if info is None:
+        return
+    await broadcast_event("session_status", {
+        "session_id": session_id,
+        "running": info.process is not None,
+        "queued_messages": len(info.message_queue),
+    })
+
+
+async def run_claude_for_session(session_id: str, message: str) -> None:
+    """Send a message to a Claude Code session and track the process."""
+    info = _sessions.get(session_id)
+    if info is None:
+        logger.error(f"Session not found: {session_id}")
+        return
+
+    try:
+        # Build command arguments
+        cmd_args = ["claude", "-p", message, "--resume", session_id]
+        if _skip_permissions:
+            cmd_args.append("--dangerously-skip-permissions")
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        info.process = proc
+        await broadcast_session_status(session_id)
+
+        # Wait for completion
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.error(f"Claude process failed for {session_id}: {stderr.decode()}")
+
+    except Exception as e:
+        logger.error(f"Error running Claude for {session_id}: {e}")
+
+    finally:
+        info.process = None
+
+        # Process queue if messages waiting
+        if info.message_queue:
+            next_message = info.message_queue.pop(0)
+            asyncio.create_task(run_claude_for_session(session_id, next_message))
+
+        await broadcast_session_status(session_id)
 
 
 async def process_session_messages(session_id: str) -> None:
@@ -224,6 +334,7 @@ async def check_for_new_sessions() -> None:
                     await broadcast_session_removed(evicted_id)
                 if info:
                     await broadcast_session_added(info)
+                    await broadcast_session_catchup(info)
 
 
 async def watch_loop() -> None:
@@ -255,6 +366,7 @@ async def watch_loop() -> None:
                             await broadcast_session_removed(evicted_id)
                         if info:
                             await broadcast_session_added(info)
+                            await broadcast_session_catchup(info)
 
                     elif change_type == watchfiles.Change.modified:
                         # Existing file modified
@@ -268,6 +380,7 @@ async def watch_loop() -> None:
                                 await broadcast_session_removed(evicted_id)
                             if info:
                                 await broadcast_session_added(info)
+                                await broadcast_session_catchup(info)
 
     except asyncio.CancelledError:
         logger.info("Watch loop cancelled")
@@ -283,8 +396,9 @@ async def lifespan(app: FastAPI):
 
     # Startup: find recent sessions
     recent = find_recent_sessions(get_projects_dir(), limit=MAX_SESSIONS)
-    for path in recent:
-        add_session(path, evict_oldest=False)  # No eviction needed at startup
+    async with _get_sessions_lock():
+        for path in recent:
+            add_session(path, evict_oldest=False)  # No eviction needed at startup
 
     if not _sessions:
         logger.warning("No session files found")
@@ -317,7 +431,8 @@ async def index() -> HTMLResponse:
 @app.get("/sessions")
 async def list_sessions() -> dict:
     """List all tracked sessions."""
-    return {"sessions": get_sessions_list()}
+    async with _get_sessions_lock():
+        return {"sessions": get_sessions_list()}
 
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
@@ -327,9 +442,11 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
 
     try:
         # Send sessions list
+        async with _get_sessions_lock():
+            sessions_data = get_sessions_list()
         yield {
             "event": "sessions",
-            "data": json.dumps({"sessions": get_sessions_list()}),
+            "data": json.dumps({"sessions": sessions_data}),
         }
 
         # Send existing messages for each session (catchup)
@@ -408,7 +525,158 @@ async def health() -> dict:
     }
 
 
-# Legacy single-session API for backwards compatibility
-def set_session_path(path: Path) -> None:
-    """Set a single session file to watch (legacy API)."""
-    add_session(path, evict_oldest=False)
+@app.get("/send-enabled")
+async def send_enabled() -> dict:
+    """Check if sending messages is enabled."""
+    return {"enabled": _send_enabled}
+
+
+@app.get("/sessions/{session_id}/status")
+async def session_status(session_id: str) -> dict:
+    """Get the status of a session (running state, queue size)."""
+    info = _sessions.get(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "session_id": session_id,
+        "running": info.process is not None,
+        "queued_messages": len(info.message_queue),
+    }
+
+
+@app.post("/sessions/{session_id}/send")
+async def send_message(session_id: str, request: SendMessageRequest) -> dict:
+    """Send a message to a Claude Code session."""
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    # Check if Claude CLI is available
+    if shutil.which("claude") is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+        )
+
+    info = _sessions.get(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    message = request.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # If a process is already running, queue the message
+    if info.process is not None:
+        info.message_queue.append(message)
+        await broadcast_session_status(session_id)
+        return {
+            "status": "queued",
+            "session_id": session_id,
+            "queue_position": len(info.message_queue),
+        }
+
+    # Start the Claude process
+    asyncio.create_task(run_claude_for_session(session_id, message))
+
+    return {"status": "sent", "session_id": session_id}
+
+
+@app.post("/sessions/{session_id}/interrupt")
+async def interrupt_session(session_id: str) -> dict:
+    """Interrupt a running Claude process and clear the message queue."""
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    info = _sessions.get(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if info.process is None:
+        raise HTTPException(status_code=409, detail="No process running for this session")
+
+    # Clear the queue first
+    info.message_queue.clear()
+
+    # Terminate the process
+    try:
+        info.process.terminate()
+        # Give it a moment to terminate gracefully
+        try:
+            await asyncio.wait_for(info.process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            # Force kill if it doesn't terminate
+            info.process.kill()
+    except ProcessLookupError:
+        # Process already terminated
+        pass
+
+    info.process = None
+    await broadcast_session_status(session_id)
+
+    return {"status": "interrupted", "session_id": session_id}
+
+
+@app.post("/sessions/new")
+async def create_new_session(request: NewSessionRequest) -> dict:
+    """Start a new Claude session with an initial message."""
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    # Check if Claude CLI is available
+    if shutil.which("claude") is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+        )
+
+    message = request.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Determine working directory
+    cwd: Path | None = None
+    if request.cwd:
+        potential_cwd = Path(request.cwd)
+        if potential_cwd.is_dir():
+            cwd = potential_cwd
+
+    # Build command with the initial message
+    cmd_args = ["claude", "-p", message]
+    if _skip_permissions:
+        cmd_args.append("--dangerously-skip-permissions")
+
+    try:
+        # Start Claude in the working directory
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            cwd=cwd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        # Don't wait for completion - the session will appear via file watcher
+        # Just check it started okay
+        await asyncio.sleep(0.5)
+        if proc.returncode is not None and proc.returncode != 0:
+            stderr = await proc.stderr.read() if proc.stderr else b""
+            logger.error(f"Claude failed to start: {stderr.decode()}")
+            raise HTTPException(status_code=500, detail="Failed to start Claude session")
+
+        return {"status": "started", "cwd": str(cwd) if cwd else None}
+
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="Claude CLI not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting new session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

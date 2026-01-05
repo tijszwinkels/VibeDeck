@@ -262,7 +262,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 h1 { font-size: 1.5rem; margin-bottom: 24px; padding-bottom: 8px; border-bottom: 2px solid var(--user-border); }
 .header-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 2px solid var(--user-border); padding-bottom: 8px; margin-bottom: 24px; }
 .header-row h1 { border-bottom: none; padding-bottom: 0; margin-bottom: 0; flex: 1; min-width: 200px; }
-.message { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.message { margin-bottom: 16px; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); scroll-margin-bottom: 120px; }
 .message.user { background: var(--user-bg); border-left: 4px solid var(--user-border); }
 .message.assistant { background: var(--card-bg); border-left: 4px solid var(--assistant-border); }
 .message.tool-reply { background: #fff8e1; border-left: 4px solid #ff9800; }
@@ -373,8 +373,37 @@ pre code { background: none; padding: 0; }
 /* Session containers */
 .session-container { display: none; }
 .session-container.active { display: block; }
-body { padding-top: 88px; }
-@media (max-width: 600px) { body { padding: 8px; padding-top: 88px; } .message { border-radius: 8px; } .message-content { padding: 12px; } pre { font-size: 0.8rem; padding: 8px; } }
+body { padding-top: 88px; padding-bottom: 100px; }
+/* Input bar for sending messages */
+.input-bar { position: fixed; bottom: 0; left: 0; right: 0; padding: 12px 16px; background: var(--card-bg); border-top: 1px solid #e0e0e0; display: flex; gap: 12px; align-items: flex-start; z-index: 1000; }
+.input-bar.hidden { display: none; }
+.input-bar-left { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.input-textarea { width: 100%; min-height: 40px; max-height: 120px; padding: 10px 14px; border: 1px solid #e0e0e0; border-radius: 8px; font-family: inherit; font-size: 0.9rem; resize: none; outline: none; line-height: 1.4; }
+.input-textarea:focus { border-color: var(--user-border); box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.1); }
+.input-textarea::placeholder { color: var(--text-muted); }
+.input-status { font-size: 0.8rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px; min-height: 20px; }
+.input-status.running { color: #f57c00; }
+.input-status .spinner { width: 14px; height: 14px; border: 2px solid #f57c00; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.send-btn, .interrupt-btn { padding: 10px 16px; border: none; border-radius: 8px; font-size: 0.9rem; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: background 0.15s; }
+.send-btn { background: var(--user-border); color: white; }
+.send-btn:hover { background: #1565c0; }
+.send-btn:disabled { background: #bdbdbd; cursor: not-allowed; }
+.interrupt-btn { background: #f44336; color: white; }
+.interrupt-btn:hover { background: #d32f2f; }
+.input-bar-buttons { display: flex; gap: 8px; align-items: flex-end; }
+/* New session button */
+.new-session-btn { padding: 6px 10px; border: 1px solid #e0e0e0; border-radius: 4px; background: var(--card-bg); color: var(--text-muted); font-size: 1rem; cursor: pointer; transition: all 0.15s; }
+.new-session-btn:hover { border-color: var(--user-border); color: var(--user-border); background: rgba(25, 118, 210, 0.05); }
+/* Pending session styles */
+.tab.pending { font-style: italic; opacity: 0.7; }
+.tab.pending .tab-name::before { content: '+ '; color: var(--user-border); }
+.pending-session-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 48px 24px; color: var(--text-muted); text-align: center; }
+.pending-session-placeholder p { margin: 0; font-size: 1rem; }
+/* Placeholder message styles */
+.placeholder-message { opacity: 0.7; }
+.placeholder-message .message-header time { font-style: italic; }
+@media (max-width: 600px) { html, body { overflow-x: hidden; width: 100%; } body { padding: 8px; padding-top: 88px; padding-bottom: calc(140px + env(safe-area-inset-bottom, 0px)); } .container { max-width: 100%; width: 100%; padding: 0; overflow-x: hidden; box-sizing: border-box; } .message { border-radius: 8px; max-width: 100%; overflow: hidden; scroll-margin-bottom: calc(160px + env(safe-area-inset-bottom, 0px)); } .message-content { padding: 12px; overflow-x: hidden; word-break: break-word; overflow-wrap: anywhere; } .message-content code { word-break: break-all; } pre { font-size: 0.75rem; padding: 8px; max-width: 100%; overflow-x: auto; box-sizing: border-box; } .tool-use, .tool-result, .file-tool { max-width: 100%; overflow: hidden; box-sizing: border-box; } .input-bar { padding: 8px; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); flex-direction: column; gap: 12px; width: 100%; box-sizing: border-box; } .input-bar-left { width: 100%; flex: none; } .input-textarea { touch-action: manipulation; } .input-status { min-height: 0; } .input-bar-buttons { width: 100%; flex: none; } .input-bar-buttons .send-btn, .input-bar-buttons .interrupt-btn { flex: 1; justify-content: center; min-height: 48px; padding: 14px 16px; -webkit-tap-highlight-color: transparent; touch-action: manipulation; } .send-btn.hidden, .interrupt-btn.hidden { display: none; } .tab-bar-right { gap: 4px; flex-shrink: 0; } .search-input { display: none; } .auto-follow span { display: none; } .auto-follow { padding: 8px 6px; } .tabs { min-width: 0; } .tab { padding: 10px 8px; font-size: 0.75rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; } .status-bar, .tab-bar { width: 100%; box-sizing: border-box; overflow: hidden; } }
 """
 
 # JavaScript from claude-code-transcripts + live-specific enhancements

@@ -17,16 +17,36 @@
     <div class="tab-bar" id="tab-bar">
         <div class="tabs" id="tabs"></div>
         <div class="tab-bar-right">
+            <button class="new-session-btn" id="new-session-btn" title="New session">+</button>
             <input type="text" id="search-input" placeholder="Search..." class="search-input">
             <label class="auto-follow" id="auto-follow-label">
                 <input type="checkbox" id="auto-follow" checked>
-                Auto-follow
+                <span>Auto-follow</span>
             </label>
         </div>
     </div>
     <div class="container">
         <h1>Claude Code Live</h1>
         <div id="sessions"></div>
+    </div>
+    <div class="input-bar hidden" id="input-bar">
+        <div class="input-bar-left">
+            <textarea
+                id="message-input"
+                class="input-textarea"
+                placeholder="Send a message... (Shift+Enter for newline)"
+                rows="1"
+            ></textarea>
+            <div class="input-status" id="input-status"></div>
+        </div>
+        <div class="input-bar-buttons">
+            <button class="send-btn" id="send-btn">
+                <span>Send</span>
+            </button>
+            <button class="interrupt-btn hidden" id="interrupt-btn">
+                <span>Stop</span>
+            </button>
+        </div>
     </div>
     <script>
     (function() {
@@ -38,6 +58,12 @@
         const autoFollowCheckbox = document.getElementById('auto-follow');
         const autoFollowLabel = document.getElementById('auto-follow-label');
         const searchInput = document.getElementById('search-input');
+        const inputBar = document.getElementById('input-bar');
+        const messageInput = document.getElementById('message-input');
+        const inputStatus = document.getElementById('input-status');
+        const sendBtn = document.getElementById('send-btn');
+        const interruptBtn = document.getElementById('interrupt-btn');
+        const newSessionBtn = document.getElementById('new-session-btn');
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
@@ -48,6 +74,10 @@
         let autoFollow = true;
         let autoFollowDebounce = null;
         let catchupComplete = false;  // Don't auto-follow during initial catchup
+        let sendEnabled = false;  // Whether sending messages is enabled
+        const sessionStatus = new Map();  // session_id -> {running, queued_messages}
+        let pendingSessionCounter = 0;  // Counter for unique pending session IDs
+        const pendingMessages = [];  // Array of {sessionId, messageText, element} for placeholder messages
 
         // Update auto-follow UI
         function updateAutoFollowUI() {
@@ -84,6 +114,231 @@
         searchInput.addEventListener('input', function() {
             filterTabs(this.value);
         });
+
+        // Send functionality
+        async function checkSendEnabled() {
+            try {
+                const response = await fetch('/send-enabled');
+                const data = await response.json();
+                sendEnabled = data.enabled;
+                if (sendEnabled) {
+                    inputBar.classList.remove('hidden');
+                } else {
+                    inputBar.classList.add('hidden');
+                }
+            } catch (e) {
+                console.error('Failed to check send-enabled:', e);
+                sendEnabled = false;
+            }
+        }
+
+        function updateInputBarUI() {
+            if (!activeSessionId) {
+                sendBtn.disabled = true;
+                inputStatus.textContent = '';
+                inputStatus.className = 'input-status';
+                sendBtn.classList.remove('hidden');
+                interruptBtn.classList.add('hidden');
+                return;
+            }
+
+            const session = sessions.get(activeSessionId);
+            const status = sessionStatus.get(activeSessionId) || { running: false, queued_messages: 0 };
+
+            // Handle pending session that is starting (waiting for real session to appear)
+            if (session && session.pending && session.starting) {
+                inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
+                inputStatus.className = 'input-status running';
+                sendBtn.classList.remove('hidden');
+                sendBtn.disabled = true;
+                interruptBtn.classList.add('hidden');
+                return;
+            }
+
+            if (status.running) {
+                inputStatus.className = 'input-status running';
+                sendBtn.classList.add('hidden');
+                interruptBtn.classList.remove('hidden');
+
+                if (status.queued_messages > 0) {
+                    inputStatus.innerHTML = '<span class="spinner"></span> ' +
+                        status.queued_messages + ' message' + (status.queued_messages > 1 ? 's' : '') + ' queued...';
+                } else {
+                    inputStatus.innerHTML = '<span class="spinner"></span> Claude is thinking...';
+                }
+            } else {
+                inputStatus.textContent = '';
+                inputStatus.className = 'input-status';
+                sendBtn.classList.remove('hidden');
+                interruptBtn.classList.add('hidden');
+            }
+
+            sendBtn.disabled = !messageInput.value.trim();
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || !activeSessionId) return;
+
+            const session = sessions.get(activeSessionId);
+            if (!session) return;
+
+            sendBtn.disabled = true;
+
+            // Check if this is a pending (not yet started) session
+            if (session.pending) {
+                await startPendingSession(session, message);
+                return;
+            }
+
+            // Create placeholder message immediately
+            const placeholder = createPlaceholderMessage(activeSessionId, message);
+
+            // Clear input immediately for better UX
+            messageInput.value = '';
+            autoResizeTextarea();
+
+            try {
+                const response = await fetch('/sessions/' + activeSessionId + '/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    alert('Error: ' + (data.detail || 'Failed to send message'));
+                    // Remove placeholder on error
+                    if (placeholder) {
+                        placeholder.element.remove();
+                        const idx = pendingMessages.indexOf(placeholder);
+                        if (idx > -1) pendingMessages.splice(idx, 1);
+                    }
+                }
+            } catch (e) {
+                alert('Error: Failed to send message');
+                console.error('Send error:', e);
+                // Remove placeholder on error
+                if (placeholder) {
+                    placeholder.element.remove();
+                    const idx = pendingMessages.indexOf(placeholder);
+                    if (idx > -1) pendingMessages.splice(idx, 1);
+                }
+            }
+
+            updateInputBarUI();
+        }
+
+        async function startPendingSession(pendingSession, message) {
+            // Show loading state
+            inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
+            inputStatus.className = 'input-status running';
+
+            try {
+                const response = await fetch('/sessions/new', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        cwd: pendingSession.cwd || null
+                    })
+                });
+
+                if (response.ok) {
+                    messageInput.value = '';
+                    autoResizeTextarea();
+                    // Mark this pending session as "starting" so we can merge it later
+                    pendingSession.starting = true;
+                    pendingSession.startedAt = Date.now();
+                } else {
+                    const data = await response.json();
+                    alert('Error: ' + (data.detail || 'Failed to start session'));
+                    inputStatus.textContent = '';
+                    inputStatus.className = 'input-status';
+                }
+            } catch (e) {
+                alert('Error: Failed to start session');
+                console.error('New session error:', e);
+                inputStatus.textContent = '';
+                inputStatus.className = 'input-status';
+            }
+
+            updateInputBarUI();
+        }
+
+        async function interruptSession() {
+            if (!activeSessionId) return;
+
+            try {
+                const response = await fetch('/sessions/' + activeSessionId + '/interrupt', {
+                    method: 'POST'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    console.error('Interrupt failed:', data.detail);
+                }
+            } catch (e) {
+                console.error('Interrupt error:', e);
+            }
+        }
+
+        function autoResizeTextarea() {
+            messageInput.style.height = 'auto';
+            messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
+        }
+
+        // Input event handlers
+        messageInput.addEventListener('input', function() {
+            autoResizeTextarea();
+            updateInputBarUI();
+        });
+
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!sendBtn.disabled && !sendBtn.classList.contains('hidden')) {
+                    sendMessage();
+                }
+            }
+        });
+
+        sendBtn.addEventListener('click', sendMessage);
+        interruptBtn.addEventListener('click', interruptSession);
+
+        // New session functionality - creates a pending tab (Claude not started yet)
+        function createPendingSession() {
+            pendingSessionCounter++;
+            const pendingId = 'pending-' + pendingSessionCounter;
+
+            // Get cwd from active session if available
+            let cwd = null;
+            if (activeSessionId) {
+                const activeSession = sessions.get(activeSessionId);
+                if (activeSession && activeSession.cwd) {
+                    cwd = activeSession.cwd;
+                }
+            }
+
+            // Create the pending session in the UI
+            const session = createSession(pendingId, 'New Session', null, null);
+            session.pending = true;
+            session.cwd = cwd;
+
+            // Add pending styling to the tab
+            session.tab.classList.add('pending');
+
+            // Show empty state in the container
+            session.container.innerHTML = '<div class="pending-session-placeholder">' +
+                '<p>Type a message below to start this Claude session</p>' +
+                '</div>';
+
+            // Switch to the new pending session
+            switchToSession(pendingId);
+            messageInput.focus();
+        }
+
+        newSessionBtn.addEventListener('click', createPendingSession);
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
@@ -270,6 +525,9 @@
             session.tab.classList.add('active');
             activeSessionId = sessionId;
 
+            // Update input bar for new active session
+            updateInputBarUI();
+
             // Scroll to bottom if requested (e.g., after auto-follow switch)
             if (scrollToBottom) {
                 requestAnimationFrame(function() {
@@ -291,6 +549,9 @@
             const msg = temp.firstElementChild;
 
             if (msg) {
+                // Check if this message matches a placeholder and remove it
+                removePlaceholderIfMatches(sessionId, msg);
+
                 session.container.appendChild(msg);
                 processNewElement(msg);
                 session.messageCount++;
@@ -330,9 +591,67 @@
             return div.innerHTML;
         }
 
+        function createPlaceholderMessage(sessionId, messageText) {
+            const session = sessions.get(sessionId);
+            if (!session) return null;
+
+            const timestamp = new Date().toISOString();
+            const msgId = 'placeholder-' + Date.now();
+
+            // Create placeholder HTML similar to real user message
+            const html = '<div class="message user placeholder-message" id="' + msgId + '">' +
+                '<div class="message-header">' +
+                '<span class="role-label">User</span>' +
+                '<time datetime="' + timestamp + '">Sending...</time>' +
+                '</div>' +
+                '<div class="message-content">' +
+                '<div class="user-content"><p>' + escapeHtml(messageText) + '</p></div>' +
+                '</div>' +
+                '</div>';
+
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+            const element = temp.firstElementChild;
+
+            // Add to session container
+            session.container.appendChild(element);
+
+            // Track the placeholder
+            const placeholder = { sessionId: sessionId, messageText: messageText, element: element };
+            pendingMessages.push(placeholder);
+
+            // Scroll to bottom
+            element.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+            return placeholder;
+        }
+
+        function removePlaceholderIfMatches(sessionId, messageElement) {
+            // Check if the incoming message matches any placeholder
+            // Look for user messages with matching content
+            const incomingContent = messageElement.querySelector('.user-content');
+            if (!incomingContent) return;  // Not a user message
+
+            const incomingText = incomingContent.textContent.trim();
+
+            for (let i = 0; i < pendingMessages.length; i++) {
+                const pending = pendingMessages[i];
+                if (pending.sessionId === sessionId && pending.messageText.trim() === incomingText) {
+                    // Found a match - remove the placeholder
+                    pending.element.remove();
+                    pendingMessages.splice(i, 1);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         function connect() {
             updateStatus('reconnecting', 'Connecting...');
             catchupComplete = false;  // Reset for new connection
+
+            // Check if sending is enabled
+            checkSendEnabled();
 
             eventSource = new EventSource('/events');
 
@@ -356,10 +675,41 @@
 
             eventSource.addEventListener('session_added', function(e) {
                 const data = JSON.parse(e.data);
-                const session = createSession(data.id, data.name, data.startedAt, data.lastUpdatedAt);
-                // Auto-switch to newly added sessions (they're likely the active one)
-                if (autoFollow && session) {
-                    switchToSession(data.id, true);  // Scroll to bottom on auto-follow
+
+                // Check if we have a pending session that was starting - merge with it
+                let mergedPendingId = null;
+                const MERGE_WINDOW_MS = 30000;  // 30 seconds
+                sessions.forEach(function(session, sessionId) {
+                    if (session.pending && session.starting &&
+                        (Date.now() - session.startedAt) < MERGE_WINDOW_MS) {
+                        mergedPendingId = sessionId;
+                    }
+                });
+
+                if (mergedPendingId) {
+                    // Merge: remove the pending session, the real one takes its place
+                    const pendingSession = sessions.get(mergedPendingId);
+                    const wasPendingActive = (activeSessionId === mergedPendingId);
+
+                    // Remove the pending session
+                    pendingSession.container.remove();
+                    pendingSession.tab.remove();
+                    sessions.delete(mergedPendingId);
+
+                    // Create the real session
+                    const session = createSession(data.id, data.name, data.startedAt, data.lastUpdatedAt);
+
+                    // If the pending tab was active, switch to the real one
+                    if (wasPendingActive && session) {
+                        switchToSession(data.id, true);
+                    }
+                } else {
+                    // Normal case: just create the session
+                    const session = createSession(data.id, data.name, data.startedAt, data.lastUpdatedAt);
+                    // Auto-switch to newly added sessions (they're likely the active one)
+                    if (autoFollow && session) {
+                        switchToSession(data.id, true);  // Scroll to bottom on auto-follow
+                    }
                 }
             });
 
@@ -381,6 +731,18 @@
 
             eventSource.addEventListener('ping', function(e) {
                 // Keep-alive, no action needed
+            });
+
+            eventSource.addEventListener('session_status', function(e) {
+                const data = JSON.parse(e.data);
+                sessionStatus.set(data.session_id, {
+                    running: data.running,
+                    queued_messages: data.queued_messages
+                });
+                // Update UI if this is the active session
+                if (data.session_id === activeSessionId) {
+                    updateInputBarUI();
+                }
             });
 
             eventSource.addEventListener('reinitialize', function(e) {
