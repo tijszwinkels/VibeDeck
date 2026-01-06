@@ -232,6 +232,7 @@ def render_message(entry: dict) -> str:
         return ""
 
     usage = None
+    model = None
     if log_type == "user":
         content_html = render_user_message_content(message_data)
         # Check if this is a tool result message
@@ -244,8 +245,8 @@ def render_message(entry: dict) -> str:
         role_class, role_label = "assistant", "Assistant"
         # Extract usage data for assistant messages and calculate cost
         usage = message_data.get("usage", {})
+        model = message_data.get("model")
         if usage:
-            model = message_data.get("model")
             usage = dict(usage)  # Make a copy to avoid mutating the original
             usage["cost"] = calculate_message_cost(usage, model)
     else:
@@ -255,7 +256,7 @@ def render_message(entry: dict) -> str:
         return ""
 
     msg_id = make_msg_id(timestamp)
-    return _macros.message(role_class, role_label, msg_id, timestamp, content_html, usage)
+    return _macros.message(role_class, role_label, msg_id, timestamp, content_html, usage, model)
 
 
 def get_template(name: str):

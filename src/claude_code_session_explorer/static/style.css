@@ -174,6 +174,7 @@ pre code { background: none; padding: 0; }
 /* Message tooltip for token usage */
 .message-tooltip { position: fixed; background: var(--code-bg); color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 0.75rem; z-index: 1100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); pointer-events: none; display: none; font-family: monospace; }
 .message-tooltip .usage-row { display: flex; gap: 12px; }
+.message-tooltip .model-row { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.15); }
 .message-tooltip .usage-item { white-space: nowrap; }
 .message-tooltip .usage-label { color: var(--text-muted); margin-right: 4px; }
 .message.assistant .message-header { cursor: help; }

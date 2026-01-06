@@ -99,10 +99,14 @@
 {%- endmacro %}
 
 {# Message wrapper - content_html is pre-rendered so needs |safe #}
-{% macro message(role_class, role_label, msg_id, timestamp, content_html, usage=None) %}
+{% macro message(role_class, role_label, msg_id, timestamp, content_html, usage=None, model=None) %}
 {%- set usage_attrs = '' -%}
 {%- if usage and usage.input_tokens is defined -%}
 {%- set usage_attrs = 'data-usage-input="' ~ usage.get('input_tokens', 0) ~ '" data-usage-output="' ~ usage.get('output_tokens', 0) ~ '" data-usage-cache-create="' ~ usage.get('cache_creation_input_tokens', 0) ~ '" data-usage-cache-read="' ~ usage.get('cache_read_input_tokens', 0) ~ '" data-usage-cost="' ~ usage.get('cost', 0) ~ '"' -%}
 {%- endif -%}
-<div class="message {{ role_class }}" id="{{ msg_id }}" {{ usage_attrs|safe }}><div class="message-header"><span class="role-label">{{ role_label }}</span><a href="#{{ msg_id }}" class="timestamp-link"><time datetime="{{ timestamp }}" data-timestamp="{{ timestamp }}">{{ timestamp }}</time></a></div><div class="message-content">{{ content_html|safe }}</div></div>
+{%- set model_attr = '' -%}
+{%- if model -%}
+{%- set model_attr = ' data-model="' ~ model ~ '"' -%}
+{%- endif -%}
+<div class="message {{ role_class }}" id="{{ msg_id }}" {{ usage_attrs|safe }}{{ model_attr|safe }}><div class="message-header"><span class="role-label">{{ role_label }}</span><a href="#{{ msg_id }}" class="timestamp-link"><time datetime="{{ timestamp }}" data-timestamp="{{ timestamp }}">{{ timestamp }}</time></a></div><div class="message-content">{{ content_html|safe }}</div></div>
 {%- endmacro %}

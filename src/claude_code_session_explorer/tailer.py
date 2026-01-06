@@ -463,6 +463,7 @@ def get_session_token_usage(session_path: Path) -> dict:
         - cache_read_tokens: Total tokens read from cache
         - message_count: Number of assistant messages
         - cost: Total cost in USD
+        - models: List of unique model IDs used in the session
     """
     totals = {
         "input_tokens": 0,
@@ -471,7 +472,9 @@ def get_session_token_usage(session_path: Path) -> dict:
         "cache_read_tokens": 0,
         "message_count": 0,
         "cost": 0.0,
+        "models": [],
     }
+    models_seen = set()
 
     try:
         with open(session_path, "r", encoding="utf-8") as f:
@@ -485,6 +488,9 @@ def get_session_token_usage(session_path: Path) -> dict:
                         message = entry.get("message", {})
                         usage = message.get("usage", {})
                         model = message.get("model")
+                        if model and model not in models_seen:
+                            models_seen.add(model)
+                            totals["models"].append(model)
                         if usage:
                             totals["input_tokens"] += usage.get("input_tokens", 0)
                             totals["output_tokens"] += usage.get("output_tokens", 0)

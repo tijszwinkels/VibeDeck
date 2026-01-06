@@ -592,6 +592,26 @@
 
         let messageTooltipTimeout = null;
 
+        function formatModelName(model) {
+            if (!model) return '';
+            // Format 1: claude-opus-4-5-20251101 -> "Opus 4.5"
+            // Format 2: claude-sonnet-4-20250514 -> "Sonnet 4"
+            let match = model.match(/claude-(\w+)-(\d+)(?:-(\d+))?-\d{8}/);
+            if (match) {
+                const name = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+                const version = match[3] ? `${match[2]}.${match[3]}` : match[2];
+                return `${name} ${version}`;
+            }
+            // Format 3: claude-3-7-sonnet-20250219 -> "Sonnet 3.7"
+            match = model.match(/claude-(\d+)(?:-(\d+))?-(\w+)-\d{8}/);
+            if (match) {
+                const name = match[3].charAt(0).toUpperCase() + match[3].slice(1);
+                const version = match[2] ? `${match[1]}.${match[2]}` : match[1];
+                return `${name} ${version}`;
+            }
+            return model;
+        }
+
         function showMessageTooltip(msgEl, e) {
             if (messageTooltipTimeout) clearTimeout(messageTooltipTimeout);
 
@@ -601,8 +621,15 @@
                 const cacheCreate = parseInt(msgEl.dataset.usageCacheCreate) || 0;
                 const cacheRead = parseInt(msgEl.dataset.usageCacheRead) || 0;
                 const cost = parseFloat(msgEl.dataset.usageCost) || 0;
+                const model = msgEl.dataset.model || '';
+
+                let modelHtml = '';
+                if (model) {
+                    modelHtml = `<div class="usage-row model-row"><span class="usage-label">Model:</span>${escapeHtml(formatModelName(model))}</div>`;
+                }
 
                 messageTooltip.innerHTML = `
+                    ${modelHtml}
                     <div class="usage-row">
                         <span class="usage-item"><span class="usage-label">In:</span>${formatTokenCount(input)}</span>
                         <span class="usage-item"><span class="usage-label">Out:</span>${formatTokenCount(output)}</span>
@@ -723,13 +750,21 @@
                 createPendingSession(projectPath || null, projectName);
             });
 
-            // Date section toggle handlers
+            // Date section toggle handlers and tooltips
             projectItem.querySelectorAll('.date-divider').forEach(function(divider) {
                 divider.addEventListener('click', function(e) {
                     e.stopPropagation();
                     const section = divider.parentElement;
                     section.classList.toggle('collapsed');
                 });
+                // Add tooltip handlers for date sections
+                divider.addEventListener('mouseenter', function(e) {
+                    const section = divider.parentElement;
+                    const category = section.dataset.category;
+                    showDateCategoryTooltip(projectName, category, e);
+                });
+                divider.addEventListener('mouseleave', hideTooltip);
+                divider.addEventListener('mousemove', positionTooltip);
             });
 
             projectListContainer.appendChild(projectItem);
@@ -863,6 +898,58 @@
             return '$' + cost.toFixed(2);
         }
 
+        function showDateCategoryTooltip(projectName, category, e) {
+            const project = projects.get(projectName);
+            if (!project) return;
+
+            if (tooltipTimeout) clearTimeout(tooltipTimeout);
+
+            tooltipTimeout = setTimeout(function() {
+                // Aggregate stats for sessions in this date category
+                let totalInput = 0, totalOutput = 0, totalCacheCreate = 0, totalCacheRead = 0, totalCost = 0;
+                let sessionCount = 0;
+
+                project.sessions.forEach(function(sessionId) {
+                    const session = sessions.get(sessionId);
+                    if (!session) return;
+                    const sessionCategory = getDateCategory(session.lastUpdatedAt);
+                    if (sessionCategory !== category) return;
+
+                    sessionCount++;
+                    if (session.tokenUsage) {
+                        totalInput += session.tokenUsage.input_tokens || 0;
+                        totalOutput += session.tokenUsage.output_tokens || 0;
+                        totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
+                        totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
+                        totalCost += session.tokenUsage.cost || 0;
+                    }
+                });
+
+                if (sessionCount === 0) {
+                    hideTooltip();
+                    return;
+                }
+
+                const categoryLabel = dateCategoryLabels[category] || category;
+
+                sessionTooltip.innerHTML = `
+                    <div class="tooltip-label">${escapeHtml(categoryLabel)} - ${escapeHtml(projectName)}</div>
+                    <div class="tooltip-value">${sessionCount} session${sessionCount !== 1 ? 's' : ''}</div>
+                    <div class="tooltip-label">Token Usage</div>
+                    <div class="tooltip-value tooltip-usage">
+                        <span class="usage-item">In: ${formatTokenCount(totalInput)}</span>
+                        <span class="usage-item">Out: ${formatTokenCount(totalOutput)}</span>
+                        <span class="usage-item">Cache↑: ${formatTokenCount(totalCacheCreate)}</span>
+                        <span class="usage-item">Cache↓: ${formatTokenCount(totalCacheRead)}</span>
+                    </div>
+                    <div class="tooltip-label">Estimated Cost</div>
+                    <div class="tooltip-value tooltip-cost">${formatCost(totalCost)}</div>
+                `;
+                sessionTooltip.style.display = 'block';
+                positionTooltip(e);
+            }, 300);
+        }
+
         function showTooltip(sessionId, e) {
             const session = sessions.get(sessionId);
             if (!session) return;
@@ -877,7 +964,16 @@
                 let usageHtml = '';
                 if (session.tokenUsage && session.tokenUsage.message_count > 0) {
                     const u = session.tokenUsage;
+                    let modelsHtml = '';
+                    if (u.models && u.models.length > 0) {
+                        const modelNames = u.models.map(formatModelName).join(', ');
+                        modelsHtml = `
+                            <div class="tooltip-label">Models</div>
+                            <div class="tooltip-value tooltip-models">${escapeHtml(modelNames)}</div>
+                        `;
+                    }
                     usageHtml = `
+                        ${modelsHtml}
                         <div class="tooltip-label">Token Usage</div>
                         <div class="tooltip-value tooltip-usage">
                             <span class="usage-item">In: ${formatTokenCount(u.input_tokens)}</span>
