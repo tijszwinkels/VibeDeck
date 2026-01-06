@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .tailer import SessionTailer, get_first_user_message, get_session_id, get_session_name, has_messages
+from .tailer import (
+    SessionTailer,
+    get_first_user_message,
+    get_session_id,
+    get_session_name,
+    get_session_token_usage,
+    has_messages,
+)
 
 if TYPE_CHECKING:
     pass
@@ -67,6 +74,9 @@ class SessionInfo:
         except OSError:
             last_updated = None
 
+        # Get token usage stats
+        usage = get_session_token_usage(self.path)
+
         return {
             "id": self.session_id,
             "name": self.name,
@@ -76,6 +86,7 @@ class SessionInfo:
             "firstMessage": self.first_message,
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
+            "tokenUsage": usage,
         }
 
 

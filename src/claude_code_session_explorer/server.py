@@ -118,7 +118,7 @@ async def broadcast_session_removed(session_id: str) -> None:
 
 
 async def broadcast_session_status(session_id: str) -> None:
-    """Broadcast session status (running state, queue size)."""
+    """Broadcast session status (running state, queue size, waiting state)."""
     info = get_session(session_id)
     if info is None:
         return
@@ -126,6 +126,7 @@ async def broadcast_session_status(session_id: str) -> None:
         "session_id": session_id,
         "running": info.process is not None,
         "queued_messages": len(info.message_queue),
+        "waiting_for_input": info.tailer.waiting_for_input,
     })
 
 
@@ -137,13 +138,23 @@ async def run_claude_for_session(session_id: str, message: str) -> None:
         return
 
     try:
+        # Ensure session is in Claude's session index so --resume works.
+        # Claude uses ~/.claude/session-env/<session-id>/ directories as its index.
+        # Sessions created externally (via -p mode) don't get indexed automatically.
+        session_env_dir = Path.home() / ".claude" / "session-env" / session_id
+        session_env_dir.mkdir(parents=True, exist_ok=True)
+
         # Build command arguments
         cmd_args = ["claude", "-p", message, "--resume", session_id]
         if _skip_permissions:
             cmd_args.append("--dangerously-skip-permissions")
 
+        # Determine working directory from session info
+        cwd = info.project_path if info.project_path and Path(info.project_path).is_dir() else None
+
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
+            cwd=cwd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -182,6 +193,10 @@ async def process_session_messages(session_id: str) -> None:
         html = render_message(entry)
         if html:
             await broadcast_message(session_id, html)
+
+    # Broadcast updated waiting state after processing messages
+    if new_entries:
+        await broadcast_session_status(session_id)
 
 
 async def check_for_new_sessions() -> None:
@@ -509,10 +524,16 @@ async def create_new_session(request: NewSessionRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Determine working directory
+    # Determine working directory - create if it doesn't exist
     cwd: Path | None = None
     if request.cwd:
         potential_cwd = Path(request.cwd)
+        if not potential_cwd.exists():
+            try:
+                potential_cwd.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Created directory: {potential_cwd}")
+            except OSError as e:
+                raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
         if potential_cwd.is_dir():
             cwd = potential_cwd
 

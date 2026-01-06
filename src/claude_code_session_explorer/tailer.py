@@ -18,6 +18,7 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
     ~/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl
 
     The folder name encodes the original path with slashes replaced by dashes.
+    Additionally, underscores in directory names are also replaced with dashes.
     We check if decoded paths actually exist on the filesystem to find the
     correct project directory.
 
@@ -35,8 +36,10 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
     folder = folder.lstrip("-")
 
     # Try to find the actual directory by testing different dash positions
-    # Some dashes are path separators, some are part of directory names
+    # Some dashes are path separators, some are part of directory names,
+    # and some were originally underscores.
     # Strategy: try replacing each dash with / and see if the resulting path exists
+    # Also try replacing remaining dashes with underscores
 
     # Find all dash positions
     dash_positions = [i for i, c in enumerate(folder) if c == "-"]
@@ -54,6 +57,14 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
             candidate_path = "/" + "".join(candidate)
             if Path(candidate_path).is_dir():
                 return Path(candidate_path).name, candidate_path
+
+            # Also try with remaining dashes as underscores
+            candidate_with_underscores = [
+                "_" if c == "-" else c for c in candidate
+            ]
+            candidate_path_underscore = "/" + "".join(candidate_with_underscores)
+            if Path(candidate_path_underscore).is_dir():
+                return Path(candidate_path_underscore).name, candidate_path_underscore
 
     # Fallback: return the folder name as-is
     return folder or session_path.parent.name, folder
@@ -145,6 +156,8 @@ class SessionTailer:
         self.buffer = ""  # Incomplete line buffer
         self.message_index = 0  # Count of messages yielded
         self._first_timestamp: str | None = None  # Cached first message timestamp
+        self._last_message_type: str | None = None  # 'assistant_text', 'assistant_tool', 'user', etc.
+        self._waiting_for_input: bool = False  # True when agent finished and waiting
 
     def get_first_timestamp(self) -> str | None:
         """Get the timestamp of the first message in the session."""
@@ -167,6 +180,55 @@ class SessionTailer:
         except (FileNotFoundError, IOError):
             pass
         return None
+
+    def _update_waiting_state(self, entry: dict) -> None:
+        """Update the waiting-for-input state based on a message entry.
+
+        Agent is waiting for input when the last message is an assistant
+        message with text content (not tool_use).
+        """
+        entry_type = entry.get("type")
+        message_data = entry.get("message", {})
+        content = message_data.get("content", [])
+
+        if entry_type == "assistant":
+            # Check the content type
+            if isinstance(content, list) and content:
+                last_content = content[-1] if content else {}
+                content_type = last_content.get("type", "") if isinstance(last_content, dict) else ""
+
+                if content_type == "tool_use":
+                    self._last_message_type = "assistant_tool"
+                    self._waiting_for_input = False
+                elif content_type == "text":
+                    self._last_message_type = "assistant_text"
+                    self._waiting_for_input = True
+                else:
+                    # thinking, etc - keep previous state
+                    pass
+            else:
+                self._last_message_type = "assistant_other"
+                self._waiting_for_input = False
+
+        elif entry_type == "user":
+            # Check if it's a tool result or actual user input
+            if isinstance(content, list) and content:
+                first_content = content[0] if content else {}
+                content_type = first_content.get("type", "") if isinstance(first_content, dict) else ""
+                if content_type == "tool_result":
+                    self._last_message_type = "user_tool_result"
+                    self._waiting_for_input = False
+                else:
+                    self._last_message_type = "user_input"
+                    self._waiting_for_input = False
+            elif isinstance(content, str):
+                self._last_message_type = "user_input"
+                self._waiting_for_input = False
+
+    @property
+    def waiting_for_input(self) -> bool:
+        """Check if the session is waiting for user input."""
+        return self._waiting_for_input
 
     def read_new_lines(self) -> list[dict]:
         """Read and parse new complete lines from the file.
@@ -206,6 +268,7 @@ class SessionTailer:
                 if entry_type in ("user", "assistant"):
                     results.append(obj)
                     self.message_index += 1
+                    self._update_waiting_state(obj)
             except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse JSON line: {e}")
                 continue
@@ -217,10 +280,15 @@ class SessionTailer:
 
         Does NOT modify the current position - reads a fresh copy.
         Returns list of all parsed message objects.
+        Also updates the waiting_for_input state based on all messages.
         """
         # Create a fresh tailer to read from start without affecting our position
         fresh_tailer = SessionTailer(self.path)
-        return fresh_tailer.read_new_lines()
+        results = fresh_tailer.read_new_lines()
+        # Copy the waiting state from the fresh tailer
+        self._waiting_for_input = fresh_tailer._waiting_for_input
+        self._last_message_type = fresh_tailer._last_message_type
+        return results
 
 
 async def watch_file(path: Path, callback: Callable[[], None]) -> AsyncGenerator[None, None]:
@@ -248,14 +316,14 @@ async def watch_file(path: Path, callback: Callable[[], None]) -> AsyncGenerator
 def find_recent_sessions(
     projects_dir: Path | None = None, limit: int = 10
 ) -> list[Path]:
-    """Find the most recently modified session files.
+    """Find the most recently modified session files that have messages.
 
     Args:
         projects_dir: Base directory to search (defaults to ~/.claude/projects)
         limit: Maximum number of sessions to return
 
     Returns:
-        List of paths to recent .jsonl files, sorted by modification time (newest first)
+        List of paths to recent .jsonl files with messages, sorted by modification time (newest first)
     """
     if projects_dir is None:
         projects_dir = Path.home() / ".claude" / "projects"
@@ -270,6 +338,9 @@ def find_recent_sessions(
         if f.name.startswith("agent-"):
             continue
         try:
+            # Skip empty files
+            if f.stat().st_size == 0:
+                continue
             mtime = f.stat().st_mtime
             sessions.append((f, mtime))
         except OSError:
@@ -279,9 +350,18 @@ def find_recent_sessions(
         logger.warning("No session files found")
         return []
 
-    # Return the most recently modified
+    # Sort by modification time (newest first)
     sessions.sort(key=lambda x: x[1], reverse=True)
-    return [s[0] for s in sessions[:limit]]
+
+    # Filter to sessions with messages, up to the limit
+    result = []
+    for f, _ in sessions:
+        if has_messages(f):
+            result.append(f)
+            if len(result) >= limit:
+                break
+
+    return result
 
 
 def find_most_recent_session(projects_dir: Path | None = None) -> Path | None:
@@ -295,3 +375,55 @@ def find_most_recent_session(projects_dir: Path | None = None) -> Path | None:
     """
     sessions = find_recent_sessions(projects_dir, limit=1)
     return sessions[0] if sessions else None
+
+
+def get_session_token_usage(session_path: Path) -> dict:
+    """Calculate total token usage from a session file.
+
+    Reads all assistant messages and sums up their usage fields.
+
+    Args:
+        session_path: Path to the session JSONL file
+
+    Returns:
+        Dictionary with token usage totals:
+        - input_tokens: Total non-cached input tokens
+        - output_tokens: Total output tokens
+        - cache_creation_tokens: Total tokens written to cache
+        - cache_read_tokens: Total tokens read from cache
+        - message_count: Number of assistant messages
+    """
+    totals = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "message_count": 0,
+    }
+
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") == "assistant":
+                        usage = entry.get("message", {}).get("usage", {})
+                        if usage:
+                            totals["input_tokens"] += usage.get("input_tokens", 0)
+                            totals["output_tokens"] += usage.get("output_tokens", 0)
+                            totals["cache_creation_tokens"] += usage.get(
+                                "cache_creation_input_tokens", 0
+                            )
+                            totals["cache_read_tokens"] += usage.get(
+                                "cache_read_input_tokens", 0
+                            )
+                            totals["message_count"] += 1
+                except json.JSONDecodeError:
+                    continue
+    except (FileNotFoundError, IOError):
+        pass
+
+    return totals

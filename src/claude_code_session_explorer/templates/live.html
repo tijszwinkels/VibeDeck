@@ -26,7 +26,7 @@
                     <input type="checkbox" id="auto-switch" checked>
                     <span>Auto-switch</span>
                 </label>
-                <button class="new-session-btn" id="new-session-btn" title="New session">+ New</button>
+                <button class="new-session-btn" id="new-session-btn" title="New session in custom directory">+ New</button>
             </div>
         </div>
         <div class="project-list" id="project-list"></div>
@@ -64,6 +64,9 @@
     <!-- Session tooltip (hidden, shown on hover) -->
     <div class="session-tooltip" id="session-tooltip" style="display: none;"></div>
 
+    <!-- Message tooltip for token usage (hidden, shown on hover) -->
+    <div class="message-tooltip" id="message-tooltip"></div>
+
     <!-- Floating controls -->
     <div class="floating-controls" id="floating-controls">
         <button class="scroll-btn" id="scroll-top-btn" title="Scroll to top">&#8593;</button>
@@ -96,6 +99,7 @@
         const interruptBtn = document.getElementById('interrupt-btn');
         const newSessionBtn = document.getElementById('new-session-btn');
         const sessionTooltip = document.getElementById('session-tooltip');
+        const messageTooltip = document.getElementById('message-tooltip');
         const scrollTopBtn = document.getElementById('scroll-top-btn');
         const scrollBottomBtn = document.getElementById('scroll-bottom-btn');
         const autoScrollCheckbox = document.getElementById('auto-scroll-checkbox');
@@ -423,26 +427,29 @@
         interruptBtn.addEventListener('click', interruptSession);
 
         // New session functionality
-        function createPendingSession() {
+        function createPendingSession(cwd, projectName) {
             pendingSessionCounter++;
             const pendingId = 'pending-' + pendingSessionCounter;
 
-            let cwd = null;
-            if (activeSessionId) {
+            // Use provided cwd/projectName, or fall back to active session's project
+            if (!cwd && activeSessionId) {
                 const activeSession = sessions.get(activeSessionId);
                 if (activeSession && activeSession.cwd) {
                     cwd = activeSession.cwd;
+                    projectName = projectName || activeSession.projectName;
                 }
             }
 
-            const session = createSession(pendingId, 'New Session', 'Pending', null, null, null, null);
+            const displayProjectName = projectName || 'New Session';
+            const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null);
             session.pending = true;
             session.cwd = cwd;
 
             session.sidebarItem.classList.add('pending');
             session.container.innerHTML = '<div class="pending-session-placeholder">' +
-                '<p>Type a message below to start this Claude session</p>' +
-                '</div>';
+                '<p>Type a message below to start this Claude session' +
+                (cwd ? ' in <strong>' + escapeHtml(displayProjectName) + '</strong>' : '') +
+                '</p></div>';
 
             switchToSession(pendingId);
             messageInput.focus();
@@ -454,7 +461,32 @@
             }
         }
 
-        newSessionBtn.addEventListener('click', createPendingSession);
+        function promptForNewSession() {
+            // Get a default directory from active session if available
+            let defaultDir = '';
+            if (activeSessionId) {
+                const activeSession = sessions.get(activeSessionId);
+                if (activeSession && activeSession.cwd) {
+                    defaultDir = activeSession.cwd;
+                }
+            }
+
+            const dir = prompt('Enter working directory for new session:', defaultDir);
+            if (dir === null) return; // Cancelled
+
+            const trimmedDir = dir.trim();
+            if (!trimmedDir) {
+                alert('Please enter a directory path');
+                return;
+            }
+
+            // Extract project name from path (last component)
+            const projectName = trimmedDir.split('/').filter(s => s).pop() || 'New Session';
+
+            createPendingSession(trimmedDir, projectName);
+        }
+
+        newSessionBtn.addEventListener('click', promptForNewSession);
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
@@ -504,6 +536,81 @@
                     });
                 }
             });
+
+            // Add tooltip handlers for assistant messages with usage data
+            // Check both the element itself and its descendants
+            const assistantMessages = [];
+            if (element.matches && element.matches('.message.assistant[data-usage-input]')) {
+                assistantMessages.push(element);
+            }
+            element.querySelectorAll('.message.assistant[data-usage-input]').forEach(function(msg) {
+                assistantMessages.push(msg);
+            });
+            assistantMessages.forEach(function(msg) {
+                const header = msg.querySelector('.message-header');
+                if (header) {
+                    header.addEventListener('mouseenter', function(e) {
+                        showMessageTooltip(msg, e);
+                    });
+                    header.addEventListener('mouseleave', hideMessageTooltip);
+                    header.addEventListener('mousemove', function(e) {
+                        positionMessageTooltip(e);
+                    });
+                }
+            });
+        }
+
+        let messageTooltipTimeout = null;
+
+        function showMessageTooltip(msgEl, e) {
+            if (messageTooltipTimeout) clearTimeout(messageTooltipTimeout);
+
+            messageTooltipTimeout = setTimeout(function() {
+                const input = parseInt(msgEl.dataset.usageInput) || 0;
+                const output = parseInt(msgEl.dataset.usageOutput) || 0;
+                const cacheCreate = parseInt(msgEl.dataset.usageCacheCreate) || 0;
+                const cacheRead = parseInt(msgEl.dataset.usageCacheRead) || 0;
+
+                messageTooltip.innerHTML = `
+                    <div class="usage-row">
+                        <span class="usage-item"><span class="usage-label">In:</span>${formatTokenCount(input)}</span>
+                        <span class="usage-item"><span class="usage-label">Out:</span>${formatTokenCount(output)}</span>
+                        <span class="usage-item"><span class="usage-label">Cache↑:</span>${formatTokenCount(cacheCreate)}</span>
+                        <span class="usage-item"><span class="usage-label">Cache↓:</span>${formatTokenCount(cacheRead)}</span>
+                    </div>
+                `;
+                // Position first with visibility hidden to measure, then show
+                messageTooltip.style.visibility = 'hidden';
+                messageTooltip.style.display = 'block';
+                positionMessageTooltip(e);
+                messageTooltip.style.visibility = 'visible';
+            }, 200);
+        }
+
+        function positionMessageTooltip(e) {
+            const padding = 10;
+            let left = e.clientX + padding;
+            let top = e.clientY + padding;
+
+            // Get dimensions after rendering
+            const rect = messageTooltip.getBoundingClientRect();
+            if (rect.width > 0 && left + rect.width > window.innerWidth) {
+                left = e.clientX - rect.width - padding;
+            }
+            if (rect.height > 0 && top + rect.height > window.innerHeight) {
+                top = e.clientY - rect.height - padding;
+            }
+
+            messageTooltip.style.left = left + 'px';
+            messageTooltip.style.top = top + 'px';
+        }
+
+        function hideMessageTooltip() {
+            if (messageTooltipTimeout) {
+                clearTimeout(messageTooltipTimeout);
+                messageTooltipTimeout = null;
+            }
+            messageTooltip.style.display = 'none';
         }
 
         function formatTimestamp(ts) {
@@ -527,9 +634,14 @@
             return text.substring(0, maxLength) + '...';
         }
 
-        function getOrCreateProject(projectName) {
+        function getOrCreateProject(projectName, projectPath) {
             if (projects.has(projectName)) {
-                return projects.get(projectName);
+                const project = projects.get(projectName);
+                // Update path if we have a better one
+                if (projectPath && !project.path) {
+                    project.path = projectPath;
+                }
+                return project;
             }
 
             const projectItem = document.createElement('div');
@@ -537,20 +649,32 @@
             projectItem.innerHTML = `
                 <div class="project-header">
                     <span class="project-icon">&#9660;</span>
+                    <span class="unread-dot"></span>
                     <span class="project-name">${escapeHtml(projectName)}</span>
+                    <button class="project-new-btn" title="New session in ${escapeHtml(projectName)}">+</button>
                 </div>
                 <div class="session-list"></div>
             `;
 
             const projectHeader = projectItem.querySelector('.project-header');
-            projectHeader.addEventListener('click', function() {
+            const projectNewBtn = projectItem.querySelector('.project-new-btn');
+
+            projectHeader.addEventListener('click', function(e) {
+                // Don't toggle when clicking the new button
+                if (e.target === projectNewBtn) return;
                 projectItem.classList.toggle('collapsed');
+            });
+
+            projectNewBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                createPendingSession(projectPath || null, projectName);
             });
 
             projectListContainer.appendChild(projectItem);
 
             const project = {
                 name: projectName,
+                path: projectPath || null,
                 sessions: new Set(),
                 lastActivity: 0,
                 element: projectItem,
@@ -561,7 +685,7 @@
             return project;
         }
 
-        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt) {
+        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage) {
             if (sessions.has(sessionId)) return sessions.get(sessionId);
 
             // Create container with session header
@@ -584,6 +708,7 @@
             sidebarItem.className = 'session-item';
             sidebarItem.dataset.session = sessionId;
             sidebarItem.innerHTML = `
+                <span class="unread-dot"></span>
                 <span class="session-title">${escapeHtml(displayTitle)}</span>
                 <span class="close-btn" title="Close">&times;</span>
             `;
@@ -592,7 +717,7 @@
                 if (e.target.classList.contains('close-btn')) {
                     removeSession(sessionId);
                 } else {
-                    switchToSession(sessionId);
+                    switchToSession(sessionId, true);  // Scroll to bottom when opening
                     // Close sidebar on mobile
                     if (isMobile()) {
                         sidebarOpen = false;
@@ -611,7 +736,7 @@
             });
 
             // Add to project
-            const project = getOrCreateProject(projectName || 'Unknown');
+            const project = getOrCreateProject(projectName || 'Unknown', projectPath);
             project.sessions.add(sessionId);
             project.sessionListElement.appendChild(sidebarItem);
 
@@ -626,7 +751,9 @@
                 messageCount: 0,
                 lastActivity: lastUpdatedAt ? lastUpdatedAt * 1000 : Date.now(),
                 startedAt: startedAt || null,
-                lastUpdatedAt: lastUpdatedAt || null
+                lastUpdatedAt: lastUpdatedAt || null,
+                cwd: projectPath || null,
+                tokenUsage: tokenUsage || null
             };
             sessions.set(sessionId, session);
 
@@ -641,6 +768,16 @@
             return session;
         }
 
+        function formatTokenCount(count) {
+            if (!count || count === 0) return '0';
+            if (count >= 1000000) {
+                return (count / 1000000).toFixed(1) + 'M';
+            } else if (count >= 1000) {
+                return (count / 1000).toFixed(1) + 'K';
+            }
+            return count.toString();
+        }
+
         function showTooltip(sessionId, e) {
             const session = sessions.get(sessionId);
             if (!session) return;
@@ -652,11 +789,26 @@
                 const updated = formatTimestamp(session.lastUpdatedAt);
                 const fullMessage = session.firstMessage || 'No message';
 
+                let usageHtml = '';
+                if (session.tokenUsage && session.tokenUsage.message_count > 0) {
+                    const u = session.tokenUsage;
+                    usageHtml = `
+                        <div class="tooltip-label">Token Usage</div>
+                        <div class="tooltip-value tooltip-usage">
+                            <span class="usage-item">In: ${formatTokenCount(u.input_tokens)}</span>
+                            <span class="usage-item">Out: ${formatTokenCount(u.output_tokens)}</span>
+                            <span class="usage-item">Cache↑: ${formatTokenCount(u.cache_creation_tokens)}</span>
+                            <span class="usage-item">Cache↓: ${formatTokenCount(u.cache_read_tokens)}</span>
+                        </div>
+                    `;
+                }
+
                 sessionTooltip.innerHTML = `
                     <div class="tooltip-label">Created</div>
                     <div class="tooltip-value">${escapeHtml(started)}</div>
                     <div class="tooltip-label">Last updated</div>
                     <div class="tooltip-value">${escapeHtml(updated)}</div>
+                    ${usageHtml}
                     <div class="tooltip-label">First message</div>
                     <div class="tooltip-value tooltip-message">${escapeHtml(fullMessage)}</div>
                 `;
@@ -723,6 +875,17 @@
         }
 
         function reorderSidebar() {
+            // FLIP animation: capture positions before reorder
+            const projectPositions = new Map();
+            const sessionPositions = new Map();
+
+            projects.forEach(function(project) {
+                projectPositions.set(project.name, project.element.getBoundingClientRect());
+            });
+            sessions.forEach(function(session) {
+                sessionPositions.set(session.id, session.sidebarItem.getBoundingClientRect());
+            });
+
             // Sort projects by lastActivity
             const sortedProjects = Array.from(projects.values()).sort((a, b) => b.lastActivity - a.lastActivity);
 
@@ -739,6 +902,35 @@
                     project.sessionListElement.appendChild(session.sidebarItem);
                 });
             });
+
+            // FLIP animation: animate from old to new positions
+            projects.forEach(function(project) {
+                const oldRect = projectPositions.get(project.name);
+                const newRect = project.element.getBoundingClientRect();
+                if (oldRect && Math.abs(oldRect.top - newRect.top) > 1) {
+                    const deltaY = oldRect.top - newRect.top;
+                    project.element.style.transform = `translateY(${deltaY}px)`;
+                    project.element.style.transition = 'none';
+                    requestAnimationFrame(function() {
+                        project.element.style.transition = 'transform 0.2s ease-out';
+                        project.element.style.transform = '';
+                    });
+                }
+            });
+
+            sessions.forEach(function(session) {
+                const oldRect = sessionPositions.get(session.id);
+                const newRect = session.sidebarItem.getBoundingClientRect();
+                if (oldRect && Math.abs(oldRect.top - newRect.top) > 1) {
+                    const deltaY = oldRect.top - newRect.top;
+                    session.sidebarItem.style.transform = `translateY(${deltaY}px)`;
+                    session.sidebarItem.style.transition = 'none';
+                    requestAnimationFrame(function() {
+                        session.sidebarItem.style.transition = 'transform 0.2s ease-out';
+                        session.sidebarItem.style.transform = '';
+                    });
+                }
+            });
         }
 
         function switchToSession(sessionId, scrollToBottom = false) {
@@ -754,6 +946,10 @@
             session.sidebarItem.classList.add('active');
             activeSessionId = sessionId;
 
+            // Clear unread/waiting state
+            session.sidebarItem.classList.remove('unread', 'waiting');
+            updateProjectUnreadState(session.projectName);
+
             // Update header title
             sessionTitleBar.textContent = session.displayTitle || session.name;
 
@@ -763,6 +959,55 @@
                 requestAnimationFrame(function() {
                     window.scrollTo(0, document.body.scrollHeight);
                 });
+            }
+        }
+
+        function updateSessionWaitingState(sessionId) {
+            const session = sessions.get(sessionId);
+            if (!session) return;
+
+            const status = sessionStatus.get(sessionId);
+            const isWaiting = status && status.waiting_for_input;
+            const hasUnread = session.sidebarItem.classList.contains('unread') ||
+                              session.sidebarItem.classList.contains('waiting');
+
+            // Update session item: waiting takes precedence over unread
+            if (hasUnread && isWaiting) {
+                session.sidebarItem.classList.remove('unread');
+                session.sidebarItem.classList.add('waiting');
+            } else if (hasUnread && !isWaiting) {
+                session.sidebarItem.classList.remove('waiting');
+                session.sidebarItem.classList.add('unread');
+            }
+
+            // Update project state
+            updateProjectUnreadState(session.projectName);
+        }
+
+        function updateProjectUnreadState(projectName) {
+            const project = projects.get(projectName);
+            if (!project) return;
+
+            // Check if any session in this project has unread/waiting messages
+            let hasUnread = false;
+            let hasWaiting = false;
+            project.sessions.forEach(function(sessionId) {
+                const session = sessions.get(sessionId);
+                if (session) {
+                    if (session.sidebarItem.classList.contains('waiting')) {
+                        hasWaiting = true;
+                    } else if (session.sidebarItem.classList.contains('unread')) {
+                        hasUnread = true;
+                    }
+                }
+            });
+
+            // waiting takes precedence over unread for projects
+            project.element.classList.remove('unread', 'waiting');
+            if (hasWaiting) {
+                project.element.classList.add('waiting');
+            } else if (hasUnread) {
+                project.element.classList.add('unread');
             }
         }
 
@@ -792,6 +1037,17 @@
                     const project = projects.get(session.projectName);
                     if (project) {
                         project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
+                    }
+
+                    // Mark as unread/waiting if not the active session
+                    if (!isActiveSession) {
+                        const status = sessionStatus.get(sessionId);
+                        if (status && status.waiting_for_input) {
+                            session.sidebarItem.classList.add('waiting');
+                        } else {
+                            session.sidebarItem.classList.add('unread');
+                        }
+                        updateProjectUnreadState(session.projectName);
                     }
 
                     reorderSidebar();
@@ -887,7 +1143,9 @@
                         session.projectName,
                         session.firstMessage,
                         session.startedAt,
-                        session.lastUpdatedAt
+                        session.lastUpdatedAt,
+                        session.projectPath,
+                        session.tokenUsage
                     );
                 });
                 reorderSidebar();
@@ -925,7 +1183,9 @@
                         data.projectName,
                         data.firstMessage,
                         data.startedAt,
-                        data.lastUpdatedAt
+                        data.lastUpdatedAt,
+                        data.projectPath,
+                        data.tokenUsage
                     );
 
                     if (wasPendingActive && session) {
@@ -938,7 +1198,9 @@
                         data.projectName,
                         data.firstMessage,
                         data.startedAt,
-                        data.lastUpdatedAt
+                        data.lastUpdatedAt,
+                        data.projectPath,
+                        data.tokenUsage
                     );
                     if (autoSwitch && session) {
                         switchToSession(data.id, true);
@@ -955,7 +1217,7 @@
                 const data = JSON.parse(e.data);
                 if (data.type === 'html' && data.session_id) {
                     if (!sessions.has(data.session_id)) {
-                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null);
+                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null);
                     }
                     appendMessage(data.session_id, data.content);
                 }
@@ -969,11 +1231,14 @@
                 const data = JSON.parse(e.data);
                 sessionStatus.set(data.session_id, {
                     running: data.running,
-                    queued_messages: data.queued_messages
+                    queued_messages: data.queued_messages,
+                    waiting_for_input: data.waiting_for_input
                 });
                 if (data.session_id === activeSessionId) {
                     updateInputBarUI();
                 }
+                // Update waiting state on sidebar
+                updateSessionWaitingState(data.session_id);
             });
 
             eventSource.addEventListener('reinitialize', function(e) {

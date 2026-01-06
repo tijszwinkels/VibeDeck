@@ -229,6 +229,7 @@ def render_message(entry: dict) -> str:
     if not message_data:
         return ""
 
+    usage = None
     if log_type == "user":
         content_html = render_user_message_content(message_data)
         # Check if this is a tool result message
@@ -239,6 +240,8 @@ def render_message(entry: dict) -> str:
     elif log_type == "assistant":
         content_html = render_assistant_message(message_data)
         role_class, role_label = "assistant", "Assistant"
+        # Extract usage data for assistant messages
+        usage = message_data.get("usage", {})
     else:
         return ""
 
@@ -246,7 +249,7 @@ def render_message(entry: dict) -> str:
         return ""
 
     msg_id = make_msg_id(timestamp)
-    return _macros.message(role_class, role_label, msg_id, timestamp, content_html)
+    return _macros.message(role_class, role_label, msg_id, timestamp, content_html, usage)
 
 
 def get_template(name: str):

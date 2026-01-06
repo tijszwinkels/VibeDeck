@@ -54,14 +54,14 @@ class TestServerEndpoints:
         assert "EventSource" in response.text
         assert "/events" in response.text
 
-    def test_index_includes_tab_bar(self, temp_jsonl_file):
-        """Test that index includes tab bar elements."""
+    def test_index_includes_sidebar(self, temp_jsonl_file):
+        """Test that index includes sidebar elements."""
         add_session(temp_jsonl_file)
         client = TestClient(app)
 
         response = client.get("/")
-        assert "tab-bar" in response.text
-        assert "auto-follow" in response.text
+        assert "sidebar" in response.text
+        assert "project-list" in response.text
 
     def test_health_check(self, temp_jsonl_file):
         """Test health check endpoint."""
