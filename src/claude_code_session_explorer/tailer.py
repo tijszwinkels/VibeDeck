@@ -248,14 +248,14 @@ async def watch_file(path: Path, callback: Callable[[], None]) -> AsyncGenerator
 def find_recent_sessions(
     projects_dir: Path | None = None, limit: int = 10
 ) -> list[Path]:
-    """Find the most recently modified session files.
+    """Find the most recently modified session files that have messages.
 
     Args:
         projects_dir: Base directory to search (defaults to ~/.claude/projects)
         limit: Maximum number of sessions to return
 
     Returns:
-        List of paths to recent .jsonl files, sorted by modification time (newest first)
+        List of paths to recent .jsonl files with messages, sorted by modification time (newest first)
     """
     if projects_dir is None:
         projects_dir = Path.home() / ".claude" / "projects"
@@ -270,6 +270,9 @@ def find_recent_sessions(
         if f.name.startswith("agent-"):
             continue
         try:
+            # Skip empty files
+            if f.stat().st_size == 0:
+                continue
             mtime = f.stat().st_mtime
             sessions.append((f, mtime))
         except OSError:
@@ -279,9 +282,18 @@ def find_recent_sessions(
         logger.warning("No session files found")
         return []
 
-    # Return the most recently modified
+    # Sort by modification time (newest first)
     sessions.sort(key=lambda x: x[1], reverse=True)
-    return [s[0] for s in sessions[:limit]]
+
+    # Filter to sessions with messages, up to the limit
+    result = []
+    for f, _ in sessions:
+        if has_messages(f):
+            result.append(f)
+            if len(result) >= limit:
+                break
+
+    return result
 
 
 def find_most_recent_session(projects_dir: Path | None = None) -> Path | None:
