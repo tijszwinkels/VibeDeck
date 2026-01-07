@@ -74,7 +74,7 @@ def opencode_session(opencode_storage_dir):
         "modelID": "claude-sonnet-4-5",
         "providerID": "anthropic",
         "time": {"created": 1704067210000, "updated": 1704067220000},
-        "tokens": {"input": 100, "output": 50, "cacheRead": 0, "cacheWrite": 0},
+        "tokens": {"input": 100, "output": 50, "cache": {"read": 0, "write": 0}},
         "cost": 0.001,
     }
     (msg_dir / f"{asst_msg_id}.json").write_text(json.dumps(asst_msg))

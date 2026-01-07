@@ -11,13 +11,27 @@ Message format:
             "time": {"created": unix_ms, "updated": unix_ms},
             "modelID": "claude-sonnet-4-5",
             "providerID": "anthropic",
+            "tokens": {
+                "input": 100,
+                "output": 50,
+                "cache": {"read": 1000, "write": 50}
+            },
             ...
         },
         "parts": [
             {"type": "text", "text": "...", "id": "part_xxx"},
             {"type": "tool", "name": "...", "state": {...}, "id": "part_xxx"},
             {"type": "reasoning", "reasoning": "...", "id": "part_xxx"},
-            {"type": "step-finish", "tokens": {...}, "cost": 0.01, "id": "part_xxx"},
+            {
+                "type": "step-finish",
+                "cost": 0.01,
+                "tokens": {
+                    "input": 100,
+                    "output": 50,
+                    "cache": {"read": 1000, "write": 50}
+                },
+                "id": "part_xxx"
+            },
             ...
         ]
     }
@@ -245,14 +259,15 @@ def render_tool_part(part: dict) -> str:
 def render_step_finish_part(part: dict) -> str:
     """Render a step-finish part (shows token usage)."""
     tokens = part.get("tokens", {})
+    cache = tokens.get("cache", {})
     cost = part.get("cost", 0)
 
     # Build usage dict for display
     usage = {
         "input_tokens": tokens.get("input", 0),
         "output_tokens": tokens.get("output", 0),
-        "cache_read_input_tokens": tokens.get("cacheRead", 0),
-        "cache_creation_input_tokens": tokens.get("cacheWrite", 0),
+        "cache_read_input_tokens": cache.get("read", 0),
+        "cache_creation_input_tokens": cache.get("write", 0),
         "cost": cost,
     }
 
@@ -405,11 +420,12 @@ def render_message(entry: dict) -> str:
                     break
 
         if tokens:
+            cache = tokens.get("cache", {})
             usage = {
                 "input_tokens": tokens.get("input", 0),
                 "output_tokens": tokens.get("output", 0),
-                "cache_read_input_tokens": tokens.get("cacheRead", 0),
-                "cache_creation_input_tokens": tokens.get("cacheWrite", 0),
+                "cache_read_input_tokens": cache.get("read", 0),
+                "cache_creation_input_tokens": cache.get("write", 0),
             }
             # Calculate cost if not provided
             if cost:
