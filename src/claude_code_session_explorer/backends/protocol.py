@@ -348,3 +348,21 @@ class CodingToolBackend(Protocol):
             True if the file should be watched.
         """
         ...
+
+    def get_session_id_from_changed_file(self, path: Path) -> str | None:
+        """Get the session ID from a changed file path.
+
+        For some backends (like OpenCode), the changed file may be a message
+        or part file, not the session file itself. This method extracts the
+        session ID from such paths.
+
+        For backends where watched files are session files (like Claude Code),
+        this is equivalent to get_session_id().
+
+        Args:
+            path: Path to the changed file.
+
+        Returns:
+            Session ID, or None if it cannot be determined.
+        """
+        ...

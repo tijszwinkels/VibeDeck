@@ -1,7 +1,7 @@
-"""Claude Code backend implementation.
+"""OpenCode backend implementation.
 
 This module provides the main backend class that implements the
-CodingToolBackend protocol for Claude Code.
+CodingToolBackend protocol for OpenCode sessions.
 """
 
 from __future__ import annotations
@@ -9,19 +9,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..protocol import (
-    CodingToolBackend,
     SessionMetadata,
     SessionTailerProtocol,
     MessageRendererProtocol,
     TokenUsage,
 )
-from .tailer import ClaudeCodeTailer, has_messages, get_first_user_message
+from .tailer import OpenCodeTailer
 from .discovery import (
     get_session_name,
     get_session_id,
     find_recent_sessions,
     should_watch_file,
-    DEFAULT_PROJECTS_DIR,
+    has_messages,
+    get_first_user_message,
+    get_session_id_from_file_path,
+    DEFAULT_STORAGE_DIR,
 )
 from .pricing import get_session_token_usage
 from .cli import (
@@ -33,31 +35,32 @@ from .cli import (
     build_fork_command,
     build_new_session_command,
 )
-from .renderer import ClaudeCodeRenderer
+from .renderer import OpenCodeRenderer
 
 
-class ClaudeCodeBackend:
-    """Backend implementation for Claude Code.
+class OpenCodeBackend:
+    """Backend implementation for OpenCode.
 
     Handles session discovery, file parsing, CLI interaction, and rendering
-    for Claude Code sessions stored as JSONL files.
+    for OpenCode sessions stored as hierarchical JSON files.
     """
 
-    def __init__(self, projects_dir: Path | None = None):
-        """Initialize the Claude Code backend.
+    def __init__(self, storage_dir: Path | None = None):
+        """Initialize the OpenCode backend.
 
         Args:
-            projects_dir: Custom projects directory. Defaults to ~/.claude/projects.
+            storage_dir: Custom storage directory.
+                Defaults to ~/.local/share/opencode/storage.
         """
-        self._projects_dir = projects_dir or DEFAULT_PROJECTS_DIR
-        self._renderer = ClaudeCodeRenderer()
+        self._storage_dir = storage_dir or DEFAULT_STORAGE_DIR
+        self._renderer = OpenCodeRenderer()
 
     # ===== Backend Identity =====
 
     @property
     def name(self) -> str:
         """Human-readable name of the backend."""
-        return "Claude Code"
+        return "OpenCode"
 
     @property
     def cli_command(self) -> str | None:
@@ -75,11 +78,11 @@ class ClaudeCodeBackend:
         Returns:
             List of paths to recent session files.
         """
-        return find_recent_sessions(self._projects_dir, limit=limit)
+        return find_recent_sessions(self._storage_dir, limit=limit)
 
     def get_projects_dir(self) -> Path:
         """Get the base directory where sessions are stored."""
-        return self._projects_dir
+        return self._storage_dir
 
     # ===== Session Metadata =====
 
@@ -87,17 +90,17 @@ class ClaudeCodeBackend:
         """Extract metadata from a session.
 
         Args:
-            session_path: Path to the session file.
+            session_path: Path to the session JSON file.
 
         Returns:
             Session metadata.
         """
-        project_name, project_path = get_session_name(session_path)
+        project_name, project_path = get_session_name(session_path, self._storage_dir)
         session_id = get_session_id(session_path)
-        first_message = get_first_user_message(session_path)
+        first_message = get_first_user_message(session_path, self._storage_dir)
 
         # Get first timestamp from tailer
-        tailer = ClaudeCodeTailer(session_path)
+        tailer = OpenCodeTailer(self._storage_dir, session_id)
         started_at = tailer.get_first_timestamp()
 
         return SessionMetadata(
@@ -106,7 +109,10 @@ class ClaudeCodeBackend:
             project_path=project_path,
             first_message=first_message,
             started_at=started_at,
-            backend_data={"file_path": str(session_path)},
+            backend_data={
+                "file_path": str(session_path),
+                "storage_dir": str(self._storage_dir),
+            },
         )
 
     def get_session_id(self, session_path: Path) -> str:
@@ -129,7 +135,7 @@ class ClaudeCodeBackend:
         Returns:
             True if session has messages.
         """
-        return has_messages(session_path)
+        return has_messages(session_path, self._storage_dir)
 
     # ===== Session Reading =====
 
@@ -140,9 +146,10 @@ class ClaudeCodeBackend:
             session_path: Path to the session file.
 
         Returns:
-            A ClaudeCodeTailer instance.
+            An OpenCodeTailer instance.
         """
-        return ClaudeCodeTailer(session_path)
+        session_id = get_session_id(session_path)
+        return OpenCodeTailer(self._storage_dir, session_id)
 
     # ===== Token Usage & Pricing =====
 
@@ -155,7 +162,7 @@ class ClaudeCodeBackend:
         Returns:
             Token usage statistics.
         """
-        return get_session_token_usage(session_path)
+        return get_session_token_usage(session_path, self._storage_dir)
 
     # ===== CLI Interaction =====
 
@@ -164,8 +171,11 @@ class ClaudeCodeBackend:
         return True
 
     def supports_fork_session(self) -> bool:
-        """Whether this backend supports forking sessions."""
-        return True
+        """Whether this backend supports forking sessions.
+
+        OpenCode does not support forking via CLI - it requires the SDK/server.
+        """
+        return False
 
     def is_cli_available(self) -> bool:
         """Check if the CLI tool is installed and available."""
@@ -186,7 +196,7 @@ class ClaudeCodeBackend:
         Args:
             session_id: Session to send to.
             message: Message text.
-            skip_permissions: Skip permission prompts.
+            skip_permissions: Ignored for OpenCode.
 
         Returns:
             Command arguments list.
@@ -201,13 +211,10 @@ class ClaudeCodeBackend:
     ) -> list[str]:
         """Build the CLI command to fork a session.
 
-        Args:
-            session_id: Session to fork from.
-            message: Initial message for forked session.
-            skip_permissions: Skip permission prompts.
+        OpenCode does not support forking via CLI.
 
-        Returns:
-            Command arguments list.
+        Raises:
+            NotImplementedError: Always.
         """
         return build_fork_command(session_id, message, skip_permissions)
 
@@ -220,7 +227,7 @@ class ClaudeCodeBackend:
 
         Args:
             message: Initial message.
-            skip_permissions: Skip permission prompts.
+            skip_permissions: Ignored for OpenCode.
 
         Returns:
             Command arguments list.
@@ -230,8 +237,10 @@ class ClaudeCodeBackend:
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.
 
+        OpenCode doesn't require separate indexing.
+
         Args:
-            session_id: Session to index.
+            session_id: Session to index (no-op).
         """
         ensure_session_indexed(session_id)
 
@@ -241,7 +250,7 @@ class ClaudeCodeBackend:
         """Get the message renderer for this backend.
 
         Returns:
-            A ClaudeCodeRenderer instance.
+            An OpenCodeRenderer instance.
         """
         return self._renderer
 
@@ -249,6 +258,8 @@ class ClaudeCodeBackend:
 
     def should_watch_file(self, path: Path) -> bool:
         """Check if a file should be watched for changes.
+
+        For OpenCode, we watch message and part JSON files.
 
         Args:
             path: File path to check.
@@ -259,15 +270,14 @@ class ClaudeCodeBackend:
         return should_watch_file(path)
 
     def get_session_id_from_changed_file(self, path: Path) -> str | None:
-        """Get the session ID from a changed file path.
+        """Get session ID from a changed message or part file.
 
-        For Claude Code, the watched files are the session JSONL files themselves,
-        so the session ID is just the filename without extension.
+        This is used to determine which session a file change belongs to.
 
         Args:
             path: Path to the changed file.
 
         Returns:
-            Session ID (filename without extension).
+            Session ID, or None if it cannot be determined.
         """
-        return get_session_id(path)
+        return get_session_id_from_file_path(path, self._storage_dir)

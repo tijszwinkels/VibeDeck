@@ -99,9 +99,19 @@ def ensure_backends_registered() -> None:
     # Register Claude Code backend
     try:
         from .claude_code import ClaudeCodeBackend
+
         register_backend("claude-code", ClaudeCodeBackend)
     except ImportError as e:
         import logging
-        logging.getLogger(__name__).warning(
-            f"Claude Code backend not available: {e}"
-        )
+
+        logging.getLogger(__name__).warning(f"Claude Code backend not available: {e}")
+
+    # Register OpenCode backend
+    try:
+        from .opencode import OpenCodeBackend
+
+        register_backend("opencode", OpenCodeBackend)
+    except ImportError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"OpenCode backend not available: {e}")

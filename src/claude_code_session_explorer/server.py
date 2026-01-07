@@ -34,7 +34,9 @@ from .sessions import (
 logger = logging.getLogger(__name__)
 
 # Configuration
-CATCHUP_TIMEOUT = 30  # seconds - max time for catchup before telling client to reinitialize
+CATCHUP_TIMEOUT = (
+    30  # seconds - max time for catchup before telling client to reinitialize
+)
 _send_enabled = False  # Enable with --enable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
@@ -87,6 +89,7 @@ def initialize_backend(backend_name: str | None = None, **config) -> CodingToolB
 
     # Load CSS (this is generic, not backend-specific)
     from .rendering import CSS
+
     _css = CSS
 
     return _backend
@@ -105,11 +108,13 @@ def get_server_backend() -> CodingToolBackend:
 
 class SendMessageRequest(BaseModel):
     """Request body for sending a message to a session."""
+
     message: str
 
 
 class NewSessionRequest(BaseModel):
     """Request body for starting a new session."""
+
     message: str  # Initial message to send (required)
     cwd: str | None = None  # Working directory (optional)
 
@@ -130,11 +135,14 @@ async def broadcast_event(event_type: str, data: dict) -> None:
 
 async def broadcast_message(session_id: str, html: str) -> None:
     """Broadcast a message to all connected clients."""
-    await broadcast_event("message", {
-        "type": "html",
-        "content": html,
-        "session_id": session_id,
-    })
+    await broadcast_event(
+        "message",
+        {
+            "type": "html",
+            "content": html,
+            "session_id": session_id,
+        },
+    )
 
 
 async def broadcast_session_added(info: SessionInfo) -> None:
@@ -168,15 +176,20 @@ async def broadcast_session_status(session_id: str) -> None:
     info = get_session(session_id)
     if info is None:
         return
-    await broadcast_event("session_status", {
-        "session_id": session_id,
-        "running": info.process is not None,
-        "queued_messages": len(info.message_queue),
-        "waiting_for_input": info.tailer.waiting_for_input,
-    })
+    await broadcast_event(
+        "session_status",
+        {
+            "session_id": session_id,
+            "running": info.process is not None,
+            "queued_messages": len(info.message_queue),
+            "waiting_for_input": info.tailer.waiting_for_input,
+        },
+    )
 
 
-async def run_cli_for_session(session_id: str, message: str, fork: bool = False) -> None:
+async def run_cli_for_session(
+    session_id: str, message: str, fork: bool = False
+) -> None:
     """Send a message to a coding session and track the process.
 
     Args:
@@ -196,12 +209,20 @@ async def run_cli_for_session(session_id: str, message: str, fork: bool = False)
 
         # Build command using backend
         if fork:
-            cmd_args = backend.build_fork_command(session_id, message, _skip_permissions)
+            cmd_args = backend.build_fork_command(
+                session_id, message, _skip_permissions
+            )
         else:
-            cmd_args = backend.build_send_command(session_id, message, _skip_permissions)
+            cmd_args = backend.build_send_command(
+                session_id, message, _skip_permissions
+            )
 
         # Determine working directory from session info
-        cwd = info.project_path if info.project_path and Path(info.project_path).is_dir() else None
+        cwd = (
+            info.project_path
+            if info.project_path and Path(info.project_path).is_dir()
+            else None
+        )
 
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
@@ -247,6 +268,7 @@ async def process_session_messages(session_id: str) -> None:
         return
 
     new_entries = info.tailer.read_new_lines()
+    logger.debug(f"read_new_lines returned {len(new_entries)} entries for {session_id}")
     for entry in new_entries:
         html = renderer.render_message(entry)
         if html:
@@ -258,28 +280,37 @@ async def process_session_messages(session_id: str) -> None:
 
 
 async def check_for_new_sessions() -> None:
-    """Check for new session files and add them."""
-    backend = get_server_backend()
-    projects_dir = get_projects_dir()
-    if not projects_dir.exists():
-        return
+    """Check for new session files and add them.
 
-    # Find all session files
-    for f in projects_dir.glob("**/*.jsonl"):
-        if not backend.should_watch_file(f):
-            continue
-        if f not in get_known_session_files():
-            async with get_sessions_lock():
-                info, evicted_id = add_session(f)
-                if evicted_id:
-                    await broadcast_session_removed(evicted_id)
-                if info:
-                    await broadcast_session_added(info)
-                    await broadcast_session_catchup(info)
+    Uses the backend's find_recent_sessions to discover new sessions,
+    which handles backend-specific file patterns (JSONL for Claude Code,
+    JSON for OpenCode).
+    """
+    backend = get_server_backend()
+
+    # Use backend to find recent sessions (handles pattern differences)
+    try:
+        recent = backend.find_recent_sessions(limit=MAX_SESSIONS)
+        for f in recent:
+            if f not in get_known_session_files():
+                async with get_sessions_lock():
+                    info, evicted_id = add_session(f)
+                    if evicted_id:
+                        await broadcast_session_removed(evicted_id)
+                    if info:
+                        await broadcast_session_added(info)
+                        await broadcast_session_catchup(info)
+    except Exception as e:
+        logger.warning(f"Failed to check for new sessions: {e}")
 
 
 async def watch_loop() -> None:
-    """Background task that watches for file changes."""
+    """Background task that watches for file changes.
+
+    Watches the backend's projects directory for file changes. The backend
+    determines which files should trigger updates via should_watch_file()
+    and how to map changed files to session IDs via get_session_id_from_changed_file().
+    """
     backend = get_server_backend()
     projects_dir = get_projects_dir()
 
@@ -298,29 +329,36 @@ async def watch_loop() -> None:
                 if not backend.should_watch_file(changed_path):
                     continue
 
+                # Get session ID from the changed file path
+                # For Claude Code: session ID is the filename
+                # For OpenCode: session ID is extracted from message/part path
+                session_id = backend.get_session_id_from_changed_file(changed_path)
+                logger.debug(
+                    f"File change: {change_type.name} {changed_path.name} -> session {session_id}"
+                )
+
                 async with get_sessions_lock():
                     if change_type == watchfiles.Change.added:
-                        # New session file
-                        info, evicted_id = add_session(changed_path)
-                        if evicted_id:
-                            await broadcast_session_removed(evicted_id)
-                        if info:
-                            await broadcast_session_added(info)
-                            await broadcast_session_catchup(info)
+                        # New file - could be a new session or new message/part
+                        if session_id and get_session(session_id) is not None:
+                            # Existing session got new file (OpenCode message/part)
+                            logger.debug(
+                                f"Processing new messages for session {session_id}"
+                            )
+                            await process_session_messages(session_id)
+                        else:
+                            # Might be a new session file - try to add it
+                            # For Claude Code: changed_path is the session file
+                            # For OpenCode: we need to discover the session file
+                            await check_for_new_sessions()
 
                     elif change_type == watchfiles.Change.modified:
                         # Existing file modified
-                        session_id = backend.get_session_id(changed_path)
-                        if get_session(session_id) is not None:
+                        if session_id and get_session(session_id) is not None:
                             await process_session_messages(session_id)
-                        elif changed_path not in get_known_session_files():
-                            # File we haven't seen - might be new
-                            info, evicted_id = add_session(changed_path)
-                            if evicted_id:
-                                await broadcast_session_removed(evicted_id)
-                            if info:
-                                await broadcast_session_added(info)
-                                await broadcast_session_catchup(info)
+                        else:
+                            # File we haven't seen - might be new session
+                            await check_for_new_sessions()
 
     except asyncio.CancelledError:
         logger.info("Watch loop cancelled")
@@ -366,6 +404,7 @@ app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
 async def index() -> HTMLResponse:
     """Serve the main live transcript page."""
     from .rendering import get_template
+
     template = get_template("live.html")
     html = template.render(css=_css)
     return HTMLResponse(content=html)
@@ -412,11 +451,13 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
                     if html:
                         yield {
                             "event": "message",
-                            "data": json.dumps({
-                                "type": "html",
-                                "content": html,
-                                "session_id": session_id,
-                            }),
+                            "data": json.dumps(
+                                {
+                                    "type": "html",
+                                    "content": html,
+                                    "session_id": session_id,
+                                }
+                            ),
                         }
                 if catchup_timed_out:
                     break
@@ -591,7 +632,9 @@ async def interrupt_session(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Session not found")
 
     if info.process is None:
-        raise HTTPException(status_code=409, detail="No process running for this session")
+        raise HTTPException(
+            status_code=409, detail="No process running for this session"
+        )
 
     # Clear the queue first
     info.message_queue.clear()
@@ -646,7 +689,9 @@ async def create_new_session(request: NewSessionRequest) -> dict:
                 potential_cwd.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Created directory: {potential_cwd}")
             except OSError as e:
-                raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
+                raise HTTPException(
+                    status_code=400, detail=f"Cannot create directory: {e}"
+                )
         if potential_cwd.is_dir():
             cwd = potential_cwd
 
