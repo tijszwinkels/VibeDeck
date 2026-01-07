@@ -24,8 +24,8 @@
 {%- set filename = file_path.split('/')[-1] if '/' in file_path else file_path -%}
 <div class="file-tool write-tool" data-tool-id="{{ tool_id }}">
 <div class="file-tool-header write-header"><span class="file-tool-icon">📝</span> Write <span class="file-tool-path">{{ filename }}</span></div>
-<div class="file-tool-fullpath">{{ file_path }}</div>
-<div class="truncatable"><div class="truncatable-content"><pre class="file-content">{{ content }}</pre></div><button class="expand-btn">Show more</button></div>
+<div class="file-tool-fullpath" data-copy-path="{{ file_path }}">{{ file_path }}<button class="copy-btn" title="Copy path"></button></div>
+<div class="truncatable"><div class="truncatable-content"><div class="copy-wrapper"><pre class="file-content">{{ content }}</pre><button class="copy-btn" title="Copy code"></button></div></div><button class="expand-btn">Show more</button></div>
 </div>
 {%- endmacro %}
 
@@ -34,10 +34,10 @@
 {%- set filename = file_path.split('/')[-1] if '/' in file_path else file_path -%}
 <div class="file-tool edit-tool" data-tool-id="{{ tool_id }}">
 <div class="file-tool-header edit-header"><span class="file-tool-icon">✏️</span> Edit <span class="file-tool-path">{{ filename }}</span>{% if replace_all %} <span class="edit-replace-all">(replace all)</span>{% endif %}</div>
-<div class="file-tool-fullpath">{{ file_path }}</div>
+<div class="file-tool-fullpath" data-copy-path="{{ file_path }}">{{ file_path }}<button class="copy-btn" title="Copy path"></button></div>
 <div class="truncatable"><div class="truncatable-content">
-<div class="edit-section edit-old"><div class="edit-label">−</div><pre class="edit-content">{{ old_string }}</pre></div>
-<div class="edit-section edit-new"><div class="edit-label">+</div><pre class="edit-content">{{ new_string }}</pre></div>
+<div class="edit-section edit-old"><div class="edit-label">−</div><div class="copy-wrapper"><pre class="edit-content">{{ old_string }}</pre><button class="copy-btn" title="Copy code"></button></div></div>
+<div class="edit-section edit-new"><div class="edit-label">+</div><div class="copy-wrapper"><pre class="edit-content">{{ new_string }}</pre><button class="copy-btn" title="Copy code"></button></div></div>
 </div><button class="expand-btn">Show more</button></div>
 </div>
 {%- endmacro %}
@@ -49,7 +49,17 @@
 {%- if description %}
 <div class="tool-description">{{ description }}</div>
 {%- endif -%}
-<div class="truncatable"><div class="truncatable-content"><pre class="bash-command">{{ command }}</pre></div><button class="expand-btn">Show more</button></div>
+<div class="truncatable"><div class="truncatable-content"><div class="copy-wrapper"><pre class="bash-command">{{ command }}</pre><button class="copy-btn" title="Copy command"></button></div></div><button class="expand-btn">Show more</button></div>
+</div>
+{%- endmacro %}
+
+{# Read tool - input_json is pre-formatted so needs |safe #}
+{% macro read_tool(file_path, offset, limit, input_json, tool_id) %}
+{%- set filename = file_path.split('/')[-1] if '/' in file_path else file_path -%}
+<div class="file-tool read-tool" data-tool-id="{{ tool_id }}">
+<div class="file-tool-header read-header"><span class="file-tool-icon">📄</span> Read <span class="file-tool-path">{{ filename }}</span>{% if offset or limit %} <span class="read-range">({% if offset %}offset: {{ offset }}{% endif %}{% if offset and limit %}, {% endif %}{% if limit %}limit: {{ limit }}{% endif %})</span>{% endif %}</div>
+<div class="file-tool-fullpath" data-copy-path="{{ file_path }}">{{ file_path }}<button class="copy-btn" title="Copy path"></button></div>
+<div class="truncatable"><div class="truncatable-content"><div class="copy-wrapper"><pre class="json">{{ input_json }}</pre><button class="copy-btn" title="Copy JSON"></button></div></div><button class="expand-btn">Show more</button></div>
 </div>
 {%- endmacro %}
 
@@ -59,13 +69,13 @@
 {%- if description -%}
 <div class="tool-description">{{ description }}</div>
 {%- endif -%}
-<div class="truncatable"><div class="truncatable-content"><pre class="json">{{ input_json }}</pre></div><button class="expand-btn">Show more</button></div></div>
+<div class="truncatable"><div class="truncatable-content"><div class="copy-wrapper"><pre class="json">{{ input_json }}</pre><button class="copy-btn" title="Copy JSON"></button></div></div><button class="expand-btn">Show more</button></div></div>
 {%- endmacro %}
 
 {# Tool result - content_html is pre-rendered so needs |safe #}
 {% macro tool_result(content_html, is_error) %}
 {%- set error_class = ' tool-error' if is_error else '' -%}
-<div class="tool-result{{ error_class }}"><div class="truncatable"><div class="truncatable-content">{{ content_html|safe }}</div><button class="expand-btn">Show more</button></div></div>
+<div class="tool-result{{ error_class }}"><div class="truncatable"><div class="truncatable-content"><div class="copy-wrapper">{{ content_html|safe }}<button class="copy-btn" title="Copy output"></button></div></div><button class="expand-btn">Show more</button></div></div>
 {%- endmacro %}
 
 {# Thinking block - content_html is pre-rendered markdown so needs |safe #}
