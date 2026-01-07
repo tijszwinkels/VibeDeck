@@ -34,6 +34,8 @@ def get_backend(name: str | None = None, **config) -> "CodingToolBackend":
     Raises:
         ValueError: If the backend name is not registered.
     """
+    ensure_backends_registered()
+
     if name is None:
         name = _default_backend
 
@@ -50,6 +52,7 @@ def list_backends() -> list[str]:
     Returns:
         List of registered backend names.
     """
+    ensure_backends_registered()
     return list(_backends.keys())
 
 
@@ -77,14 +80,28 @@ def get_default_backend() -> str:
     return _default_backend
 
 
-# Auto-register built-in backends when the module is imported
-def _auto_register_backends() -> None:
-    """Auto-register built-in backends."""
+_backends_initialized = False
+
+
+def ensure_backends_registered() -> None:
+    """Ensure built-in backends are registered.
+
+    This function is idempotent - it only registers backends once.
+    Call this explicitly before using get_backend() or list_backends()
+    to avoid import-time side effects.
+    """
+    global _backends_initialized
+    if _backends_initialized:
+        return
+
+    _backends_initialized = True
+
+    # Register Claude Code backend
     try:
         from .claude_code import ClaudeCodeBackend
         register_backend("claude-code", ClaudeCodeBackend)
-    except ImportError:
-        pass  # Claude Code backend not available
-
-
-_auto_register_backends()
+    except ImportError as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Claude Code backend not available: {e}"
+        )

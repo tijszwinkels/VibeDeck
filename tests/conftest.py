@@ -7,6 +7,22 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def initialize_backend():
+    """Initialize the backend before each test."""
+    from claude_code_session_explorer import server, sessions
+
+    # Use the proper initialization function which also sets up CSS, etc.
+    server.initialize_backend("claude-code")
+
+    yield
+
+    # Clean up
+    sessions._backend = None
+    server._backend = None
+    server._css = None
+
+
 @pytest.fixture
 def temp_jsonl_file():
     """Create a temporary JSONL file with sample session data."""

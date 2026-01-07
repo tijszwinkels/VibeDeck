@@ -54,31 +54,51 @@ class SessionInfo:
             self.session_id = backend.get_session_id(self.path)
 
         if not self.name or not self.project_name:
-            metadata = backend.get_session_metadata(self.path)
-            if not self.name:
-                self.name = metadata.project_name
-            if not self.project_name:
-                self.project_name = metadata.project_name
-            if not self.project_path:
-                self.project_path = metadata.project_path or ""
-            if self.first_message is None:
-                self.first_message = metadata.first_message
+            try:
+                metadata = backend.get_session_metadata(self.path)
+                if not self.name:
+                    self.name = metadata.project_name
+                if not self.project_name:
+                    self.project_name = metadata.project_name
+                if not self.project_path:
+                    self.project_path = metadata.project_path or ""
+                if self.first_message is None:
+                    self.first_message = metadata.first_message
+            except (OSError, IOError) as e:
+                # File may have been deleted or become unreadable
+                logger.warning(f"Failed to read session metadata for {self.path}: {e}")
+                if not self.name:
+                    self.name = self.session_id
+                if not self.project_name:
+                    self.project_name = self.session_id
 
     def to_dict(self) -> dict:
-        """Convert to dictionary for JSON serialization."""
-        backend = get_current_backend()
-        if backend is None:
-            raise RuntimeError("Backend not initialized.")
+        """Convert to dictionary for JSON serialization.
 
+        Returns minimal data if backend is unavailable (e.g., during shutdown).
+        """
         # Get timestamps
-        started_at = self.tailer.get_first_timestamp()
+        try:
+            started_at = self.tailer.get_first_timestamp()
+        except Exception:
+            started_at = None
+
         try:
             last_updated = self.path.stat().st_mtime
         except OSError:
             last_updated = None
 
-        # Get token usage stats
-        usage = backend.get_session_token_usage(self.path)
+        # Get token usage stats if backend is available
+        backend = get_current_backend()
+        if backend is not None:
+            try:
+                usage = backend.get_session_token_usage(self.path)
+                token_usage = usage.to_dict()
+            except (OSError, IOError) as e:
+                logger.warning(f"Failed to get token usage for {self.path}: {e}")
+                token_usage = {}
+        else:
+            token_usage = {}
 
         return {
             "id": self.session_id,
@@ -89,7 +109,7 @@ class SessionInfo:
             "firstMessage": self.first_message,
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
-            "tokenUsage": usage.to_dict(),
+            "tokenUsage": token_usage,
         }
 
 

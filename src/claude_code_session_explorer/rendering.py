@@ -12,10 +12,12 @@ from jinja2 import Environment, PackageLoader
 # Re-export from backend for backward compatibility
 from .backends.claude_code.renderer import (
     render_message,
+    render_content_block,
     render_markdown_text,
     set_github_repo,
     is_json_like,
     format_json,
+    is_tool_result_message,
 )
 from .backends.claude_code.pricing import calculate_message_cost
 
@@ -42,10 +44,12 @@ JS = _load_static_file("script.js")
 
 __all__ = [
     "render_message",
+    "render_content_block",
     "render_markdown_text",
     "set_github_repo",
     "is_json_like",
     "format_json",
+    "is_tool_result_message",
     "calculate_message_cost",
     "get_template",
     "CSS",
