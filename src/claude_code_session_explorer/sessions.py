@@ -174,12 +174,17 @@ def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | No
     """Add a session to track.
 
     Returns a tuple of (SessionInfo if added, evicted_session_id if one was removed).
-    Returns (None, None) if already tracked or if file is empty.
+    Returns (None, None) if already tracked, if file is empty, or if path is not a file.
     If at the session limit and evict_oldest=True, removes the oldest session to make room.
     """
     backend = get_current_backend()
     if backend is None:
         raise RuntimeError("Backend not initialized. Call set_backend() first.")
+
+    # Validate path is actually a file (not a directory)
+    if not path.is_file():
+        logger.debug(f"Skipping non-file path: {path}")
+        return None, None
 
     session_id = backend.get_session_id(path)
 

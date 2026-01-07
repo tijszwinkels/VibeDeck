@@ -116,7 +116,9 @@ class BaseTailer(ABC):
     def read_all(self) -> list[dict]:
         """Read all messages from the file from the beginning.
 
-        Does NOT modify the current position - creates a fresh reader.
+        Does NOT modify the current file position - creates a fresh reader.
+        However, updates the waiting_for_input state to reflect the current
+        file contents (this is intentional, as we want the latest state).
 
         Returns:
             List of all parsed message entries.

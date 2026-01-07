@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from importlib.resources import files
 from pathlib import Path
 
 import yaml
@@ -15,15 +16,34 @@ logger = logging.getLogger(__name__)
 # Cache for pricing data
 _pricing_data: dict | None = None
 
+# Default pricing fallback if file cannot be loaded
+_DEFAULT_PRICING = {
+    "default": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_write_5m": 3.75,
+        "cache_write_1h": 3.75,
+        "cache_read": 0.30,
+    }
+}
+
 
 def _get_pricing_data() -> dict:
-    """Load and cache pricing data from YAML file."""
+    """Load and cache pricing data from YAML file.
+
+    Uses importlib.resources for robust path resolution that works
+    in packaged distributions (zip imports, frozen executables).
+    Falls back to default pricing if file cannot be loaded.
+    """
     global _pricing_data
     if _pricing_data is None:
-        # pricing.yaml is in the parent package (claude_code_session_explorer)
-        pricing_path = Path(__file__).parent.parent.parent / "pricing.yaml"
-        with open(pricing_path, "r") as f:
-            _pricing_data = yaml.safe_load(f)
+        try:
+            # Use importlib.resources for robust package resource access
+            pricing_file = files("claude_code_session_explorer").joinpath("pricing.yaml")
+            _pricing_data = yaml.safe_load(pricing_file.read_text())
+        except Exception as e:
+            logger.warning(f"Failed to load pricing.yaml, using defaults: {e}")
+            _pricing_data = _DEFAULT_PRICING
     return _pricing_data
 
 

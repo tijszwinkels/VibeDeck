@@ -177,7 +177,7 @@ class CodingToolBackend(Protocol):
             limit: Maximum number of sessions to return.
 
         Returns:
-            List of session identifiers (paths or keys).
+            List of paths to session files, sorted by modification time (newest first).
         """
         ...
 
