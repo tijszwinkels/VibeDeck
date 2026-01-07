@@ -8,7 +8,7 @@ from threading import Timer
 import click
 import uvicorn
 
-from .tailer import find_most_recent_session, find_recent_sessions
+from .backends import list_backends
 
 __version__ = "0.1.0"
 
@@ -50,6 +50,12 @@ logger = logging.getLogger(__name__)
     help="Maximum number of sessions to track (default: 100)",
 )
 @click.option(
+    "--backend",
+    type=click.Choice(list_backends()),
+    default="claude-code",
+    help="Backend to use (default: claude-code)",
+)
+@click.option(
     "--experimental",
     is_flag=True,
     hidden=True,
@@ -80,6 +86,7 @@ def main(
     no_open: bool,
     debug: bool,
     max_sessions: int,
+    backend: str,
     experimental: bool,
     enable_send: bool,
     dangerously_skip_permissions: bool,
@@ -114,9 +121,19 @@ def main(
         click.echo("Error: --fork requires --enable-send", err=True)
         raise SystemExit(1)
 
-    # Configure server
+    # Initialize backend
     from . import server
-    server.MAX_SESSIONS = max_sessions
+    from .sessions import MAX_SESSIONS as _
+
+    # Update max sessions config
+    from . import sessions
+    sessions.MAX_SESSIONS = max_sessions
+
+    # Initialize the backend before setting up the server
+    backend_instance = server.initialize_backend(backend)
+    click.echo(f"Using backend: {backend_instance.name}")
+
+    # Configure server features
     server.set_send_enabled(enable_send)
     server.set_skip_permissions(dangerously_skip_permissions)
     server.set_fork_enabled(fork)
@@ -130,12 +147,14 @@ def main(
     # If a specific session is provided, add it first
     if session is not None:
         click.echo(f"Watching: {session}")
-        server.add_session(session)
+        from .sessions import add_session
+        add_session(session)
 
     # Check if any sessions were found
-    recent = find_recent_sessions(limit=max_sessions)
+    recent = backend_instance.find_recent_sessions(limit=max_sessions)
     if not recent and session is None:
-        click.echo("No session files found in ~/.claude/projects/", err=True)
+        projects_dir = backend_instance.get_projects_dir()
+        click.echo(f"No session files found in {projects_dir}", err=True)
         click.echo("Specify a session file with --session", err=True)
         raise SystemExit(1)
 

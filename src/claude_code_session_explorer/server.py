@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import shutil
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,11 +14,12 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from .rendering import CSS, render_message, get_template
+from .backends import CodingToolBackend, get_backend
 from .sessions import (
     MAX_SESSIONS,
     SessionInfo,
     add_session,
+    get_current_backend,
     get_known_session_files,
     get_projects_dir,
     get_session,
@@ -28,8 +28,8 @@ from .sessions import (
     get_sessions_lock,
     remove_session,
     session_count,
+    set_backend,
 )
-from .tailer import find_recent_sessions, get_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,10 @@ _fork_enabled = False  # Enable with --fork CLI flag
 # Global state for server (not session-related)
 _clients: set[asyncio.Queue] = set()
 _watch_task: asyncio.Task | None = None
+
+# Backend and rendering
+_backend: CodingToolBackend | None = None
+_css: str | None = None
 
 
 def set_send_enabled(enabled: bool) -> None:
@@ -65,6 +69,38 @@ def set_fork_enabled(enabled: bool) -> None:
 def is_send_enabled() -> bool:
     """Check if sending messages is enabled."""
     return _send_enabled
+
+
+def initialize_backend(backend_name: str | None = None, **config) -> CodingToolBackend:
+    """Initialize the backend for the server.
+
+    Args:
+        backend_name: Name of the backend to use. Defaults to 'claude-code'.
+        **config: Backend-specific configuration.
+
+    Returns:
+        The initialized backend instance.
+    """
+    global _backend, _css
+    _backend = get_backend(backend_name, **config)
+    set_backend(_backend)
+
+    # Load CSS (this is generic, not backend-specific)
+    from .rendering import CSS
+    _css = CSS
+
+    return _backend
+
+
+def get_server_backend() -> CodingToolBackend:
+    """Get the current server backend.
+
+    Raises:
+        RuntimeError: If backend not initialized.
+    """
+    if _backend is None:
+        raise RuntimeError("Backend not initialized. Call initialize_backend() first.")
+    return _backend
 
 
 class SendMessageRequest(BaseModel):
@@ -112,9 +148,12 @@ async def broadcast_session_catchup(info: SessionInfo) -> None:
     When a session is added while clients are already connected, those clients
     need to receive the existing messages (catchup) for that session.
     """
+    backend = get_server_backend()
+    renderer = backend.get_message_renderer()
+
     existing = info.tailer.read_all()
     for entry in existing:
-        html = render_message(entry)
+        html = renderer.render_message(entry)
         if html:
             await broadcast_message(info.session_id, html)
 
@@ -137,32 +176,29 @@ async def broadcast_session_status(session_id: str) -> None:
     })
 
 
-async def run_claude_for_session(session_id: str, message: str, fork: bool = False) -> None:
-    """Send a message to a Claude Code session and track the process.
+async def run_cli_for_session(session_id: str, message: str, fork: bool = False) -> None:
+    """Send a message to a coding session and track the process.
 
     Args:
         session_id: The session to send the message to
         message: The message to send
-        fork: If True, use --fork-session to create a new session with the conversation history
+        fork: If True, fork the session to create a new one with conversation history
     """
+    backend = get_server_backend()
     info = get_session(session_id)
     if info is None:
         logger.error(f"Session not found: {session_id}")
         return
 
     try:
-        # Ensure session is in Claude's session index so --resume works.
-        # Claude uses ~/.claude/session-env/<session-id>/ directories as its index.
-        # Sessions created externally (via -p mode) don't get indexed automatically.
-        session_env_dir = Path.home() / ".claude" / "session-env" / session_id
-        session_env_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure session is indexed (backend-specific)
+        backend.ensure_session_indexed(session_id)
 
-        # Build command arguments
-        cmd_args = ["claude", "-p", message, "--resume", session_id]
+        # Build command using backend
         if fork:
-            cmd_args.append("--fork-session")
-        if _skip_permissions:
-            cmd_args.append("--dangerously-skip-permissions")
+            cmd_args = backend.build_fork_command(session_id, message, _skip_permissions)
+        else:
+            cmd_args = backend.build_send_command(session_id, message, _skip_permissions)
 
         # Determine working directory from session info
         cwd = info.project_path if info.project_path and Path(info.project_path).is_dir() else None
@@ -184,10 +220,10 @@ async def run_claude_for_session(session_id: str, message: str, fork: bool = Fal
         _, stderr = await proc.communicate()
 
         if proc.returncode != 0:
-            logger.error(f"Claude process failed for {session_id}: {stderr.decode()}")
+            logger.error(f"CLI process failed for {session_id}: {stderr.decode()}")
 
     except Exception as e:
-        logger.error(f"Error running Claude for {session_id}: {e}")
+        logger.error(f"Error running CLI for {session_id}: {e}")
 
     finally:
         if not fork:
@@ -196,20 +232,23 @@ async def run_claude_for_session(session_id: str, message: str, fork: bool = Fal
             # Process queue if messages waiting
             if info.message_queue:
                 next_message = info.message_queue.pop(0)
-                asyncio.create_task(run_claude_for_session(session_id, next_message))
+                asyncio.create_task(run_cli_for_session(session_id, next_message))
 
             await broadcast_session_status(session_id)
 
 
 async def process_session_messages(session_id: str) -> None:
     """Read new messages from a session and broadcast to clients."""
+    backend = get_server_backend()
+    renderer = backend.get_message_renderer()
+
     info = get_session(session_id)
     if info is None:
         return
 
     new_entries = info.tailer.read_new_lines()
     for entry in new_entries:
-        html = render_message(entry)
+        html = renderer.render_message(entry)
         if html:
             await broadcast_message(session_id, html)
 
@@ -220,13 +259,14 @@ async def process_session_messages(session_id: str) -> None:
 
 async def check_for_new_sessions() -> None:
     """Check for new session files and add them."""
+    backend = get_server_backend()
     projects_dir = get_projects_dir()
     if not projects_dir.exists():
         return
 
     # Find all session files
     for f in projects_dir.glob("**/*.jsonl"):
-        if f.name.startswith("agent-"):
+        if not backend.should_watch_file(f):
             continue
         if f not in get_known_session_files():
             async with get_sessions_lock():
@@ -240,6 +280,7 @@ async def check_for_new_sessions() -> None:
 
 async def watch_loop() -> None:
     """Background task that watches for file changes."""
+    backend = get_server_backend()
     projects_dir = get_projects_dir()
 
     if not projects_dir.exists():
@@ -253,10 +294,8 @@ async def watch_loop() -> None:
             for change_type, changed_path in changes:
                 changed_path = Path(changed_path)
 
-                # Skip non-jsonl files and agent files
-                if not changed_path.suffix == ".jsonl":
-                    continue
-                if changed_path.name.startswith("agent-"):
+                # Use backend to check if file should be watched
+                if not backend.should_watch_file(changed_path):
                     continue
 
                 async with get_sessions_lock():
@@ -271,7 +310,7 @@ async def watch_loop() -> None:
 
                     elif change_type == watchfiles.Change.modified:
                         # Existing file modified
-                        session_id = get_session_id(changed_path)
+                        session_id = backend.get_session_id(changed_path)
                         if get_session(session_id) is not None:
                             await process_session_messages(session_id)
                         elif changed_path not in get_known_session_files():
@@ -295,8 +334,10 @@ async def lifespan(app: FastAPI):
     """Manage server lifecycle - start/stop file watcher."""
     global _watch_task
 
+    backend = get_server_backend()
+
     # Startup: find recent sessions
-    recent = find_recent_sessions(get_projects_dir(), limit=MAX_SESSIONS)
+    recent = backend.find_recent_sessions(limit=MAX_SESSIONS)
     async with get_sessions_lock():
         for path in recent:
             add_session(path, evict_oldest=False)  # No eviction needed at startup
@@ -324,8 +365,9 @@ app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     """Serve the main live transcript page."""
+    from .rendering import get_template
     template = get_template("live.html")
-    html = template.render(css=CSS)
+    html = template.render(css=_css)
     return HTMLResponse(content=html)
 
 
@@ -338,6 +380,9 @@ async def list_sessions() -> dict:
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     """Generate SSE events for a client."""
+    backend = get_server_backend()
+    renderer = backend.get_message_renderer()
+
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     _clients.add(queue)
 
@@ -363,7 +408,7 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
                     if time.monotonic() - catchup_start > CATCHUP_TIMEOUT:
                         catchup_timed_out = True
                         break
-                    html = render_message(entry)
+                    html = renderer.render_message(entry)
                     if html:
                         yield {
                             "event": "message",
@@ -453,18 +498,20 @@ async def session_status(session_id: str) -> dict:
 
 @app.post("/sessions/{session_id}/send")
 async def send_message(session_id: str, request: SendMessageRequest) -> dict:
-    """Send a message to a Claude Code session."""
+    """Send a message to a coding session."""
     if not _send_enabled:
         raise HTTPException(
             status_code=403,
             detail="Send feature is disabled. Start server with --enable-send to enable.",
         )
 
-    # Check if Claude CLI is available
-    if shutil.which("claude") is None:
+    backend = get_server_backend()
+
+    # Check if CLI is available
+    if not backend.is_cli_available():
         raise HTTPException(
             status_code=503,
-            detail="Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
         )
 
     info = get_session(session_id)
@@ -485,8 +532,8 @@ async def send_message(session_id: str, request: SendMessageRequest) -> dict:
             "queue_position": len(info.message_queue),
         }
 
-    # Start the Claude process
-    asyncio.create_task(run_claude_for_session(session_id, message))
+    # Start the CLI process
+    asyncio.create_task(run_cli_for_session(session_id, message))
 
     return {"status": "sent", "session_id": session_id}
 
@@ -500,11 +547,20 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
             detail="Fork feature is disabled. Start server with --fork to enable.",
         )
 
-    # Check if Claude CLI is available
-    if shutil.which("claude") is None:
+    backend = get_server_backend()
+
+    # Check if CLI is available
+    if not backend.is_cli_available():
         raise HTTPException(
             status_code=503,
-            detail="Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
+        )
+
+    # Check if backend supports forking
+    if not backend.supports_fork_session():
+        raise HTTPException(
+            status_code=501,
+            detail="This backend does not support session forking.",
         )
 
     info = get_session(session_id)
@@ -515,16 +571,15 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Start the Claude process with fork=True
-    # This uses --fork-session to create a new session with the conversation history
-    asyncio.create_task(run_claude_for_session(session_id, message, fork=True))
+    # Start the CLI process with fork=True
+    asyncio.create_task(run_cli_for_session(session_id, message, fork=True))
 
     return {"status": "forking", "session_id": session_id}
 
 
 @app.post("/sessions/{session_id}/interrupt")
 async def interrupt_session(session_id: str) -> dict:
-    """Interrupt a running Claude process and clear the message queue."""
+    """Interrupt a running CLI process and clear the message queue."""
     if not _send_enabled:
         raise HTTPException(
             status_code=403,
@@ -562,18 +617,20 @@ async def interrupt_session(session_id: str) -> dict:
 
 @app.post("/sessions/new")
 async def create_new_session(request: NewSessionRequest) -> dict:
-    """Start a new Claude session with an initial message."""
+    """Start a new session with an initial message."""
     if not _send_enabled:
         raise HTTPException(
             status_code=403,
             detail="Send feature is disabled. Start server with --enable-send to enable.",
         )
 
-    # Check if Claude CLI is available
-    if shutil.which("claude") is None:
+    backend = get_server_backend()
+
+    # Check if CLI is available
+    if not backend.is_cli_available():
         raise HTTPException(
             status_code=503,
-            detail="Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code",
+            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
         )
 
     message = request.message.strip()
@@ -593,13 +650,11 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         if potential_cwd.is_dir():
             cwd = potential_cwd
 
-    # Build command with the initial message
-    cmd_args = ["claude", "-p", message]
-    if _skip_permissions:
-        cmd_args.append("--dangerously-skip-permissions")
+    # Build command using backend
+    cmd_args = backend.build_new_session_command(message, _skip_permissions)
 
     try:
-        # Start Claude in the working directory
+        # Start CLI in the working directory
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
@@ -612,13 +667,13 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         await asyncio.sleep(0.5)
         if proc.returncode is not None and proc.returncode != 0:
             stderr = await proc.stderr.read() if proc.stderr else b""
-            logger.error(f"Claude failed to start: {stderr.decode()}")
-            raise HTTPException(status_code=500, detail="Failed to start Claude session")
+            logger.error(f"CLI failed to start: {stderr.decode()}")
+            raise HTTPException(status_code=500, detail="Failed to start session")
 
         return {"status": "started", "cwd": str(cwd) if cwd else None}
 
     except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="Claude CLI not found")
+        raise HTTPException(status_code=503, detail="CLI not found")
     except HTTPException:
         raise
     except Exception as e:

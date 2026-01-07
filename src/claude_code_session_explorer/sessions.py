@@ -1,7 +1,8 @@
 """Session management for Claude Code Session Explorer.
 
-Handles tracking of Claude Code sessions, including adding, removing,
-and querying session state.
+Handles tracking of coding sessions, including adding, removing,
+and querying session state. Works with any backend that implements
+the CodingToolBackend protocol.
 """
 
 from __future__ import annotations
@@ -12,14 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .tailer import (
-    SessionTailer,
-    get_first_user_message,
-    get_session_id,
-    get_session_name,
-    get_session_token_usage,
-    has_messages,
-)
+from .backends import CodingToolBackend, get_backend, SessionTailerProtocol
 
 if TYPE_CHECKING:
     pass
@@ -32,7 +26,7 @@ MAX_SESSIONS = 100
 # Global state
 _sessions: dict[str, SessionInfo] = {}  # session_id -> SessionInfo
 _sessions_lock: asyncio.Lock | None = None  # Protects _sessions during iteration
-_projects_dir: Path | None = None
+_backend: CodingToolBackend | None = None
 _known_session_files: set[Path] = set()  # Track known files to detect new ones
 
 
@@ -41,7 +35,7 @@ class SessionInfo:
     """Information about a tracked session."""
 
     path: Path
-    tailer: SessionTailer
+    tailer: SessionTailerProtocol
     name: str = ""
     session_id: str = ""
     project_name: str = ""
@@ -52,21 +46,30 @@ class SessionInfo:
     message_queue: list[str] = field(default_factory=list)
 
     def __post_init__(self):
-        if not self.name or not self.project_name:
-            name, path = get_session_name(self.path)
-            if not self.name:
-                self.name = name
-            if not self.project_name:
-                self.project_name = name
-            if not self.project_path:
-                self.project_path = path
+        backend = get_current_backend()
+        if backend is None:
+            raise RuntimeError("Backend not initialized. Call set_backend() first.")
+
         if not self.session_id:
-            self.session_id = get_session_id(self.path)
-        if self.first_message is None:
-            self.first_message = get_first_user_message(self.path)
+            self.session_id = backend.get_session_id(self.path)
+
+        if not self.name or not self.project_name:
+            metadata = backend.get_session_metadata(self.path)
+            if not self.name:
+                self.name = metadata.project_name
+            if not self.project_name:
+                self.project_name = metadata.project_name
+            if not self.project_path:
+                self.project_path = metadata.project_path or ""
+            if self.first_message is None:
+                self.first_message = metadata.first_message
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
+        backend = get_current_backend()
+        if backend is None:
+            raise RuntimeError("Backend not initialized.")
+
         # Get timestamps
         started_at = self.tailer.get_first_timestamp()
         try:
@@ -75,7 +78,7 @@ class SessionInfo:
             last_updated = None
 
         # Get token usage stats
-        usage = get_session_token_usage(self.path)
+        usage = backend.get_session_token_usage(self.path)
 
         return {
             "id": self.session_id,
@@ -86,7 +89,7 @@ class SessionInfo:
             "firstMessage": self.first_message,
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
-            "tokenUsage": usage,
+            "tokenUsage": usage.to_dict(),
         }
 
 
@@ -98,18 +101,27 @@ def get_sessions_lock() -> asyncio.Lock:
     return _sessions_lock
 
 
+def get_current_backend() -> CodingToolBackend | None:
+    """Get the current backend instance."""
+    return _backend
+
+
+def set_backend(backend: CodingToolBackend) -> None:
+    """Set the backend to use for session operations.
+
+    Args:
+        backend: Backend instance implementing CodingToolBackend protocol.
+    """
+    global _backend
+    _backend = backend
+
+
 def get_projects_dir() -> Path:
-    """Get the projects directory path."""
-    global _projects_dir
-    if _projects_dir is None:
-        _projects_dir = Path.home() / ".claude" / "projects"
-    return _projects_dir
-
-
-def set_projects_dir(path: Path) -> None:
-    """Set the projects directory path (for testing)."""
-    global _projects_dir
-    _projects_dir = path
+    """Get the projects directory path from the current backend."""
+    if _backend is None:
+        # Fallback to default Claude Code location
+        return Path.home() / ".claude" / "projects"
+    return _backend.get_projects_dir()
 
 
 def get_sessions() -> dict[str, SessionInfo]:
@@ -145,7 +157,11 @@ def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | No
     Returns (None, None) if already tracked or if file is empty.
     If at the session limit and evict_oldest=True, removes the oldest session to make room.
     """
-    session_id = get_session_id(path)
+    backend = get_current_backend()
+    if backend is None:
+        raise RuntimeError("Backend not initialized. Call set_backend() first.")
+
+    session_id = backend.get_session_id(path)
 
     if session_id in _sessions:
         return None, None
@@ -159,7 +175,7 @@ def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | No
         return None, None
 
     # Skip sessions without any user/assistant messages
-    if not has_messages(path):
+    if not backend.has_messages(path):
         logger.debug(f"Skipping session without messages: {path}")
         return None, None
 
@@ -176,7 +192,7 @@ def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | No
             logger.debug(f"Session limit reached, not adding {path}")
             return None, None
 
-    tailer = SessionTailer(path)
+    tailer = backend.create_tailer(path)
     # Advance tailer position to end of file so process_session_messages
     # only picks up truly new messages (catchup uses read_all with fresh tailer)
     tailer.read_new_lines()
