@@ -52,11 +52,15 @@ time { color: var(--text-muted); font-size: 0.8rem; }
 .file-tool-header { font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; font-size: 0.95rem; }
 .write-header { color: #2e7d32; }
 .edit-header { color: #e65100; }
+.read-header { color: #1565c0; }
+.read-tool { background: linear-gradient(135deg, #e3f2fd 0%, #e8eaf6 100%); border: 1px solid #1976d2; }
+.read-range { font-weight: normal; font-size: 0.85em; color: var(--text-muted); }
 .file-tool-icon { font-size: 1rem; }
 .file-tool-path { font-family: monospace; background: rgba(0,0,0,0.08); padding: 2px 8px; border-radius: 4px; }
 .file-tool-fullpath { font-family: monospace; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; word-break: break-all; }
 .file-content { margin: 0; }
 .edit-section { display: flex; margin: 4px 0; border-radius: 4px; overflow: hidden; }
+.edit-section .copy-wrapper { flex: 1; }
 .edit-label { padding: 8px 12px; font-weight: bold; font-family: monospace; display: flex; align-items: flex-start; }
 .edit-old { background: #fce4ec; }
 .edit-old .edit-label { color: #b71c1c; background: #f8bbd9; }
@@ -99,6 +103,21 @@ pre code { background: none; padding: 0; }
 .commit-card a { text-decoration: none; color: #5d4037; display: block; }
 .commit-card a:hover { color: #e65100; }
 .commit-card-hash { font-family: monospace; color: #e65100; font-weight: 600; margin-right: 8px; }
+
+/* Copy buttons */
+.copy-wrapper { position: relative; }
+.copy-btn { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; padding: 4px; background: transparent; border: none; border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 0.15s; z-index: 10; }
+.copy-btn::before { content: ''; display: block; width: 16px; height: 16px; background-color: #999; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center/contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='14' height='14' x='8' y='8' rx='2' ry='2'/%3E%3Cpath d='M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'/%3E%3C/svg%3E") center/contain no-repeat; }
+.copy-wrapper:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: rgba(255,255,255,0.1); }
+.copy-btn:hover::before { background-color: #fff; }
+.copy-btn.copied::before { background-color: #4caf50; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center/contain no-repeat; }
+.file-tool-fullpath { position: relative; display: inline-block; cursor: pointer; }
+.file-tool-fullpath:hover { background: rgba(0,0,0,0.05); border-radius: 3px; }
+.file-tool-fullpath .copy-btn { top: 50%; transform: translateY(-50%); right: -28px; width: 20px; height: 20px; padding: 2px; }
+.file-tool-fullpath .copy-btn::before { width: 14px; height: 14px; background-color: #666; }
+.file-tool-fullpath:hover .copy-btn { opacity: 1; }
+.file-tool-fullpath .copy-btn:hover::before { background-color: #333; }
 
 /* Status bar */
 .status-bar { position: fixed; top: 0; left: 0; right: 0; padding: 8px 16px; background: var(--user-border); color: white; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; z-index: 1000; }

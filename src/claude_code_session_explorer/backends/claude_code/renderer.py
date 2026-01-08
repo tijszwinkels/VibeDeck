@@ -111,6 +111,15 @@ def render_bash_tool(tool_input: dict, tool_id: str) -> str:
     return _macros.bash_tool(command, description, tool_id)
 
 
+def render_read_tool(tool_input: dict, tool_id: str) -> str:
+    """Render Read tool calls with file path header and JSON details."""
+    file_path = tool_input.get("file_path", "Unknown file")
+    offset = tool_input.get("offset")
+    limit = tool_input.get("limit")
+    input_json = json.dumps(tool_input, indent=2, ensure_ascii=False)
+    return _macros.read_tool(file_path, offset, limit, input_json, tool_id)
+
+
 def render_content_block(block: dict) -> str:
     """Render a single content block to HTML."""
     if not isinstance(block, dict):
@@ -145,6 +154,8 @@ def render_content_block(block: dict) -> str:
             return render_edit_tool(tool_input, tool_id)
         if tool_name == "Bash":
             return render_bash_tool(tool_input, tool_id)
+        if tool_name == "Read":
+            return render_read_tool(tool_input, tool_id)
 
         # Generic tool rendering
         description = tool_input.get("description", "")

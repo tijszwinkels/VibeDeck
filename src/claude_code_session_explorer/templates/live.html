@@ -762,6 +762,45 @@
                     });
                 }
             });
+
+        }
+
+        function copyToClipboard(text, btn) {
+            // Try modern clipboard API first, fall back to execCommand for non-HTTPS
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showCopySuccess(btn);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showCopySuccess(btn);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showCopySuccess(btn) {
+            if (btn) {
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.classList.remove('copied');
+                }, 1500);
+            }
         }
 
         let messageTooltipTimeout = null;
@@ -1685,6 +1724,40 @@
         document.addEventListener('visibilitychange', function() {
             if (document.visibilityState === 'visible' && eventSource.readyState === EventSource.CLOSED) {
                 connect();
+            }
+        });
+
+        // Global click handler for copy buttons (event delegation)
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.copy-btn');
+            if (!btn) return;
+
+            e.stopPropagation();
+            e.preventDefault();
+
+            // Check if this is a file path copy button
+            const fullpath = btn.closest('.file-tool-fullpath[data-copy-path]');
+            if (fullpath) {
+                const path = fullpath.dataset.copyPath;
+                if (path) {
+                    copyToClipboard(path, btn);
+                }
+                return;
+            }
+
+            // Otherwise it's a code block copy button
+            const wrapper = btn.closest('.copy-wrapper');
+            if (wrapper) {
+                const pre = wrapper.querySelector('pre');
+                if (pre) {
+                    copyToClipboard(pre.textContent, btn);
+                } else {
+                    // Fallback: copy wrapper text content (excluding button)
+                    const clone = wrapper.cloneNode(true);
+                    const btnClone = clone.querySelector('.copy-btn');
+                    if (btnClone) btnClone.remove();
+                    copyToClipboard(clone.textContent.trim(), btn);
+                }
             }
         });
     })();
