@@ -655,6 +655,7 @@ def generate_html(
             total_pages=total_pages,
             pagination_html=pagination_html,
             messages_html="".join(messages_html),
+            backend=backend,
         )
 
         page_path = output_dir / f"page-{page_num:03d}.html"
@@ -744,6 +745,7 @@ def generate_html(
         total_commits=total_commits,
         total_pages=total_pages,
         index_items_html="".join(index_items),
+        backend=backend,
     )
 
     index_path = output_dir / "index.html"

@@ -225,6 +225,44 @@ class TestGenerateHtml:
         index_content = (output_dir / "index.html").read_text()
         assert "Hello, Claude!" in index_content
 
+    def test_html_title_reflects_claude_code_backend(
+        self, sample_claude_code_session, tmp_path
+    ):
+        """Should show 'Claude Code' in title for Claude Code sessions."""
+        from claude_code_session_explorer.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_claude_code_session, output_dir)
+
+        index_content = (output_dir / "index.html").read_text()
+        page_content = (output_dir / "page-001.html").read_text()
+
+        assert "<h1>Claude Code transcript</h1>" in index_content
+        assert "Claude Code transcript - Index" in index_content
+        assert "Claude Code transcript</a> - page 1/" in page_content
+
+    def test_html_title_reflects_opencode_backend(
+        self, sample_opencode_session, tmp_path, monkeypatch
+    ):
+        """Should show 'OpenCode' in title for OpenCode sessions."""
+        from claude_code_session_explorer.export import generate_html
+
+        storage_dir, session_id = sample_opencode_session
+        monkeypatch.setattr(
+            "claude_code_session_explorer.export.get_opencode_storage_dir",
+            lambda: storage_dir,
+        )
+
+        output_dir = tmp_path / "output"
+        generate_html(Path(session_id), output_dir)
+
+        index_content = (output_dir / "index.html").read_text()
+        page_content = (output_dir / "page-001.html").read_text()
+
+        assert "<h1>OpenCode transcript</h1>" in index_content
+        assert "OpenCode transcript - Index" in index_content
+        assert "OpenCode transcript</a> - page 1/" in page_content
+
     def test_html_pagination_with_many_prompts(self, tmp_path):
         """Should paginate when there are many prompts."""
         from claude_code_session_explorer.export import generate_html
