@@ -35,7 +35,15 @@
     <!-- Main content -->
     <div class="main-content" id="main-content">
         <div class="container">
-            <h1>Claude Code Session Explorer</h1>
+            <div class="project-header-bar">
+                <h1 id="project-title">Claude Code Session Explorer</h1>
+                <button class="copy-icon-btn" id="copy-path-btn" title="Copy project path" style="display: none;"></button>
+            </div>
+            <div class="session-id-bar" id="session-id-bar" style="display: none;">
+                <span class="session-id-label">Session:</span>
+                <code class="session-id-value" id="session-id-value"></code>
+                <button class="copy-icon-btn copy-icon-btn-small" id="copy-session-btn" title="Copy session ID"></button>
+            </div>
             <div id="sessions"></div>
         </div>
     </div>
@@ -108,6 +116,14 @@
         const scrollBottomBtn = document.getElementById('scroll-bottom-btn');
         const autoScrollCheckbox = document.getElementById('auto-scroll-checkbox');
         const autoScrollFloat = document.getElementById('auto-scroll-float');
+        const projectTitle = document.getElementById('project-title');
+        const copyPathBtn = document.getElementById('copy-path-btn');
+        const sessionIdBar = document.getElementById('session-id-bar');
+        const sessionIdValue = document.getElementById('session-id-value');
+        const copySessionBtn = document.getElementById('copy-session-btn');
+
+        let currentProjectPath = null;
+        let currentSessionId = null;
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
@@ -624,6 +640,57 @@
         }
 
         newSessionBtn.addEventListener('click', promptForNewSession);
+
+        // Copy button handlers
+        function copyToClipboard(text, btn) {
+            // Try modern clipboard API first, fall back to execCommand for non-HTTPS
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showCopySuccess(btn);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showCopySuccess(btn);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showCopySuccess(btn) {
+            if (btn) {
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.classList.remove('copied');
+                }, 1500);
+            }
+        }
+
+        copyPathBtn.addEventListener('click', function() {
+            if (currentProjectPath) {
+                copyToClipboard(currentProjectPath, copyPathBtn);
+            }
+        });
+
+        copySessionBtn.addEventListener('click', function() {
+            if (currentSessionId) {
+                copyToClipboard(currentSessionId, copySessionBtn);
+            }
+        });
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
@@ -1280,6 +1347,24 @@
 
             // Update header title
             sessionTitleBar.textContent = session.displayTitle || session.name;
+
+            // Update project title and session ID
+            projectTitle.textContent = session.projectName || 'Unknown Project';
+            currentProjectPath = session.cwd;
+            currentSessionId = session.pending ? null : sessionId;
+
+            if (currentProjectPath) {
+                copyPathBtn.style.display = '';
+            } else {
+                copyPathBtn.style.display = 'none';
+            }
+
+            if (currentSessionId && !session.pending) {
+                sessionIdValue.textContent = currentSessionId;
+                sessionIdBar.style.display = '';
+            } else {
+                sessionIdBar.style.display = 'none';
+            }
 
             updateInputBarUI();
 
