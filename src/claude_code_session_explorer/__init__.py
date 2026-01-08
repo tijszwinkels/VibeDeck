@@ -8,7 +8,7 @@ from threading import Timer
 import click
 import uvicorn
 
-from .backends import list_backends
+from .backends import list_backends, get_multi_backend
 
 __version__ = "0.1.0"
 
@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 
 @click.command()
 @click.option(
-    "--session", "-s",
+    "--session",
+    "-s",
     type=click.Path(exists=True, path_type=Path),
     help="Watch a specific session file (in addition to auto-discovered sessions)",
 )
 @click.option(
-    "--port", "-p",
+    "--port",
+    "-p",
     type=int,
     default=8765,
     help="Port to run the server on (default: 8765)",
@@ -51,9 +53,9 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--backend",
-    type=click.Choice(list_backends()),
-    default="claude-code",
-    help="Backend to use (default: claude-code)",
+    type=click.Choice(["all"] + list_backends()),
+    default="all",
+    help="Backend to use: 'all' for all backends (default), or a specific backend name",
 )
 @click.option(
     "--experimental",
@@ -79,6 +81,13 @@ logger = logging.getLogger(__name__)
     hidden=True,
     help="Enable fork button to create new sessions from messages (requires --experimental --enable-send)",
 )
+@click.option(
+    "--default-send-backend",
+    type=click.Choice(list_backends()),
+    default=None,
+    hidden=True,
+    help="Default backend for new sessions (requires --experimental --enable-send)",
+)
 def main(
     session: Path | None,
     port: int,
@@ -91,6 +100,7 @@ def main(
     enable_send: bool,
     dangerously_skip_permissions: bool,
     fork: bool,
+    default_send_backend: str | None,
 ) -> None:
     """Start a live-updating transcript viewer for Claude Code sessions.
 
@@ -110,15 +120,23 @@ def main(
     # Validate experimental flag requirements
     if enable_send and not experimental:
         click.echo("Error: --enable-send requires --experimental flag", err=True)
-        click.echo("This feature is experimental and has known security limitations.", err=True)
+        click.echo(
+            "This feature is experimental and has known security limitations.", err=True
+        )
         raise SystemExit(1)
 
     if dangerously_skip_permissions and not enable_send:
-        click.echo("Error: --dangerously-skip-permissions requires --enable-send", err=True)
+        click.echo(
+            "Error: --dangerously-skip-permissions requires --enable-send", err=True
+        )
         raise SystemExit(1)
 
     if fork and not enable_send:
         click.echo("Error: --fork requires --enable-send", err=True)
+        raise SystemExit(1)
+
+    if default_send_backend and not enable_send:
+        click.echo("Error: --default-send-backend requires --enable-send", err=True)
         raise SystemExit(1)
 
     # Initialize backend
@@ -127,27 +145,46 @@ def main(
 
     # Update max sessions config
     from . import sessions
+
     sessions.MAX_SESSIONS = max_sessions
 
     # Initialize the backend before setting up the server
-    backend_instance = server.initialize_backend(backend)
-    click.echo(f"Using backend: {backend_instance.name}")
+    if backend == "all":
+        # Use multi-backend mode
+        backend_instance = server.initialize_multi_backend()
+        from .backends.multi import MultiBackend
+
+        if isinstance(backend_instance, MultiBackend):
+            backend_names = [b.name for b in backend_instance.get_backends()]
+            click.echo(f"Using backends: {', '.join(backend_names)}")
+        else:
+            click.echo(f"Using backend: {backend_instance.name}")
+    else:
+        backend_instance = server.initialize_backend(backend)
+        click.echo(f"Using backend: {backend_instance.name}")
 
     # Configure server features
     server.set_send_enabled(enable_send)
     server.set_skip_permissions(dangerously_skip_permissions)
     server.set_fork_enabled(fork)
+    if default_send_backend:
+        server.set_default_send_backend(default_send_backend)
 
     if enable_send:
-        click.echo("⚠️  EXPERIMENTAL: Send feature enabled - messages can be sent to Claude Code sessions")
+        click.echo(
+            "⚠️  EXPERIMENTAL: Send feature enabled - messages can be sent to Claude Code sessions"
+        )
         click.echo("   This feature has known security limitations. Use with caution.")
     if dangerously_skip_permissions:
-        click.echo("⚠️  WARNING: --dangerously-skip-permissions enabled - Claude will skip permission prompts")
+        click.echo(
+            "⚠️  WARNING: --dangerously-skip-permissions enabled - Claude will skip permission prompts"
+        )
 
     # If a specific session is provided, add it first
     if session is not None:
         click.echo(f"Watching: {session}")
         from .sessions import add_session
+
         add_session(session)
 
     # Check if any sessions were found
@@ -166,9 +203,11 @@ def main(
     # Open browser after a short delay to let server start
     url = f"http://{host}:{port}"
     if not no_open:
+
         def open_browser():
             click.echo(f"Opening {url} in browser...")
             webbrowser.open(url)
+
         Timer(1.0, open_browser).start()
     else:
         click.echo(f"Server running at {url}")

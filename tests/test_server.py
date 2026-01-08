@@ -16,11 +16,13 @@ def reset_server_state():
     server._clients.clear()
     sessions.get_known_session_files().clear()
     server.set_send_enabled(False)  # Reset send feature state
+    server._default_send_backend = None  # Reset default backend
     yield
     sessions.get_sessions().clear()
     server._clients.clear()
     sessions.get_known_session_files().clear()
     server.set_send_enabled(False)
+    server._default_send_backend = None
 
 
 class TestServerEndpoints:
@@ -191,8 +193,7 @@ class TestSendFeature:
         client = TestClient(app)
 
         response = client.post(
-            f"/sessions/{temp_jsonl_file.stem}/send",
-            json={"message": "test message"}
+            f"/sessions/{temp_jsonl_file.stem}/send", json={"message": "test message"}
         )
         assert response.status_code == 403
         assert "disabled" in response.json()["detail"].lower()
@@ -204,8 +205,7 @@ class TestSendFeature:
         client = TestClient(app)
 
         response = client.post(
-            "/sessions/nonexistent/send",
-            json={"message": "test message"}
+            "/sessions/nonexistent/send", json={"message": "test message"}
         )
         assert response.status_code == 404
 
@@ -216,8 +216,7 @@ class TestSendFeature:
         client = TestClient(app)
 
         response = client.post(
-            f"/sessions/{temp_jsonl_file.stem}/send",
-            json={"message": "   "}
+            f"/sessions/{temp_jsonl_file.stem}/send", json={"message": "   "}
         )
         assert response.status_code == 400
         assert "empty" in response.json()["detail"].lower()
@@ -270,10 +269,7 @@ class TestSendFeature:
         """Test that new session returns 403 when feature is disabled."""
         client = TestClient(app)
 
-        response = client.post(
-            "/sessions/new",
-            json={"message": "Hello"}
-        )
+        response = client.post("/sessions/new", json={"message": "Hello"})
         assert response.status_code == 403
         assert "disabled" in response.json()["detail"].lower()
 
@@ -282,12 +278,44 @@ class TestSendFeature:
         server.set_send_enabled(True)
         client = TestClient(app)
 
-        response = client.post(
-            "/sessions/new",
-            json={"message": "   "}
-        )
+        response = client.post("/sessions/new", json={"message": "   "})
         assert response.status_code == 400
         assert "empty" in response.json()["detail"].lower()
+
+
+class TestDefaultSendBackend:
+    """Tests for the default send backend feature."""
+
+    def test_default_send_backend_endpoint_returns_null(self):
+        """Test /default-send-backend returns null when not set."""
+        client = TestClient(app)
+        response = client.get("/default-send-backend")
+        assert response.status_code == 200
+        assert response.json() == {"backend": None}
+
+    def test_default_send_backend_endpoint_returns_value(self):
+        """Test /default-send-backend returns value when set."""
+        server.set_default_send_backend("opencode")
+        try:
+            client = TestClient(app)
+            response = client.get("/default-send-backend")
+            assert response.status_code == 200
+            assert response.json() == {"backend": "opencode"}
+        finally:
+            # Reset for other tests
+            server._default_send_backend = None
+
+    def test_get_default_send_backend_returns_none_initially(self):
+        """Test get_default_send_backend returns None when not set."""
+        assert server.get_default_send_backend() is None
+
+    def test_set_and_get_default_send_backend(self):
+        """Test set and get default send backend."""
+        server.set_default_send_backend("claude-code")
+        try:
+            assert server.get_default_send_backend() == "claude-code"
+        finally:
+            server._default_send_backend = None
 
 
 # Note: SSE endpoint streaming tests are skipped because TestClient

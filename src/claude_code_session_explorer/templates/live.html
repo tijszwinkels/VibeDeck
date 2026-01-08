@@ -35,7 +35,15 @@
     <!-- Main content -->
     <div class="main-content" id="main-content">
         <div class="container">
-            <h1>Claude Code Session Explorer</h1>
+            <div class="project-header-bar">
+                <h1 id="project-title">Claude Code Session Explorer</h1>
+                <button class="copy-icon-btn" id="copy-path-btn" title="Copy project path" style="display: none;"></button>
+            </div>
+            <div class="session-id-bar" id="session-id-bar" style="display: none;">
+                <span class="session-id-label">Session:</span>
+                <code class="session-id-value" id="session-id-value"></code>
+                <button class="copy-icon-btn copy-icon-btn-small" id="copy-session-btn" title="Copy session ID"></button>
+            </div>
             <div id="sessions"></div>
         </div>
     </div>
@@ -108,6 +116,14 @@
         const scrollBottomBtn = document.getElementById('scroll-bottom-btn');
         const autoScrollCheckbox = document.getElementById('auto-scroll-checkbox');
         const autoScrollFloat = document.getElementById('auto-scroll-float');
+        const projectTitle = document.getElementById('project-title');
+        const copyPathBtn = document.getElementById('copy-path-btn');
+        const sessionIdBar = document.getElementById('session-id-bar');
+        const sessionIdValue = document.getElementById('session-id-value');
+        const copySessionBtn = document.getElementById('copy-session-btn');
+
+        let currentProjectPath = null;
+        let currentSessionId = null;
 
         let eventSource = null;
         const MAX_MESSAGES = 500;
@@ -124,6 +140,7 @@
         let catchupComplete = false;
         let sendEnabled = false;
         let forkEnabled = false;
+        let defaultSendBackend = null;
         const sessionStatus = new Map();
         let pendingSessionCounter = 0;
         const pendingMessages = [];
@@ -309,6 +326,17 @@
             }
         }
 
+        async function checkDefaultSendBackend() {
+            try {
+                const response = await fetch('/default-send-backend');
+                const data = await response.json();
+                defaultSendBackend = data.backend;
+            } catch (e) {
+                console.error('Failed to check default-send-backend:', e);
+                defaultSendBackend = null;
+            }
+        }
+
         function updateForkButtonVisibility() {
             // Only show fork button on desktop and when fork is enabled
             if (forkEnabled && !isMobile()) {
@@ -417,17 +445,29 @@
             updateInputBarUI();
         }
 
+        function getBackendForNewSession() {
+            // Fallback order: defaultSendBackend -> current session's backend -> null (let server decide)
+            if (defaultSendBackend) return defaultSendBackend;
+            if (activeSessionId) {
+                const session = sessions.get(activeSessionId);
+                if (session && session.backend) return session.backend;
+            }
+            return null;
+        }
+
         async function startPendingSession(pendingSession, message) {
             inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
             inputStatus.className = 'input-status running';
 
             try {
+                const backend = getBackendForNewSession();
                 const response = await fetch('/sessions/new', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         message: message,
-                        cwd: pendingSession.cwd || null
+                        cwd: pendingSession.cwd || null,
+                        backend: backend
                     })
                 });
 
@@ -554,7 +594,7 @@
             }
 
             const displayProjectName = projectName || 'New Session';
-            const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null);
+            const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null, null);
             session.pending = true;
             session.cwd = cwd;
 
@@ -600,6 +640,57 @@
         }
 
         newSessionBtn.addEventListener('click', promptForNewSession);
+
+        // Copy button handlers
+        function copyToClipboard(text, btn) {
+            // Try modern clipboard API first, fall back to execCommand for non-HTTPS
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(function() {
+                    showCopySuccess(btn);
+                }).catch(function() {
+                    fallbackCopy(text, btn);
+                });
+            } else {
+                fallbackCopy(text, btn);
+            }
+        }
+
+        function fallbackCopy(text, btn) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                showCopySuccess(btn);
+            } catch (err) {
+                console.error('Failed to copy:', err);
+            }
+            document.body.removeChild(textarea);
+        }
+
+        function showCopySuccess(btn) {
+            if (btn) {
+                btn.classList.add('copied');
+                setTimeout(function() {
+                    btn.classList.remove('copied');
+                }, 1500);
+            }
+        }
+
+        copyPathBtn.addEventListener('click', function() {
+            if (currentProjectPath) {
+                copyToClipboard(currentProjectPath, copyPathBtn);
+            }
+        });
+
+        copySessionBtn.addEventListener('click', function() {
+            if (currentSessionId) {
+                copyToClipboard(currentSessionId, copySessionBtn);
+            }
+        });
 
         function updateStatus(status, text) {
             statusBar.className = 'status-bar ' + status;
@@ -672,44 +763,6 @@
                 }
             });
 
-        }
-
-        function copyToClipboard(text, btn) {
-            // Try modern clipboard API first, fall back to execCommand for non-HTTPS
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(function() {
-                    showCopySuccess(btn);
-                }).catch(function() {
-                    fallbackCopy(text, btn);
-                });
-            } else {
-                fallbackCopy(text, btn);
-            }
-        }
-
-        function fallbackCopy(text, btn) {
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            try {
-                document.execCommand('copy');
-                showCopySuccess(btn);
-            } catch (err) {
-                console.error('Failed to copy:', err);
-            }
-            document.body.removeChild(textarea);
-        }
-
-        function showCopySuccess(btn) {
-            if (btn) {
-                btn.classList.add('copied');
-                setTimeout(function() {
-                    btn.classList.remove('copied');
-                }, 1500);
-            }
         }
 
         let messageTooltipTimeout = null;
@@ -915,13 +968,14 @@
             return project;
         }
 
-        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage) {
+        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend) {
             if (sessions.has(sessionId)) return sessions.get(sessionId);
 
             // Create container with session header
             const container = document.createElement('div');
             container.className = 'session-container';
             container.dataset.session = sessionId;
+            if (backend) container.dataset.backend = backend;
 
             const displayTitle = truncateTitle(firstMessage || name, MAX_TITLE_LENGTH);
 
@@ -937,6 +991,8 @@
             const sidebarItem = document.createElement('div');
             sidebarItem.className = 'session-item';
             sidebarItem.dataset.session = sessionId;
+            if (backend) sidebarItem.dataset.backend = backend;
+
             sidebarItem.innerHTML = `
                 <span class="unread-dot"></span>
                 <span class="session-title">${escapeHtml(displayTitle)}</span>
@@ -989,7 +1045,8 @@
                 startedAt: startedAt || null,
                 lastUpdatedAt: lastUpdatedAt || null,
                 cwd: projectPath || null,
-                tokenUsage: tokenUsage || null
+                tokenUsage: tokenUsage || null,
+                backend: backend || null
             };
             sessions.set(sessionId, session);
 
@@ -1083,6 +1140,14 @@
                 const updated = formatTimestamp(session.lastUpdatedAt);
                 const fullMessage = session.firstMessage || 'No message';
 
+                let backendHtml = '';
+                if (session.backend) {
+                    backendHtml = `
+                        <div class="tooltip-label">Backend</div>
+                        <div class="tooltip-value">${escapeHtml(session.backend)}</div>
+                    `;
+                }
+
                 let usageHtml = '';
                 if (session.tokenUsage && session.tokenUsage.message_count > 0) {
                     const u = session.tokenUsage;
@@ -1109,6 +1174,7 @@
                 }
 
                 sessionTooltip.innerHTML = `
+                    ${backendHtml}
                     <div class="tooltip-label">Created</div>
                     <div class="tooltip-value">${escapeHtml(started)}</div>
                     <div class="tooltip-label">Last updated</div>
@@ -1282,6 +1348,24 @@
 
             // Update header title
             sessionTitleBar.textContent = session.displayTitle || session.name;
+
+            // Update project title and session ID
+            projectTitle.textContent = session.projectName || 'Unknown Project';
+            currentProjectPath = session.cwd;
+            currentSessionId = session.pending ? null : sessionId;
+
+            if (currentProjectPath) {
+                copyPathBtn.style.display = '';
+            } else {
+                copyPathBtn.style.display = 'none';
+            }
+
+            if (currentSessionId && !session.pending) {
+                sessionIdValue.textContent = currentSessionId;
+                sessionIdBar.style.display = '';
+            } else {
+                sessionIdBar.style.display = 'none';
+            }
 
             updateInputBarUI();
 
@@ -1462,6 +1546,7 @@
 
             checkSendEnabled();
             checkForkEnabled();
+            checkDefaultSendBackend();
 
             eventSource = new EventSource('/events');
 
@@ -1476,7 +1561,8 @@
                         session.startedAt,
                         session.lastUpdatedAt,
                         session.projectPath,
-                        session.tokenUsage
+                        session.tokenUsage,
+                        session.backend
                     );
                 });
                 reorderSidebar();
@@ -1518,7 +1604,8 @@
                         data.startedAt,
                         data.lastUpdatedAt,
                         data.projectPath,
-                        data.tokenUsage
+                        data.tokenUsage,
+                        data.backend
                     );
 
                     if (wasPendingActive && session) {
@@ -1533,7 +1620,8 @@
                         data.startedAt,
                         data.lastUpdatedAt,
                         data.projectPath,
-                        data.tokenUsage
+                        data.tokenUsage,
+                        data.backend
                     );
                     if (autoSwitch && session) {
                         switchToSession(data.id, true);
@@ -1550,7 +1638,7 @@
                 const data = JSON.parse(e.data);
                 if (data.type === 'html' && data.session_id) {
                     if (!sessions.has(data.session_id)) {
-                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null);
+                        createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null, null);
                     }
                     appendMessage(data.session_id, data.content);
                 }

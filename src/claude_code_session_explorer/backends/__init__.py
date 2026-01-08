@@ -14,7 +14,13 @@ from .protocol import (
     TokenUsage,
     SendMessageResult,
 )
-from .registry import register_backend, get_backend, list_backends
+from .registry import (
+    register_backend,
+    get_backend,
+    list_backends,
+    get_all_backends,
+    get_multi_backend,
+)
 
 __all__ = [
     # Protocols
@@ -30,4 +36,6 @@ __all__ = [
     "register_backend",
     "get_backend",
     "list_backends",
+    "get_all_backends",
+    "get_multi_backend",
 ]

@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from .backends import CodingToolBackend, get_backend
+from .backends import CodingToolBackend, get_backend, get_multi_backend
 from .sessions import (
     MAX_SESSIONS,
     SessionInfo,
@@ -34,10 +34,13 @@ from .sessions import (
 logger = logging.getLogger(__name__)
 
 # Configuration
-CATCHUP_TIMEOUT = 30  # seconds - max time for catchup before telling client to reinitialize
+CATCHUP_TIMEOUT = (
+    30  # seconds - max time for catchup before telling client to reinitialize
+)
 _send_enabled = False  # Enable with --enable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
+_default_send_backend: str | None = None  # Enable with --default-send-backend CLI flag
 
 # Global state for server (not session-related)
 _clients: set[asyncio.Queue] = set()
@@ -66,6 +69,17 @@ def set_fork_enabled(enabled: bool) -> None:
     _fork_enabled = enabled
 
 
+def set_default_send_backend(backend: str) -> None:
+    """Set the default backend for new sessions."""
+    global _default_send_backend
+    _default_send_backend = backend
+
+
+def get_default_send_backend() -> str | None:
+    """Get the default backend for new sessions."""
+    return _default_send_backend
+
+
 def is_send_enabled() -> bool:
     """Check if sending messages is enabled."""
     return _send_enabled
@@ -87,6 +101,28 @@ def initialize_backend(backend_name: str | None = None, **config) -> CodingToolB
 
     # Load CSS (this is generic, not backend-specific)
     from .rendering import CSS
+
+    _css = CSS
+
+    return _backend
+
+
+def initialize_multi_backend(**config) -> CodingToolBackend:
+    """Initialize a multi-backend that aggregates all available backends.
+
+    Args:
+        **config: Backend-specific configuration.
+
+    Returns:
+        The initialized multi-backend instance.
+    """
+    global _backend, _css
+    _backend = get_multi_backend(**config)
+    set_backend(_backend)
+
+    # Load CSS (this is generic, not backend-specific)
+    from .rendering import CSS
+
     _css = CSS
 
     return _backend
@@ -103,15 +139,68 @@ def get_server_backend() -> CodingToolBackend:
     return _backend
 
 
+def get_renderer_for_session(session_path: Path):
+    """Get the appropriate message renderer for a session.
+
+    For MultiBackend, this returns the renderer from the backend that owns
+    the session. For single backends, returns that backend's renderer.
+
+    Args:
+        session_path: Path to the session file.
+
+    Returns:
+        MessageRendererProtocol for the session.
+    """
+    backend = get_server_backend()
+
+    # Check if this is a MultiBackend with get_renderer_for_session method
+    get_renderer = getattr(backend, "get_renderer_for_session", None)
+    if get_renderer is not None:
+        renderer = get_renderer(session_path)
+        if renderer is not None:
+            return renderer
+
+    # Fallback to default renderer
+    return backend.get_message_renderer()
+
+
+def get_backend_for_session(session_path: Path) -> CodingToolBackend:
+    """Get the appropriate backend for a session.
+
+    For MultiBackend, this returns the backend that owns the session.
+    For single backends, returns that backend.
+
+    Args:
+        session_path: Path to the session file.
+
+    Returns:
+        CodingToolBackend for the session.
+    """
+    backend = get_server_backend()
+
+    # Check if this is a MultiBackend with get_backend_for_session method
+    get_specific = getattr(backend, "get_backend_for_session", None)
+    if get_specific is not None:
+        specific_backend = get_specific(session_path)
+        if specific_backend is not None:
+            return specific_backend
+
+    # Fallback to main backend
+    return backend
+
+
 class SendMessageRequest(BaseModel):
     """Request body for sending a message to a session."""
+
     message: str
 
 
 class NewSessionRequest(BaseModel):
     """Request body for starting a new session."""
+
     message: str  # Initial message to send (required)
     cwd: str | None = None  # Working directory (optional)
+    backend: str | None = None  # Backend to use (optional, for multi-backend mode)
 
 
 async def broadcast_event(event_type: str, data: dict) -> None:
@@ -130,11 +219,14 @@ async def broadcast_event(event_type: str, data: dict) -> None:
 
 async def broadcast_message(session_id: str, html: str) -> None:
     """Broadcast a message to all connected clients."""
-    await broadcast_event("message", {
-        "type": "html",
-        "content": html,
-        "session_id": session_id,
-    })
+    await broadcast_event(
+        "message",
+        {
+            "type": "html",
+            "content": html,
+            "session_id": session_id,
+        },
+    )
 
 
 async def broadcast_session_added(info: SessionInfo) -> None:
@@ -148,8 +240,7 @@ async def broadcast_session_catchup(info: SessionInfo) -> None:
     When a session is added while clients are already connected, those clients
     need to receive the existing messages (catchup) for that session.
     """
-    backend = get_server_backend()
-    renderer = backend.get_message_renderer()
+    renderer = get_renderer_for_session(info.path)
 
     existing = info.tailer.read_all()
     for entry in existing:
@@ -168,15 +259,20 @@ async def broadcast_session_status(session_id: str) -> None:
     info = get_session(session_id)
     if info is None:
         return
-    await broadcast_event("session_status", {
-        "session_id": session_id,
-        "running": info.process is not None,
-        "queued_messages": len(info.message_queue),
-        "waiting_for_input": info.tailer.waiting_for_input,
-    })
+    await broadcast_event(
+        "session_status",
+        {
+            "session_id": session_id,
+            "running": info.process is not None,
+            "queued_messages": len(info.message_queue),
+            "waiting_for_input": info.tailer.waiting_for_input,
+        },
+    )
 
 
-async def run_cli_for_session(session_id: str, message: str, fork: bool = False) -> None:
+async def run_cli_for_session(
+    session_id: str, message: str, fork: bool = False
+) -> None:
     """Send a message to a coding session and track the process.
 
     Args:
@@ -184,28 +280,39 @@ async def run_cli_for_session(session_id: str, message: str, fork: bool = False)
         message: The message to send
         fork: If True, fork the session to create a new one with conversation history
     """
-    backend = get_server_backend()
     info = get_session(session_id)
     if info is None:
         logger.error(f"Session not found: {session_id}")
         return
 
+    # Get the specific backend for this session
+    backend = get_backend_for_session(info.path)
+
     try:
         # Ensure session is indexed (backend-specific)
         backend.ensure_session_indexed(session_id)
 
-        # Build command using backend
+        # Build command using session-specific backend
         if fork:
-            cmd_args = backend.build_fork_command(session_id, message, _skip_permissions)
+            cmd_args = backend.build_fork_command(
+                session_id, message, _skip_permissions
+            )
         else:
-            cmd_args = backend.build_send_command(session_id, message, _skip_permissions)
+            cmd_args = backend.build_send_command(
+                session_id, message, _skip_permissions
+            )
 
         # Determine working directory from session info
-        cwd = info.project_path if info.project_path and Path(info.project_path).is_dir() else None
+        cwd = (
+            info.project_path
+            if info.project_path and Path(info.project_path).is_dir()
+            else None
+        )
 
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -239,14 +346,15 @@ async def run_cli_for_session(session_id: str, message: str, fork: bool = False)
 
 async def process_session_messages(session_id: str) -> None:
     """Read new messages from a session and broadcast to clients."""
-    backend = get_server_backend()
-    renderer = backend.get_message_renderer()
-
     info = get_session(session_id)
     if info is None:
         return
 
+    # Get the renderer for this specific session
+    renderer = get_renderer_for_session(info.path)
+
     new_entries = info.tailer.read_new_lines()
+    logger.debug(f"read_new_lines returned {len(new_entries)} entries for {session_id}")
     for entry in new_entries:
         html = renderer.render_message(entry)
         if html:
@@ -258,39 +366,78 @@ async def process_session_messages(session_id: str) -> None:
 
 
 async def check_for_new_sessions() -> None:
-    """Check for new session files and add them."""
-    backend = get_server_backend()
-    projects_dir = get_projects_dir()
-    if not projects_dir.exists():
-        return
+    """Check for new session files and add them.
 
-    # Find all session files
-    for f in projects_dir.glob("**/*.jsonl"):
-        if not backend.should_watch_file(f):
-            continue
-        if f not in get_known_session_files():
-            async with get_sessions_lock():
-                info, evicted_id = add_session(f)
-                if evicted_id:
-                    await broadcast_session_removed(evicted_id)
-                if info:
-                    await broadcast_session_added(info)
-                    await broadcast_session_catchup(info)
+    Uses the backend's find_recent_sessions to discover new sessions,
+    which handles backend-specific file patterns (JSONL for Claude Code,
+    JSON for OpenCode).
+    """
+    backend = get_server_backend()
+
+    # Use backend to find recent sessions (handles pattern differences)
+    try:
+        recent = backend.find_recent_sessions(limit=MAX_SESSIONS)
+        for f in recent:
+            if f not in get_known_session_files():
+                async with get_sessions_lock():
+                    info, evicted_id = add_session(f)
+                    if evicted_id:
+                        await broadcast_session_removed(evicted_id)
+                    if info:
+                        await broadcast_session_added(info)
+                        await broadcast_session_catchup(info)
+    except Exception as e:
+        logger.warning(f"Failed to check for new sessions: {e}")
+
+
+def _get_watch_directories() -> list[Path]:
+    """Get all directories to watch based on the current backend.
+
+    For MultiBackend, returns directories from all backends.
+    For single backend, returns just that backend's directory.
+    """
+    backend = get_server_backend()
+
+    # Check if this is a MultiBackend with get_all_project_dirs method
+    if hasattr(backend, "get_all_project_dirs"):
+        return backend.get_all_project_dirs()
+
+    # Single backend
+    projects_dir = get_projects_dir()
+    return [projects_dir] if projects_dir.exists() else []
 
 
 async def watch_loop() -> None:
-    """Background task that watches for file changes."""
-    backend = get_server_backend()
-    projects_dir = get_projects_dir()
+    """Background task that watches for file changes.
 
-    if not projects_dir.exists():
-        logger.warning(f"Projects directory not found: {projects_dir}")
+    Watches the backend's projects directory for file changes. The backend
+    determines which files should trigger updates via should_watch_file()
+    and how to map changed files to session IDs via get_session_id_from_changed_file().
+
+    For MultiBackend, watches all directories from all backends.
+    """
+    backend = get_server_backend()
+    watch_dirs = _get_watch_directories()
+
+    if not watch_dirs:
+        logger.warning("No project directories found to watch")
         return
 
-    logger.info(f"Starting watch loop for {projects_dir}")
+    # Filter to existing directories only
+    watch_dirs = [d for d in watch_dirs if d.exists()]
+    if not watch_dirs:
+        logger.warning("No existing project directories to watch")
+        return
+
+    logger.info(f"Starting watch loop for {len(watch_dirs)} directories: {watch_dirs}")
 
     try:
-        async for changes in watchfiles.awatch(projects_dir):
+        async for changes in watchfiles.awatch(*watch_dirs):
+            # Collect sessions to process and whether to check for new sessions
+            # This minimizes lock contention by batching operations
+            sessions_to_process: set[str] = set()
+            need_new_session_check = False
+
             for change_type, changed_path in changes:
                 changed_path = Path(changed_path)
 
@@ -298,29 +445,28 @@ async def watch_loop() -> None:
                 if not backend.should_watch_file(changed_path):
                     continue
 
-                async with get_sessions_lock():
-                    if change_type == watchfiles.Change.added:
-                        # New session file
-                        info, evicted_id = add_session(changed_path)
-                        if evicted_id:
-                            await broadcast_session_removed(evicted_id)
-                        if info:
-                            await broadcast_session_added(info)
-                            await broadcast_session_catchup(info)
+                # Get session ID from the changed file path
+                # For Claude Code: session ID is the filename
+                # For OpenCode: session ID is extracted from message/part path
+                session_id = backend.get_session_id_from_changed_file(changed_path)
+                logger.debug(
+                    f"File change: {change_type.name} {changed_path.name} -> session {session_id}"
+                )
 
-                    elif change_type == watchfiles.Change.modified:
-                        # Existing file modified
-                        session_id = backend.get_session_id(changed_path)
-                        if get_session(session_id) is not None:
-                            await process_session_messages(session_id)
-                        elif changed_path not in get_known_session_files():
-                            # File we haven't seen - might be new
-                            info, evicted_id = add_session(changed_path)
-                            if evicted_id:
-                                await broadcast_session_removed(evicted_id)
-                            if info:
-                                await broadcast_session_added(info)
-                                await broadcast_session_catchup(info)
+                if session_id and get_session(session_id) is not None:
+                    # Known session - queue for message processing
+                    sessions_to_process.add(session_id)
+                else:
+                    # Unknown session - might be a new session file
+                    need_new_session_check = True
+
+            # Check for new sessions (needs lock, but only once per batch)
+            if need_new_session_check:
+                await check_for_new_sessions()
+
+            # Process messages for known sessions (doesn't need lock)
+            for session_id in sessions_to_process:
+                await process_session_messages(session_id)
 
     except asyncio.CancelledError:
         logger.info("Watch loop cancelled")
@@ -366,6 +512,7 @@ app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
 async def index() -> HTMLResponse:
     """Serve the main live transcript page."""
     from .rendering import get_template
+
     template = get_template("live.html")
     html = template.render(css=_css)
     return HTMLResponse(content=html)
@@ -380,9 +527,6 @@ async def list_sessions() -> dict:
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     """Generate SSE events for a client."""
-    backend = get_server_backend()
-    renderer = backend.get_message_renderer()
-
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     _clients.add(queue)
 
@@ -402,6 +546,8 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
 
         async with get_sessions_lock():
             for session_id, info in get_sessions().items():
+                # Get the renderer for this specific session
+                renderer = get_renderer_for_session(info.path)
                 existing = info.tailer.read_all()
                 for entry in existing:
                     # Check if catchup is taking too long (slow client)
@@ -412,11 +558,13 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
                     if html:
                         yield {
                             "event": "message",
-                            "data": json.dumps({
-                                "type": "html",
-                                "content": html,
-                                "session_id": session_id,
-                            }),
+                            "data": json.dumps(
+                                {
+                                    "type": "html",
+                                    "content": html,
+                                    "session_id": session_id,
+                                }
+                            ),
                         }
                 if catchup_timed_out:
                     break
@@ -483,6 +631,12 @@ async def fork_enabled() -> dict:
     return {"enabled": _fork_enabled}
 
 
+@app.get("/default-send-backend")
+async def default_send_backend() -> dict:
+    """Get the default backend for new sessions."""
+    return {"backend": _default_send_backend}
+
+
 @app.get("/sessions/{session_id}/status")
 async def session_status(session_id: str) -> dict:
     """Get the status of a session (running state, queue size)."""
@@ -505,18 +659,19 @@ async def send_message(session_id: str, request: SendMessageRequest) -> dict:
             detail="Send feature is disabled. Start server with --enable-send to enable.",
         )
 
-    backend = get_server_backend()
+    info = get_session(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-    # Check if CLI is available
+    # Get the specific backend for this session
+    backend = get_backend_for_session(info.path)
+
+    # Check if CLI is available for this backend
     if not backend.is_cli_available():
         raise HTTPException(
             status_code=503,
             detail=f"CLI not found. {backend.get_cli_install_instructions()}",
         )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
 
     message = request.message.strip()
     if not message:
@@ -547,9 +702,14 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
             detail="Fork feature is disabled. Start server with --fork to enable.",
         )
 
-    backend = get_server_backend()
+    info = get_session(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
 
-    # Check if CLI is available
+    # Get the specific backend for this session
+    backend = get_backend_for_session(info.path)
+
+    # Check if CLI is available for this backend
     if not backend.is_cli_available():
         raise HTTPException(
             status_code=503,
@@ -562,10 +722,6 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
             status_code=501,
             detail="This backend does not support session forking.",
         )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
 
     message = request.message.strip()
     if not message:
@@ -591,7 +747,9 @@ async def interrupt_session(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Session not found")
 
     if info.process is None:
-        raise HTTPException(status_code=409, detail="No process running for this session")
+        raise HTTPException(
+            status_code=409, detail="No process running for this session"
+        )
 
     # Clear the queue first
     info.message_queue.clear()
@@ -626,11 +784,28 @@ async def create_new_session(request: NewSessionRequest) -> dict:
 
     backend = get_server_backend()
 
+    # For multi-backend mode, get the specific backend if requested
+    # Fallback order: request.backend -> _default_send_backend -> first available
+    target_backend = backend
+    requested_backend = request.backend or _default_send_backend
+    if requested_backend:
+        # Check if this is a MultiBackend with get_backend_by_name method
+        get_by_name = getattr(backend, "get_backend_by_name", None)
+        if get_by_name is not None:
+            specific_backend = get_by_name(requested_backend)
+            if specific_backend is not None:
+                target_backend = specific_backend
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown backend: {requested_backend}",
+                )
+
     # Check if CLI is available
-    if not backend.is_cli_available():
+    if not target_backend.is_cli_available():
         raise HTTPException(
             status_code=503,
-            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
+            detail=f"CLI not found. {target_backend.get_cli_install_instructions()}",
         )
 
     message = request.message.strip()
@@ -646,18 +821,21 @@ async def create_new_session(request: NewSessionRequest) -> dict:
                 potential_cwd.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Created directory: {potential_cwd}")
             except OSError as e:
-                raise HTTPException(status_code=400, detail=f"Cannot create directory: {e}")
+                raise HTTPException(
+                    status_code=400, detail=f"Cannot create directory: {e}"
+                )
         if potential_cwd.is_dir():
             cwd = potential_cwd
 
-    # Build command using backend
-    cmd_args = backend.build_new_session_command(message, _skip_permissions)
+    # Build command using target backend
+    cmd_args = target_backend.build_new_session_command(message, _skip_permissions)
 
     try:
         # Start CLI in the working directory
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

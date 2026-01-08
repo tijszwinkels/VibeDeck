@@ -42,7 +42,7 @@ class TestIsJsonLike:
 
     def test_detects_array(self):
         """Test that JSON arrays are detected."""
-        assert is_json_like('[1, 2, 3]') is True
+        assert is_json_like("[1, 2, 3]") is True
 
     def test_rejects_plain_text(self):
         """Test that plain text is rejected."""
@@ -82,11 +82,7 @@ class TestIsToolResultMessage:
 
     def test_detects_tool_result_only(self):
         """Test that pure tool result messages are detected."""
-        message = {
-            "content": [
-                {"type": "tool_result", "content": "result"}
-            ]
-        }
+        message = {"content": [{"type": "tool_result", "content": "result"}]}
         assert is_tool_result_message(message) is True
 
     def test_rejects_mixed_content(self):
@@ -94,7 +90,7 @@ class TestIsToolResultMessage:
         message = {
             "content": [
                 {"type": "text", "text": "hello"},
-                {"type": "tool_result", "content": "result"}
+                {"type": "tool_result", "content": "result"},
             ]
         }
         assert is_tool_result_message(message) is False
@@ -128,7 +124,7 @@ class TestRenderContentBlock:
             "type": "tool_use",
             "id": "123",
             "name": "SomeTool",
-            "input": {"param": "value"}
+            "input": {"param": "value"},
         }
         result = render_content_block(block)
         assert "SomeTool" in result
@@ -140,7 +136,7 @@ class TestRenderContentBlock:
             "type": "tool_use",
             "id": "123",
             "name": "Write",
-            "input": {"file_path": "/tmp/test.py", "content": "print('hi')"}
+            "input": {"file_path": "/tmp/test.py", "content": "print('hi')"},
         }
         result = render_content_block(block)
         assert "write-tool" in result
@@ -155,8 +151,8 @@ class TestRenderContentBlock:
             "input": {
                 "file_path": "/tmp/test.py",
                 "old_string": "old",
-                "new_string": "new"
-            }
+                "new_string": "new",
+            },
         }
         result = render_content_block(block)
         assert "edit-tool" in result
@@ -169,7 +165,7 @@ class TestRenderContentBlock:
             "type": "tool_use",
             "id": "123",
             "name": "Bash",
-            "input": {"command": "ls -la", "description": "List files"}
+            "input": {"command": "ls -la", "description": "List files"},
         }
         result = render_content_block(block)
         assert "bash-tool" in result
@@ -178,21 +174,14 @@ class TestRenderContentBlock:
 
     def test_renders_tool_result(self):
         """Test that tool results are rendered."""
-        block = {
-            "type": "tool_result",
-            "content": "Operation successful"
-        }
+        block = {"type": "tool_result", "content": "Operation successful"}
         result = render_content_block(block)
         assert "tool-result" in result
         assert "Operation successful" in result
 
     def test_renders_tool_error(self):
         """Test that tool errors are rendered with error styling."""
-        block = {
-            "type": "tool_result",
-            "content": "Error occurred",
-            "is_error": True
-        }
+        block = {"type": "tool_result", "content": "Error occurred", "is_error": True}
         result = render_content_block(block)
         assert "tool-error" in result
 
@@ -200,10 +189,7 @@ class TestRenderContentBlock:
         """Test that image blocks are rendered."""
         block = {
             "type": "image",
-            "source": {
-                "media_type": "image/png",
-                "data": "base64data"
-            }
+            "source": {"media_type": "image/png", "data": "base64data"},
         }
         result = render_content_block(block)
         assert "image-block" in result
@@ -219,6 +205,20 @@ class TestRenderMessage:
         assert "message user" in result
         assert "User" in result
         assert "hello world" in result.lower()
+
+    def test_renders_user_message_escapes_html(self):
+        """Test that user messages with HTML-like content are escaped."""
+        entry = {
+            "type": "user",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "message": {"content": "Create a YYYYMMDD-<title>.md file"},
+        }
+        result = render_message(entry)
+        assert "user" in result.lower()
+        # The <title> should be escaped, not interpreted as HTML
+        assert "&lt;title&gt;" in result
+        # Should NOT contain raw <title> tag
+        assert "<title>" not in result
 
     def test_renders_assistant_message(self, sample_assistant_entry):
         """Test that assistant messages are rendered."""
@@ -240,7 +240,11 @@ class TestRenderMessage:
 
     def test_unknown_type_returns_empty(self):
         """Test that unknown types return empty string."""
-        entry = {"type": "system", "timestamp": "2024-01-01T00:00:00Z", "message": {"content": "test"}}
+        entry = {
+            "type": "system",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "message": {"content": "test"},
+        }
         result = render_message(entry)
         assert result == ""
 

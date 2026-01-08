@@ -41,6 +41,7 @@ class SessionInfo:
     project_name: str = ""
     project_path: str = ""
     first_message: str | None = None
+    backend_name: str = ""  # Name of the backend this session belongs to
     # Process management for sending messages
     process: asyncio.subprocess.Process | None = None
     message_queue: list[str] = field(default_factory=list)
@@ -52,6 +53,15 @@ class SessionInfo:
 
         if not self.session_id:
             self.session_id = backend.get_session_id(self.path)
+
+        # Try to get backend name from MultiBackend if available
+        if not self.backend_name:
+            # Use getattr to check for MultiBackend's method (duck typing)
+            get_backend_name = getattr(backend, "get_backend_name_for_session", None)
+            if get_backend_name is not None:
+                self.backend_name = get_backend_name(self.path) or ""
+            if not self.backend_name:
+                self.backend_name = backend.name
 
         if not self.name or not self.project_name:
             try:
@@ -110,6 +120,7 @@ class SessionInfo:
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
             "tokenUsage": token_usage,
+            "backend": self.backend_name,
         }
 
 
@@ -170,7 +181,9 @@ def get_oldest_session_id() -> str | None:
     return oldest[0]
 
 
-def add_session(path: Path, evict_oldest: bool = True) -> tuple[SessionInfo | None, str | None]:
+def add_session(
+    path: Path, evict_oldest: bool = True
+) -> tuple[SessionInfo | None, str | None]:
     """Add a session to track.
 
     Returns a tuple of (SessionInfo if added, evicted_session_id if one was removed).
