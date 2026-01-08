@@ -336,6 +336,66 @@ class TestAnalyzeConversation:
         assert stats["tool_counts"]["Write"] == 1
 
 
+# --- Tests for external CSS file ---
+
+
+class TestExternalCssFile:
+    """Tests for external CSS file generation."""
+
+    def test_generates_css_file(self, sample_claude_code_session, tmp_path):
+        """Should generate styles.css file in output directory."""
+        from claude_code_session_explorer.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_claude_code_session, output_dir)
+
+        css_file = output_dir / "styles.css"
+        assert css_file.exists(), "styles.css should be generated in output directory"
+
+    def test_html_links_to_external_css(self, sample_claude_code_session, tmp_path):
+        """Should link to external CSS file instead of embedding CSS."""
+        from claude_code_session_explorer.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_claude_code_session, output_dir)
+
+        page_content = (output_dir / "page-001.html").read_text()
+        # Should have link to external CSS
+        assert (
+            'href="styles.css"' in page_content or "href='styles.css'" in page_content
+        )
+        # Should NOT have embedded style block with large CSS
+        assert "<style>:root { --bg-color" not in page_content
+
+    def test_css_file_contains_styles(self, sample_claude_code_session, tmp_path):
+        """CSS file should contain the expected styles."""
+        from claude_code_session_explorer.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_claude_code_session, output_dir)
+
+        css_content = (output_dir / "styles.css").read_text()
+        # Check for key CSS rules
+        assert ":root" in css_content
+        assert "--bg-color" in css_content
+        assert ".message" in css_content
+        assert ".tool-use" in css_content
+
+    def test_index_html_links_to_external_css(
+        self, sample_claude_code_session, tmp_path
+    ):
+        """Index page should also link to external CSS."""
+        from claude_code_session_explorer.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_claude_code_session, output_dir)
+
+        index_content = (output_dir / "index.html").read_text()
+        assert (
+            'href="styles.css"' in index_content or "href='styles.css'" in index_content
+        )
+
+
 # --- Tests for gist preview JS injection ---
 
 
