@@ -769,7 +769,7 @@ def inject_gist_preview_js(output_dir: Path) -> None:
 
 
 def create_gist(output_dir: Path, public: bool = False) -> tuple[str, str]:
-    """Create a GitHub gist from the HTML files in output_dir.
+    """Create a GitHub gist from the HTML and CSS files in output_dir.
 
     Returns:
         Tuple of (gist_id, gist_url)
@@ -781,8 +781,14 @@ def create_gist(output_dir: Path, public: bool = False) -> tuple[str, str]:
     if not html_files:
         raise click.ClickException("No HTML files found to upload to gist.")
 
+    # Include CSS file if it exists
+    files_to_upload = sorted(html_files)
+    css_file = output_dir / "styles.css"
+    if css_file.exists():
+        files_to_upload.append(css_file)
+
     cmd = ["gh", "gist", "create"]
-    cmd.extend(str(f) for f in sorted(html_files))
+    cmd.extend(str(f) for f in files_to_upload)
     if public:
         cmd.append("--public")
 
