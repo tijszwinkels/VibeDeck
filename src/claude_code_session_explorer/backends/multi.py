@@ -115,11 +115,14 @@ class MultiBackend:
 
     # ===== Session Discovery =====
 
-    def find_recent_sessions(self, limit: int = 10) -> list[Path]:
+    def find_recent_sessions(
+        self, limit: int = 10, include_subagents: bool = True
+    ) -> list[Path]:
         """Find recently modified sessions from all backends.
 
         Args:
             limit: Maximum number of sessions to return per backend.
+            include_subagents: Whether to include subagent sessions.
 
         Returns:
             List of paths to session files, sorted by modification time.
@@ -128,7 +131,9 @@ class MultiBackend:
 
         for backend in self._backends:
             try:
-                sessions = backend.find_recent_sessions(limit=limit)
+                sessions = backend.find_recent_sessions(
+                    limit=limit, include_subagents=include_subagents
+                )
                 for path in sessions:
                     self._session_backend[path] = backend
                     try:

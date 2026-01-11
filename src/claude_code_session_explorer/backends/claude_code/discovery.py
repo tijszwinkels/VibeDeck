@@ -1,7 +1,7 @@
 """Session discovery for Claude Code.
 
 Handles finding session files and extracting metadata from Claude Code's
-session storage format.
+session storage format, including subagent sessions.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import logging
 import urllib.parse
 from pathlib import Path
 
-from .tailer import has_messages
+from .tailer import has_messages, is_warmup_session
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +18,51 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
+def is_subagent_session(path: Path) -> bool:
+    """Check if a session file is a subagent session.
+
+    Subagent sessions are identified by the 'agent-' prefix in the filename.
+
+    Args:
+        path: Path to the session file.
+
+    Returns:
+        True if this is a subagent session file.
+    """
+    return path.name.startswith("agent-")
+
+
+def get_parent_session_id(path: Path) -> str | None:
+    """Get the parent session ID for a subagent session.
+
+    Subagent sessions are stored in:
+    ~/.claude/projects/<project>/<parent-session-uuid>/subagents/agent-<id>.jsonl
+
+    Args:
+        path: Path to the subagent session file.
+
+    Returns:
+        Parent session UUID, or None if not a subagent or path doesn't match expected structure.
+    """
+    if not is_subagent_session(path):
+        return None
+
+    # Path should be: .../subagents/agent-xxx.jsonl
+    # Parent should be: .../<parent-uuid>/subagents/
+    if path.parent.name == "subagents":
+        return path.parent.parent.name
+
+    return None
+
+
 def get_session_name(session_path: Path) -> tuple[str, str]:
     """Extract project name and path from a session path.
 
     Session paths look like:
     ~/.claude/projects/-Users-tijs-projects-claude-code-live/abc123.jsonl
+
+    For subagent sessions in nested structure:
+    ~/.claude/projects/-Users-tijs-projects-claude-code-live/SESSION-UUID/subagents/agent-xxx.jsonl
 
     The folder name encodes the original path with slashes replaced by dashes.
     Additionally, underscores in directory names are also replaced with dashes.
@@ -33,8 +73,16 @@ def get_session_name(session_path: Path) -> tuple[str, str]:
         Tuple of (project_name, project_path) where project_name is the
         directory name and project_path is the full path.
     """
+    # For subagent files in nested structure, navigate up to find the project folder
+    # Path: .../projects/-project-path/SESSION-UUID/subagents/agent-xxx.jsonl
+    # We need to get to: -project-path
+    parent = session_path.parent
+    if parent.name == "subagents":
+        # Go up two levels: subagents -> SESSION-UUID -> project-folder
+        parent = parent.parent.parent
+
     # Get the parent folder name (the project identifier)
-    folder = session_path.parent.name
+    folder = parent.name
 
     # URL decode any percent-encoded chars first
     folder = urllib.parse.unquote(folder)
@@ -81,13 +129,16 @@ def get_session_id(session_path: Path) -> str:
 
 
 def find_recent_sessions(
-    projects_dir: Path | None = None, limit: int = 10
+    projects_dir: Path | None = None,
+    limit: int = 10,
+    include_subagents: bool = True,
 ) -> list[Path]:
     """Find the most recently modified session files that have messages.
 
     Args:
         projects_dir: Base directory to search (defaults to ~/.claude/projects)
         limit: Maximum number of sessions to return
+        include_subagents: Whether to include subagent sessions (default True)
 
     Returns:
         List of paths to recent .jsonl files with messages, sorted by modification time (newest first)
@@ -99,10 +150,11 @@ def find_recent_sessions(
         logger.warning(f"Projects directory not found: {projects_dir}")
         return []
 
-    # Find all .jsonl files, excluding agent files
+    # Find all .jsonl files
     sessions = []
     for f in projects_dir.glob("**/*.jsonl"):
-        if f.name.startswith("agent-"):
+        # Filter out subagents if requested
+        if not include_subagents and is_subagent_session(f):
             continue
         try:
             # Skip empty files
@@ -120,10 +172,10 @@ def find_recent_sessions(
     # Sort by modification time (newest first)
     sessions.sort(key=lambda x: x[1], reverse=True)
 
-    # Filter to sessions with messages, up to the limit
+    # Filter to sessions with messages (excluding warmup sessions), up to the limit
     result = []
     for f, _ in sessions:
-        if has_messages(f):
+        if has_messages(f) and not is_warmup_session(f):
             result.append(f)
             if len(result) >= limit:
                 break
@@ -144,11 +196,12 @@ def find_most_recent_session(projects_dir: Path | None = None) -> Path | None:
     return sessions[0] if sessions else None
 
 
-def should_watch_file(path: Path) -> bool:
+def should_watch_file(path: Path, include_subagents: bool = True) -> bool:
     """Check if a file should be watched for changes.
 
     Args:
         path: File path to check.
+        include_subagents: Whether to watch subagent session files (default True).
 
     Returns:
         True if the file is a Claude Code session file that should be watched.
@@ -156,7 +209,7 @@ def should_watch_file(path: Path) -> bool:
     # Only watch .jsonl files
     if path.suffix != ".jsonl":
         return False
-    # Skip agent files
-    if path.name.startswith("agent-"):
+    # Filter out subagents if requested
+    if not include_subagents and is_subagent_session(path):
         return False
     return True

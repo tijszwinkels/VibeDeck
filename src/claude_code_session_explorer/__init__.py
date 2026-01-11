@@ -100,6 +100,11 @@ def main() -> None:
     hidden=True,
     help="Default backend for new sessions (requires --experimental --enable-send)",
 )
+@click.option(
+    "--include-subagents",
+    is_flag=True,
+    help="Include subagent sessions in the session list",
+)
 def serve(
     session: Path | None,
     port: int,
@@ -113,6 +118,7 @@ def serve(
     dangerously_skip_permissions: bool,
     fork: bool,
     default_send_backend: str | None,
+    include_subagents: bool,
 ) -> None:
     """Start the live-updating transcript viewer server.
 
@@ -179,6 +185,7 @@ def serve(
     server.set_send_enabled(enable_send)
     server.set_skip_permissions(dangerously_skip_permissions)
     server.set_fork_enabled(fork)
+    server.set_include_subagents(include_subagents)
     if default_send_backend:
         server.set_default_send_backend(default_send_backend)
 
@@ -200,7 +207,9 @@ def serve(
         add_session(session)
 
     # Check if any sessions were found
-    recent = backend_instance.find_recent_sessions(limit=max_sessions)
+    recent = backend_instance.find_recent_sessions(
+        limit=max_sessions, include_subagents=include_subagents
+    )
     if not recent and session is None:
         projects_dir = backend_instance.get_projects_dir()
         click.echo(f"No session files found in {projects_dir}", err=True)

@@ -125,6 +125,22 @@ def has_messages(session_path: Path) -> bool:
     return False
 
 
+def is_warmup_session(session_path: Path) -> bool:
+    """Check if a session is a warmup session (first message is 'Warmup').
+
+    Warmup sessions are created by Claude Code to pre-warm subagents.
+    They're not meaningful user sessions.
+
+    Args:
+        session_path: Path to the session JSONL file
+
+    Returns:
+        True if the first user message is exactly 'Warmup'.
+    """
+    first_message = get_first_user_message(session_path, max_length=50)
+    return first_message == "Warmup"
+
+
 def get_first_user_message(session_path: Path, max_length: int = 200) -> str | None:
     """Read the first user message from a session file.
 

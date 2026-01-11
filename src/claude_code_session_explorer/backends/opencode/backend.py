@@ -69,15 +69,19 @@ class OpenCodeBackend:
 
     # ===== Session Discovery =====
 
-    def find_recent_sessions(self, limit: int = 10) -> list[Path]:
+    def find_recent_sessions(
+        self, limit: int = 10, include_subagents: bool = True
+    ) -> list[Path]:
         """Find recently modified sessions.
 
         Args:
             limit: Maximum number of sessions to return.
+            include_subagents: Not used for OpenCode (no subagent concept).
 
         Returns:
             List of paths to recent session files.
         """
+        # OpenCode doesn't have subagents, so ignore include_subagents
         return find_recent_sessions(self._storage_dir, limit=limit)
 
     def get_projects_dir(self) -> Path:

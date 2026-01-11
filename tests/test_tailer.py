@@ -267,21 +267,26 @@ class TestFindMostRecentSession:
             result = find_most_recent_session(tmppath)
             assert result == newer
 
-    def test_excludes_agent_files(self):
-        """Test that agent-* files are excluded."""
+    def test_includes_agent_files_by_default(self):
+        """Test that agent-* files are included by default."""
+        import time
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            # Create agent file (should be excluded)
-            agent = tmppath / "agent-123.jsonl"
-            agent.write_text('{"type": "user"}\n')
-
-            # Create regular file
+            # Create regular file first
             regular = tmppath / "session.jsonl"
             regular.write_text('{"type": "user"}\n')
 
+            time.sleep(0.01)  # Ensure different mtime
+
+            # Create agent file (newer, should be returned as it's now included)
+            agent = tmppath / "agent-123.jsonl"
+            agent.write_text('{"type": "user"}\n')
+
             result = find_most_recent_session(tmppath)
-            assert result == regular
+            # Agent file is newer and should be returned (subagents included by default)
+            assert result == agent
 
 
 class TestFindRecentSessions:

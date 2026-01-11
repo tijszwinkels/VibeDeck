@@ -21,6 +21,8 @@ from .discovery import (
     get_session_id,
     find_recent_sessions,
     should_watch_file,
+    is_subagent_session,
+    get_parent_session_id,
     DEFAULT_PROJECTS_DIR,
 )
 from .pricing import get_session_token_usage
@@ -66,16 +68,21 @@ class ClaudeCodeBackend:
 
     # ===== Session Discovery =====
 
-    def find_recent_sessions(self, limit: int = 10) -> list[Path]:
+    def find_recent_sessions(
+        self, limit: int = 10, include_subagents: bool = True
+    ) -> list[Path]:
         """Find recently modified sessions.
 
         Args:
             limit: Maximum number of sessions to return.
+            include_subagents: Whether to include subagent sessions.
 
         Returns:
             List of paths to recent session files.
         """
-        return find_recent_sessions(self._projects_dir, limit=limit)
+        return find_recent_sessions(
+            self._projects_dir, limit=limit, include_subagents=include_subagents
+        )
 
     def get_projects_dir(self) -> Path:
         """Get the base directory where sessions are stored."""
@@ -100,6 +107,14 @@ class ClaudeCodeBackend:
         tailer = ClaudeCodeTailer(session_path)
         started_at = tailer.get_first_timestamp()
 
+        # Check if this is a subagent session
+        is_subagent = is_subagent_session(session_path)
+        parent_session_id = get_parent_session_id(session_path) if is_subagent else None
+
+        # Prefix project name for subagents
+        if is_subagent:
+            project_name = f"[subagent] {project_name}"
+
         return SessionMetadata(
             session_id=session_id,
             project_name=project_name,
@@ -107,6 +122,8 @@ class ClaudeCodeBackend:
             first_message=first_message,
             started_at=started_at,
             backend_data={"file_path": str(session_path)},
+            is_subagent=is_subagent,
+            parent_session_id=parent_session_id,
         )
 
     def get_session_id(self, session_path: Path) -> str:
@@ -247,16 +264,17 @@ class ClaudeCodeBackend:
 
     # ===== File Watching Helpers =====
 
-    def should_watch_file(self, path: Path) -> bool:
+    def should_watch_file(self, path: Path, include_subagents: bool = True) -> bool:
         """Check if a file should be watched for changes.
 
         Args:
             path: File path to check.
+            include_subagents: Whether to watch subagent session files.
 
         Returns:
             True if the file should be watched.
         """
-        return should_watch_file(path)
+        return should_watch_file(path, include_subagents=include_subagents)
 
     def get_session_id_from_changed_file(self, path: Path) -> str | None:
         """Get the session ID from a changed file path.

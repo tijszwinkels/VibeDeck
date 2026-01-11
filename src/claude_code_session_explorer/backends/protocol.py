@@ -34,6 +34,12 @@ class SessionMetadata:
     backend_data: dict = field(default_factory=dict)
     """Backend-specific metadata (opaque to the explorer)."""
 
+    is_subagent: bool = False
+    """Whether this is a subagent session."""
+
+    parent_session_id: str | None = None
+    """Parent session ID if this is a subagent session."""
+
 
 @dataclass
 class MessageEntry:
@@ -170,11 +176,14 @@ class CodingToolBackend(Protocol):
 
     # ===== Session Discovery =====
 
-    def find_recent_sessions(self, limit: int = 10) -> list[Path]:
+    def find_recent_sessions(
+        self, limit: int = 10, include_subagents: bool = True
+    ) -> list[Path]:
         """Find recently modified sessions.
 
         Args:
             limit: Maximum number of sessions to return.
+            include_subagents: Whether to include subagent sessions (Claude Code only).
 
         Returns:
             List of paths to session files, sorted by modification time (newest first).

@@ -41,6 +41,7 @@ _send_enabled = False  # Enable with --enable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
 _default_send_backend: str | None = None  # Enable with --default-send-backend CLI flag
+_include_subagents = False  # Enable with --include-subagents CLI flag
 
 # Global state for server (not session-related)
 _clients: set[asyncio.Queue] = set()
@@ -78,6 +79,17 @@ def set_default_send_backend(backend: str) -> None:
 def get_default_send_backend() -> str | None:
     """Get the default backend for new sessions."""
     return _default_send_backend
+
+
+def set_include_subagents(enabled: bool) -> None:
+    """Set whether to include subagent sessions in discovery."""
+    global _include_subagents
+    _include_subagents = enabled
+
+
+def get_include_subagents() -> bool:
+    """Get whether to include subagent sessions in discovery."""
+    return _include_subagents
 
 
 def is_send_enabled() -> bool:
@@ -376,7 +388,9 @@ async def check_for_new_sessions() -> None:
 
     # Use backend to find recent sessions (handles pattern differences)
     try:
-        recent = backend.find_recent_sessions(limit=MAX_SESSIONS)
+        recent = backend.find_recent_sessions(
+            limit=MAX_SESSIONS, include_subagents=get_include_subagents()
+        )
         for f in recent:
             if f not in get_known_session_files():
                 async with get_sessions_lock():
@@ -483,7 +497,9 @@ async def lifespan(app: FastAPI):
     backend = get_server_backend()
 
     # Startup: find recent sessions
-    recent = backend.find_recent_sessions(limit=MAX_SESSIONS)
+    recent = backend.find_recent_sessions(
+        limit=MAX_SESSIONS, include_subagents=get_include_subagents()
+    )
     async with get_sessions_lock():
         for path in recent:
             add_session(path, evict_oldest=False)  # No eviction needed at startup
