@@ -26,6 +26,10 @@
                     <input type="checkbox" id="auto-switch" checked>
                     <span>Auto-switch</span>
                 </label>
+                <select class="sort-select" id="sort-select" title="Sort sessions by">
+                    <option value="modified">Modified</option>
+                    <option value="created">Created</option>
+                </select>
                 <button class="new-session-btn" id="new-session-btn" title="New session in custom directory">+ New</button>
             </div>
         </div>
@@ -104,6 +108,7 @@
         const hamburgerBtn = document.getElementById('hamburger-btn');
         const autoSwitchCheckbox = document.getElementById('auto-switch');
         const autoSwitchLabel = document.getElementById('auto-switch-label');
+        const sortSelect = document.getElementById('sort-select');
         const searchInput = document.getElementById('sidebar-search');
         const inputBar = document.getElementById('input-bar');
         const mainContent = document.getElementById('main-content');
@@ -140,6 +145,7 @@
         let sidebarOpen = localStorage.getItem('sidebarOpen') !== 'false';  // default open
         let autoSwitch = localStorage.getItem('autoSwitch') !== 'false';    // default on
         let autoScroll = localStorage.getItem('autoScroll') !== 'false';    // default on
+        let sortBy = localStorage.getItem('sortBy') || 'modified';          // default: modified
         let autoSwitchDebounce = null;
         let catchupComplete = false;
         let sendEnabled = false;
@@ -184,6 +190,24 @@
         };
 
         const dateCategoryOrder = ['today', 'yesterday', 'lastWeek', 'older'];
+
+        // Get the sort timestamp for a session based on current sort mode
+        function getSessionSortTimestamp(session) {
+            if (sortBy === 'created') {
+                // startedAt is ISO string, convert to ms
+                return session.startedAt ? new Date(session.startedAt).getTime() : 0;
+            }
+            // Default: modified (lastActivity is already in ms)
+            return session.lastActivity || 0;
+        }
+
+        // Get the timestamp for date categorization (for sidebar grouping)
+        function getSessionCategoryTimestamp(session) {
+            if (sortBy === 'created') {
+                return session.startedAt;  // ISO string or null
+            }
+            return session.lastUpdatedAt;  // Unix seconds or null
+        }
 
         // Sidebar toggle
         function updateSidebarState() {
@@ -253,6 +277,14 @@
         autoScrollCheckbox.checked = autoScroll;
         autoScrollCheckbox.addEventListener('change', updateAutoScrollUI);
         updateAutoScrollUI();
+
+        // Sort select UI
+        sortSelect.value = sortBy;
+        sortSelect.addEventListener('change', function() {
+            sortBy = sortSelect.value;
+            localStorage.setItem('sortBy', sortBy);
+            reorderSidebar();
+        });
 
         // Scroll buttons
         scrollTopBtn.addEventListener('click', function() {
@@ -1057,8 +1089,9 @@
             const project = getOrCreateProject(projectName || 'Unknown', projectPath);
             project.sessions.add(sessionId);
 
-            // Determine date category and add to correct section
-            const dateCategory = getDateCategory(lastUpdatedAt);
+            // Determine date category and add to correct section (respecting sort mode)
+            const categoryTimestamp = sortBy === 'created' ? startedAt : lastUpdatedAt;
+            const dateCategory = getDateCategory(categoryTimestamp);
             const dateSection = project.dateSections[dateCategory];
             if (dateSection) {
                 dateSection.listElement.appendChild(sidebarItem);
@@ -1289,8 +1322,18 @@
                 sessionPositions.set(session.id, session.sidebarItem.getBoundingClientRect());
             });
 
-            // Sort projects by lastActivity
-            const sortedProjects = Array.from(projects.values()).sort((a, b) => b.lastActivity - a.lastActivity);
+            // Sort projects by most recent session (based on sort mode)
+            const sortedProjects = Array.from(projects.values()).sort(function(a, b) {
+                const aMax = Array.from(a.sessions)
+                    .map(id => sessions.get(id))
+                    .filter(s => s)
+                    .reduce((max, s) => Math.max(max, getSessionSortTimestamp(s)), 0);
+                const bMax = Array.from(b.sessions)
+                    .map(id => sessions.get(id))
+                    .filter(s => s)
+                    .reduce((max, s) => Math.max(max, getSessionSortTimestamp(s)), 0);
+                return bMax - aMax;
+            });
 
             sortedProjects.forEach(function(project) {
                 projectListContainer.appendChild(project.element);
@@ -1303,7 +1346,7 @@
                     .map(id => sessions.get(id))
                     .filter(s => s)
                     .forEach(function(session) {
-                        const category = getDateCategory(session.lastUpdatedAt);
+                        const category = getDateCategory(getSessionCategoryTimestamp(session));
                         sessionsByCategory[category].push(session);
                     });
 
@@ -1311,7 +1354,7 @@
                 dateCategoryOrder.forEach(function(category) {
                     const dateSection = project.dateSections[category];
                     const categorySessions = sessionsByCategory[category]
-                        .sort((a, b) => b.lastActivity - a.lastActivity);
+                        .sort((a, b) => getSessionSortTimestamp(b) - getSessionSortTimestamp(a));
 
                     // Show/hide date section based on whether it has sessions
                     if (categorySessions.length === 0) {
