@@ -1209,7 +1209,7 @@
             // Build date sections HTML
             let dateSectionsHtml = '';
             dateCategoryOrder.forEach(function(category) {
-                const isOpen = category === 'today' || category === 'yesterday';
+                const isOpen = category === 'today';
                 dateSectionsHtml += `
                     <div class="date-section${isOpen ? '' : ' collapsed'}" data-category="${category}">
                         <div class="date-divider">
