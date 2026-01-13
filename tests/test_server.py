@@ -600,6 +600,40 @@ This is a **bold** paragraph.
         assert response.status_code == 403
         assert "home directory" in response.json()["detail"]
 
+    def test_get_file_markdown_html_escaped(self, home_tmp_path):
+        """Test that raw HTML in markdown is escaped to prevent XSS."""
+        md_file = home_tmp_path / "xss.md"
+        # Try to inject a script tag via raw HTML in markdown
+        md_content = """# Test
+
+<script>alert('xss')</script>
+
+<img src=x onerror="alert('xss')">
+
+Normal **bold** text.
+"""
+        md_file.write_text(md_content)
+
+        client = TestClient(app)
+        response = client.get(f"/api/file?path={md_file}")
+
+        assert response.status_code == 200
+        data = response.json()
+        rendered = data["rendered_html"]
+
+        # The script tag should be escaped, not rendered as executable HTML
+        # The angle brackets become &lt; and &gt;
+        assert "<script>" not in rendered
+        assert "&lt;script&gt;" in rendered
+
+        # The img tag should also be escaped (< becomes &lt;)
+        # This prevents the onerror handler from being executed
+        assert "<img" not in rendered
+        assert "&lt;img" in rendered
+
+        # Normal markdown should still work
+        assert "<strong>bold</strong>" in rendered
+
 
 # Note: SSE endpoint streaming tests are skipped because TestClient
 # doesn't handle SSE event generators well. The endpoint is tested

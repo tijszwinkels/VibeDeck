@@ -41,10 +41,19 @@ def get_github_repo() -> str | None:
     return _github_repo
 
 
-def render_markdown_text(text: str) -> str:
-    """Render markdown text to HTML."""
+def render_markdown_text(text: str, safe: bool = False) -> str:
+    """Render markdown text to HTML.
+
+    Args:
+        text: The markdown text to render.
+        safe: If True, disable raw HTML to prevent XSS attacks.
+              Raw HTML will be escaped and displayed as text.
+    """
     if not text:
         return ""
+    if safe:
+        # Escape HTML before markdown processing to prevent XSS
+        text = html.escape(text)
     return markdown.markdown(text, extensions=["fenced_code", "tables"])
 
 

@@ -1173,11 +1173,12 @@ async def get_file(path: str) -> FileResponse:
             raise HTTPException(status_code=400, detail="Binary file cannot be displayed")
 
         # Render markdown to HTML if it's a markdown file
+        # Use safe=True to escape raw HTML and prevent XSS attacks
         rendered_html = None
         if language == "markdown":
             from .backends.shared.rendering import render_markdown_text
 
-            rendered_html = render_markdown_text(content)
+            rendered_html = render_markdown_text(content, safe=True)
 
         return FileResponse(
             content=content,
