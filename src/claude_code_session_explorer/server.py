@@ -277,9 +277,7 @@ class NewSessionRequest(BaseModel):
     message: str  # Initial message to send (required)
     cwd: str | None = None  # Working directory (optional)
     backend: str | None = None  # Backend to use (optional, for multi-backend mode)
-    model_index: int | None = (
-        None  # Model index from /backends/{name}/models (optional)
-    )
+    model_index: int | None = None  # Model index from /backends/{name}/models (optional)
 
 
 async def broadcast_event(event_type: str, data: dict) -> None:
@@ -592,22 +590,9 @@ async def watch_loop() -> None:
                     f"File change: {change_type.name} {changed_path.name} -> session {session_id}"
                 )
 
-                # Handle file deletion - remove session and notify clients
-                if change_type == watchfiles.Change.deleted:
-                    if session_id and get_session(session_id) is not None:
-                        remove_session(session_id)
-                        await broadcast_session_removed(session_id)
-                    continue
-
-                info = get_session(session_id) if session_id else None
-                if info is not None:
-                    # Known session - check mtime to filter spurious events
-                    if info.check_mtime_changed():
-                        sessions_to_process.add(session_id)
-                    else:
-                        logger.debug(
-                            f"Ignoring spurious event for {session_id} (mtime unchanged)"
-                        )
+                if session_id and get_session(session_id) is not None:
+                    # Known session - queue for message processing
+                    sessions_to_process.add(session_id)
                 else:
                     # Unknown session - might be a new session file
                     need_new_session_check = True
@@ -807,25 +792,21 @@ async def list_backends() -> dict:
         # Multi-backend mode - list all backends
         for b in get_backends():
             has_models = hasattr(b, "get_models") and callable(getattr(b, "get_models"))
-            backends_info.append(
-                {
-                    "name": b.name,
-                    "cli_available": b.is_cli_available(),
-                    "supports_models": has_models,
-                }
-            )
+            backends_info.append({
+                "name": b.name,
+                "cli_available": b.is_cli_available(),
+                "supports_models": has_models,
+            })
     else:
         # Single backend mode
         has_models = hasattr(backend, "get_models") and callable(
             getattr(backend, "get_models")
         )
-        backends_info.append(
-            {
-                "name": backend.name,
-                "cli_available": backend.is_cli_available(),
-                "supports_models": has_models,
-            }
-        )
+        backends_info.append({
+            "name": backend.name,
+            "cli_available": backend.is_cli_available(),
+            "supports_models": has_models,
+        })
 
     return {"backends": backends_info}
 
@@ -1193,9 +1174,7 @@ async def get_file(path: str) -> FileResponse:
 
         # Check for binary content (null bytes indicate binary)
         if "\x00" in content[:8192]:
-            raise HTTPException(
-                status_code=400, detail="Binary file cannot be displayed"
-            )
+            raise HTTPException(status_code=400, detail="Binary file cannot be displayed")
 
         # Render markdown to HTML if it's a markdown file
         # Use safe=True to escape raw HTML and prevent XSS attacks

@@ -45,8 +45,6 @@ class SessionInfo:
     # Process management for sending messages
     process: asyncio.subprocess.Process | None = None
     message_queue: list[str] = field(default_factory=list)
-    # Track last-seen mtime to filter spurious file watcher events
-    last_mtime: float = 0.0
 
     def __post_init__(self):
         backend = get_current_backend()
@@ -83,32 +81,6 @@ class SessionInfo:
                     self.name = self.session_id
                 if not self.project_name:
                     self.project_name = self.session_id
-
-        # Initialize last_mtime
-        self._update_mtime()
-
-    def _update_mtime(self) -> None:
-        """Update last_mtime from file stat."""
-        try:
-            self.last_mtime = self.path.stat().st_mtime
-        except OSError:
-            pass
-
-    def check_mtime_changed(self) -> bool:
-        """Check if file mtime has changed since last check.
-
-        Returns True if mtime changed (and updates stored mtime).
-        Returns False if mtime unchanged (spurious event).
-        """
-        try:
-            current_mtime = self.path.stat().st_mtime
-        except OSError:
-            return False
-
-        if current_mtime != self.last_mtime:
-            self.last_mtime = current_mtime
-            return True
-        return False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization.
