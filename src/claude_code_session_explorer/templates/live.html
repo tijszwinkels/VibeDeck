@@ -1582,7 +1582,7 @@
             return project;
         }
 
-        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend) {
+        function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive) {
             if (sessions.has(sessionId)) return sessions.get(sessionId);
 
             // Create container with session header
@@ -1591,7 +1591,8 @@
             container.dataset.session = sessionId;
             if (backend) container.dataset.backend = backend;
 
-            const displayTitle = truncateTitle(firstMessage || name, MAX_TITLE_LENGTH);
+            // Use summary title if available, otherwise fall back to firstMessage or name
+            const displayTitle = truncateTitle(summaryTitle || firstMessage || name, MAX_TITLE_LENGTH);
 
             // Add session header (title only - auto-scroll is in floating controls)
             const sessionHeader = document.createElement('div');
@@ -1661,7 +1662,11 @@
                 lastUpdatedAt: lastUpdatedAt || null,
                 cwd: projectPath || null,
                 tokenUsage: tokenUsage || null,
-                backend: backend || null
+                backend: backend || null,
+                // Summary data (may be null if no summary file exists yet)
+                summaryTitle: summaryTitle || null,
+                summaryShort: summaryShort || null,
+                summaryExecutive: summaryExecutive || null
             };
             sessions.set(sessionId, session);
 
@@ -1763,6 +1768,17 @@
                     `;
                 }
 
+                // Summary section (shown if summary data available)
+                let summaryHtml = '';
+                if (session.summaryShort || session.summaryExecutive) {
+                    // Prefer executive summary, fall back to short summary
+                    const summaryText = session.summaryExecutive || session.summaryShort;
+                    summaryHtml = `
+                        <div class="tooltip-label">Summary</div>
+                        <div class="tooltip-value tooltip-summary">${escapeHtml(summaryText)}</div>
+                    `;
+                }
+
                 let usageHtml = '';
                 if (session.tokenUsage && session.tokenUsage.message_count > 0) {
                     const u = session.tokenUsage;
@@ -1790,6 +1806,7 @@
 
                 sessionTooltip.innerHTML = `
                     ${backendHtml}
+                    ${summaryHtml}
                     <div class="tooltip-label">Created</div>
                     <div class="tooltip-value">${escapeHtml(started)}</div>
                     <div class="tooltip-label">Last updated</div>
@@ -2206,7 +2223,10 @@
                         session.lastUpdatedAt,
                         session.projectPath,
                         session.tokenUsage,
-                        session.backend
+                        session.backend,
+                        session.summaryTitle,
+                        session.summaryShort,
+                        session.summaryExecutive
                     );
                 });
                 reorderSidebar();
@@ -2249,7 +2269,10 @@
                         data.lastUpdatedAt,
                         data.projectPath,
                         data.tokenUsage,
-                        data.backend
+                        data.backend,
+                        data.summaryTitle,
+                        data.summaryShort,
+                        data.summaryExecutive
                     );
 
                     if (wasPendingActive && session) {
@@ -2265,7 +2288,10 @@
                         data.lastUpdatedAt,
                         data.projectPath,
                         data.tokenUsage,
-                        data.backend
+                        data.backend,
+                        data.summaryTitle,
+                        data.summaryShort,
+                        data.summaryExecutive
                     );
                     if (autoSwitch && session) {
                         switchToSession(data.id, true);
@@ -2276,6 +2302,40 @@
             eventSource.addEventListener('session_removed', function(e) {
                 const data = JSON.parse(e.data);
                 removeSession(data.id);
+            });
+
+            eventSource.addEventListener('session_summary_updated', function(e) {
+                const data = JSON.parse(e.data);
+                const session = sessions.get(data.session_id);
+                if (session) {
+                    // Update session summary data
+                    session.summaryTitle = data.summaryTitle;
+                    session.summaryShort = data.summaryShort;
+                    session.summaryExecutive = data.summaryExecutive;
+
+                    // Update display title if we have a summary title
+                    if (data.summaryTitle) {
+                        const newDisplayTitle = truncateTitle(data.summaryTitle, MAX_TITLE_LENGTH);
+                        session.displayTitle = newDisplayTitle;
+
+                        // Update sidebar item title
+                        const titleSpan = session.sidebarItem.querySelector('.session-title');
+                        if (titleSpan) {
+                            titleSpan.textContent = newDisplayTitle;
+                        }
+
+                        // Update session header title
+                        const headerTitleSpan = session.container.querySelector('.session-title-display');
+                        if (headerTitleSpan) {
+                            headerTitleSpan.textContent = newDisplayTitle;
+                        }
+
+                        // Update title bar if this is the active session
+                        if (activeSessionId === data.session_id) {
+                            sessionTitleBar.textContent = newDisplayTitle;
+                        }
+                    }
+                }
             });
 
             eventSource.addEventListener('message', function(e) {

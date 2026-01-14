@@ -212,12 +212,46 @@ def should_watch_file(path: Path, include_subagents: bool = True) -> bool:
         include_subagents: Whether to watch subagent session files (default True).
 
     Returns:
-        True if the file is a Claude Code session file that should be watched.
+        True if the file is a Claude Code session file or summary file that should be watched.
     """
-    # Only watch .jsonl files
-    if path.suffix != ".jsonl":
-        return False
-    # Filter out subagents if requested
-    if not include_subagents and is_subagent_session(path):
-        return False
-    return True
+    # Watch .jsonl session files
+    if path.suffix == ".jsonl":
+        # Filter out subagents if requested
+        if not include_subagents and is_subagent_session(path):
+            return False
+        return True
+
+    # Watch *_summary.json files
+    if path.name.endswith("_summary.json"):
+        return True
+
+    return False
+
+
+def is_summary_file(path: Path) -> bool:
+    """Check if a file is a summary file.
+
+    Args:
+        path: File path to check.
+
+    Returns:
+        True if the file is a summary file.
+    """
+    return path.name.endswith("_summary.json")
+
+
+def get_session_id_from_summary_file(path: Path) -> str | None:
+    """Extract session ID from a summary file path.
+
+    Summary files are named: <session_id>_summary.json
+
+    Args:
+        path: Path to the summary file.
+
+    Returns:
+        Session ID, or None if not a valid summary file.
+    """
+    if not is_summary_file(path):
+        return None
+    # Remove _summary.json suffix to get session ID
+    return path.stem.replace("_summary", "")

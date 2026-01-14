@@ -341,6 +341,22 @@ async def broadcast_session_removed(session_id: str) -> None:
     await broadcast_event("session_removed", {"id": session_id})
 
 
+async def broadcast_session_summary_updated(session_id: str) -> None:
+    """Broadcast that a session's summary data has been updated."""
+    info = get_session(session_id)
+    if info is None:
+        return
+    await broadcast_event(
+        "session_summary_updated",
+        {
+            "session_id": session_id,
+            "summaryTitle": info.summary_title,
+            "summaryShort": info.summary_short,
+            "summaryExecutive": info.summary_executive,
+        },
+    )
+
+
 async def broadcast_session_status(session_id: str) -> None:
     """Broadcast session status (running state, queue size, waiting state)."""
     info = get_session(session_id)
@@ -517,6 +533,21 @@ async def process_session_messages(session_id: str) -> None:
         await broadcast_session_status(session_id)
 
 
+async def process_session_summary_update(session_id: str) -> None:
+    """Reload summary data for a session and broadcast to clients.
+
+    Called when a session's summary file is created or modified.
+    """
+    info = get_session(session_id)
+    if info is None:
+        return
+
+    # Reload summary data from file
+    if info.load_summary():
+        logger.info(f"Summary updated for session {session_id}: {info.summary_title}")
+        await broadcast_session_summary_updated(session_id)
+
+
 async def check_for_new_sessions() -> None:
     """Check for new session files and add them.
 
@@ -597,6 +628,7 @@ async def watch_loop() -> None:
             # Collect sessions to process and whether to check for new sessions
             # This minimizes lock contention by batching operations
             sessions_to_process: set[str] = set()
+            sessions_with_summary_updates: set[str] = set()
             need_new_session_check = False
 
             for change_type, changed_path in changes:
@@ -607,7 +639,7 @@ async def watch_loop() -> None:
                     continue
 
                 # Get session ID from the changed file path
-                # For Claude Code: session ID is the filename
+                # For Claude Code: session ID is the filename (or from summary file)
                 # For OpenCode: session ID is extracted from message/part path
                 session_id = backend.get_session_id_from_changed_file(changed_path)
                 logger.debug(
@@ -615,8 +647,14 @@ async def watch_loop() -> None:
                 )
 
                 if session_id and get_session(session_id) is not None:
-                    # Known session - queue for message processing
-                    sessions_to_process.add(session_id)
+                    # Known session
+                    # Check if this is a summary file change
+                    is_summary = getattr(backend, "is_summary_file", None)
+                    if is_summary and is_summary(changed_path):
+                        sessions_with_summary_updates.add(session_id)
+                    else:
+                        # Regular session file - queue for message processing
+                        sessions_to_process.add(session_id)
                 else:
                     # Unknown session - might be a new session file
                     need_new_session_check = True
@@ -628,6 +666,10 @@ async def watch_loop() -> None:
             # Process messages for known sessions (doesn't need lock)
             for session_id in sessions_to_process:
                 await process_session_messages(session_id)
+
+            # Process summary updates for known sessions
+            for session_id in sessions_with_summary_updates:
+                await process_session_summary_update(session_id)
 
     except asyncio.CancelledError:
         logger.info("Watch loop cancelled")

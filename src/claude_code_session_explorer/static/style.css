@@ -208,6 +208,7 @@ pre code { background: none; padding: 0; }
 .session-tooltip .tooltip-value { margin-bottom: 8px; word-wrap: break-word; }
 .session-tooltip .tooltip-value:last-child { margin-bottom: 0; }
 .session-tooltip .tooltip-message { max-height: 150px; overflow-y: auto; white-space: pre-wrap; }
+.session-tooltip .tooltip-summary { max-height: 200px; overflow-y: auto; white-space: pre-wrap; font-style: italic; color: var(--text-secondary, #ccc); }
 .session-tooltip .tooltip-usage { display: flex; flex-wrap: wrap; gap: 8px; font-family: monospace; font-size: 0.75rem; }
 .session-tooltip .usage-item { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
 .session-tooltip .tooltip-cost { font-family: monospace; font-size: 0.9rem; color: #4caf50; font-weight: 600; }

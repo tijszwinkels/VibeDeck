@@ -12,6 +12,8 @@ from claude_code_session_explorer.backends.claude_code.discovery import (
     is_subagent_session,
     get_parent_session_id,
     get_session_name,
+    is_summary_file,
+    get_session_id_from_summary_file,
 )
 from claude_code_session_explorer.backends.claude_code.tailer import is_warmup_session
 
@@ -123,6 +125,16 @@ class TestShouldWatchFile:
         """Should not watch non-.jsonl files."""
         assert not should_watch_file(Path("/some/path/file.txt"))
         assert not should_watch_file(Path("/some/path/file.json"))
+
+    def test_watches_summary_files(self):
+        """Should watch *_summary.json files."""
+        assert should_watch_file(Path("/some/path/abc123_summary.json"))
+        assert should_watch_file(Path("/some/path/uuid-uuid-uuid_summary.json"))
+
+    def test_ignores_non_summary_json(self):
+        """Should not watch regular .json files."""
+        assert not should_watch_file(Path("/some/path/config.json"))
+        assert not should_watch_file(Path("/some/path/session.json"))
 
 
 class TestIsSubagentSession:
@@ -276,3 +288,40 @@ class TestGetSessionName:
 
             assert path == str(double_dash_dir)
             assert name == "foo--bar"
+
+
+class TestIsSummaryFile:
+    """Tests for is_summary_file function."""
+
+    def test_identifies_summary_file(self):
+        """Should identify summary files by filename pattern."""
+        assert is_summary_file(Path("/path/abc123_summary.json"))
+        assert is_summary_file(Path("/path/uuid-uuid-uuid_summary.json"))
+
+    def test_regular_json_is_not_summary(self):
+        """Should return False for regular JSON files."""
+        assert not is_summary_file(Path("/path/config.json"))
+        assert not is_summary_file(Path("/path/session.json"))
+        assert not is_summary_file(Path("/path/abc123.json"))
+
+    def test_jsonl_is_not_summary(self):
+        """Should return False for JSONL files."""
+        assert not is_summary_file(Path("/path/abc123.jsonl"))
+
+
+class TestGetSessionIdFromSummaryFile:
+    """Tests for get_session_id_from_summary_file function."""
+
+    def test_extracts_session_id(self):
+        """Should extract session ID from summary filename."""
+        assert get_session_id_from_summary_file(
+            Path("/path/abc123_summary.json")
+        ) == "abc123"
+        assert get_session_id_from_summary_file(
+            Path("/path/uuid-uuid-uuid_summary.json")
+        ) == "uuid-uuid-uuid"
+
+    def test_returns_none_for_non_summary(self):
+        """Should return None for non-summary files."""
+        assert get_session_id_from_summary_file(Path("/path/config.json")) is None
+        assert get_session_id_from_summary_file(Path("/path/abc123.jsonl")) is None

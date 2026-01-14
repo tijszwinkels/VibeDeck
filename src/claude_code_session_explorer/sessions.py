@@ -8,6 +8,7 @@ the CodingToolBackend protocol.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,10 @@ class SessionInfo:
     # Process management for sending messages
     process: asyncio.subprocess.Process | None = None
     message_queue: list[str] = field(default_factory=list)
+    # Summary file data (populated when *_summary.json exists)
+    summary_title: str | None = None
+    summary_short: str | None = None
+    summary_executive: str | None = None
 
     def __post_init__(self):
         backend = get_current_backend()
@@ -81,6 +86,39 @@ class SessionInfo:
                     self.name = self.session_id
                 if not self.project_name:
                     self.project_name = self.session_id
+
+        # Try to load summary data if it exists
+        self.load_summary()
+
+    def get_summary_path(self) -> Path:
+        """Get the path to the summary file for this session.
+
+        Summary files are stored alongside session files with format:
+        <session_id>_summary.json
+        """
+        return self.path.parent / f"{self.session_id}_summary.json"
+
+    def load_summary(self) -> bool:
+        """Load summary data from the summary file if it exists.
+
+        Returns:
+            True if summary was loaded successfully, False otherwise.
+        """
+        summary_path = self.get_summary_path()
+        if not summary_path.exists():
+            return False
+
+        try:
+            with open(summary_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.summary_title = data.get("title")
+            self.summary_short = data.get("short_summary")
+            self.summary_executive = data.get("executive_summary")
+            logger.debug(f"Loaded summary for session {self.session_id}: {self.summary_title}")
+            return True
+        except (OSError, IOError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to load summary for {self.session_id}: {e}")
+            return False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization.
@@ -121,6 +159,10 @@ class SessionInfo:
             "lastUpdatedAt": last_updated,
             "tokenUsage": token_usage,
             "backend": self.backend_name,
+            # Summary data (may be None if no summary file exists yet)
+            "summaryTitle": self.summary_title,
+            "summaryShort": self.summary_short,
+            "summaryExecutive": self.summary_executive,
         }
 
 

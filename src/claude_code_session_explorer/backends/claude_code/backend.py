@@ -23,6 +23,8 @@ from .discovery import (
     should_watch_file,
     is_subagent_session,
     get_parent_session_id,
+    is_summary_file,
+    get_session_id_from_summary_file,
     DEFAULT_PROJECTS_DIR,
 )
 from .pricing import get_session_token_usage
@@ -279,13 +281,27 @@ class ClaudeCodeBackend:
     def get_session_id_from_changed_file(self, path: Path) -> str | None:
         """Get the session ID from a changed file path.
 
-        For Claude Code, the watched files are the session JSONL files themselves,
-        so the session ID is just the filename without extension.
+        For Claude Code, the watched files are either:
+        - Session JSONL files: session ID is filename without extension
+        - Summary JSON files: session ID is extracted from <session_id>_summary.json
 
         Args:
             path: Path to the changed file.
 
         Returns:
-            Session ID (filename without extension).
+            Session ID, or None if file type not recognized.
         """
+        if is_summary_file(path):
+            return get_session_id_from_summary_file(path)
         return get_session_id(path)
+
+    def is_summary_file(self, path: Path) -> bool:
+        """Check if a path is a summary file.
+
+        Args:
+            path: Path to check.
+
+        Returns:
+            True if this is a summary file.
+        """
+        return is_summary_file(path)
