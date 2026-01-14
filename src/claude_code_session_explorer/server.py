@@ -345,7 +345,12 @@ async def broadcast_session_summary_updated(session_id: str) -> None:
     """Broadcast that a session's summary data has been updated."""
     info = get_session(session_id)
     if info is None:
+        logger.debug(f"Cannot broadcast summary update: session {session_id} not found")
         return
+    logger.debug(
+        f"Broadcasting summary update for {session_id}: "
+        f"title={info.summary_title!r}, short={info.summary_short!r}"
+    )
     await broadcast_event(
         "session_summary_updated",
         {
@@ -538,14 +543,20 @@ async def process_session_summary_update(session_id: str) -> None:
 
     Called when a session's summary file is created or modified.
     """
+    logger.debug(f"Processing summary update for session {session_id}")
     info = get_session(session_id)
     if info is None:
+        logger.debug(f"Session {session_id} not found, skipping summary update")
         return
 
     # Reload summary data from file
+    summary_path = info.get_summary_path()
+    logger.debug(f"Looking for summary at: {summary_path}")
     if info.load_summary():
         logger.info(f"Summary updated for session {session_id}: {info.summary_title}")
         await broadcast_session_summary_updated(session_id)
+    else:
+        logger.debug(f"Failed to load summary for session {session_id}")
 
 
 async def check_for_new_sessions() -> None:
@@ -650,7 +661,13 @@ async def watch_loop() -> None:
                     # Known session
                     # Check if this is a summary file change
                     is_summary = getattr(backend, "is_summary_file", None)
+                    logger.debug(
+                        f"is_summary_file method: {is_summary}, "
+                        f"file: {changed_path.name}, "
+                        f"result: {is_summary(changed_path) if is_summary else 'N/A'}"
+                    )
                     if is_summary and is_summary(changed_path):
+                        logger.debug(f"Summary file detected for session {session_id}")
                         sessions_with_summary_updates.add(session_id)
                     else:
                         # Regular session file - queue for message processing

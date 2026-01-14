@@ -2229,6 +2229,16 @@
                     removeSession(sessionId);
                 });
 
+                // Clear unread/waiting badges for existing sessions on reconnect
+                // (they'll be re-evaluated based on new messages after catchup)
+                sessions.forEach(function(session) {
+                    session.sidebarItem.classList.remove('unread', 'waiting');
+                });
+                // Also clear project-level badges
+                projects.forEach(function(project) {
+                    project.element.classList.remove('unread', 'waiting');
+                });
+
                 // Create or update sessions from server
                 data.sessions.forEach(function(session) {
                     createSession(
