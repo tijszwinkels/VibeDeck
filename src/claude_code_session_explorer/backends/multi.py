@@ -352,6 +352,19 @@ class MultiBackend:
         """
         return any(b.should_watch_file(path) for b in self._backends)
 
+    def is_summary_file(self, path: Path) -> bool:
+        """Check if a file is a summary file.
+
+        Returns True if any backend identifies this as a summary file.
+        This is needed for the watch loop to distinguish summary file
+        updates from regular session message updates.
+        """
+        for backend in self._backends:
+            is_summary = getattr(backend, "is_summary_file", None)
+            if is_summary and is_summary(path):
+                return True
+        return False
+
     def get_session_id_from_changed_file(self, path: Path) -> str | None:
         """Get the session ID from a changed file path.
 
