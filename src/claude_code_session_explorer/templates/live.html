@@ -30,6 +30,10 @@
                     <input type="checkbox" id="auto-switch" checked>
                     <span>Auto-switch</span>
                 </label>
+                <label class="auto-switch" id="status-colors-label">
+                    <input type="checkbox" id="status-colors" checked>
+                    <span>Colors</span>
+                </label>
                 <select class="sort-select" id="sort-select" title="Sort sessions by">
                     <option value="modified">Modified</option>
                     <option value="created">Created</option>
@@ -168,6 +172,7 @@
         const hamburgerBtn = document.getElementById('hamburger-btn');
         const autoSwitchCheckbox = document.getElementById('auto-switch');
         const autoSwitchLabel = document.getElementById('auto-switch-label');
+        const statusColorsCheckbox = document.getElementById('status-colors');
         const sortSelect = document.getElementById('sort-select');
         const searchInput = document.getElementById('sidebar-search');
         const inputBar = document.getElementById('input-bar');
@@ -234,6 +239,9 @@
         const sessionPreviewPaths = new Map();  // session_id -> file path (track open preview per session)
         let autoSwitch = localStorage.getItem('autoSwitch') !== 'false';    // default on
         let autoScroll = localStorage.getItem('autoScroll') !== 'false';    // default on
+        // Status colors feature is hidden behind ?title-colors URL param
+        const titleColorsEnabled = new URLSearchParams(window.location.search).has('title-colors');
+        let statusColors = titleColorsEnabled && localStorage.getItem('statusColors') !== 'false'; // default on when enabled
         let sortBy = localStorage.getItem('sortBy') || 'modified';          // default: modified
         let autoSwitchDebounce = null;
         let catchupComplete = false;
@@ -301,6 +309,42 @@
                 return session.startedAt;  // ISO string or null
             }
             return session.lastUpdatedAt;  // Unix seconds or null
+        }
+
+        // Status color helpers - parse status from title suffix (e.g., "Title - Merged" -> "Merged")
+        function parseStatusFromTitle(title) {
+            if (!title) return null;
+            const match = title.match(/ - ([^-]+)$/);
+            return match ? match[1].trim() : null;
+        }
+
+        function getStatusClass(status) {
+            if (!status) return '';
+            const s = status.toLowerCase();
+            // Green: done or merged
+            if (s === 'done' || s === 'merged') {
+                return 'status-done';
+            }
+            // Yellow: waiting for something
+            if (s.startsWith('waiting for')) {
+                return 'status-waiting';
+            }
+            // Blue: in progress
+            if (s === 'in progress') {
+                return 'status-in-progress';
+            }
+            return '';
+        }
+
+        function updateSidebarItemStatusClass(sidebarItem, title) {
+            // Remove existing status classes
+            sidebarItem.classList.remove('status-done', 'status-waiting', 'status-in-progress');
+            // Add new status class if applicable
+            const status = parseStatusFromTitle(title);
+            const statusClass = getStatusClass(status);
+            if (statusClass) {
+                sidebarItem.classList.add(statusClass);
+            }
         }
 
         // Sidebar toggle
@@ -603,6 +647,25 @@
         autoSwitchCheckbox.checked = autoSwitch;
         autoSwitchCheckbox.addEventListener('change', updateAutoSwitchUI);
         updateAutoSwitchUI();
+
+        // Status colors UI (only when ?title-colors param is present)
+        if (titleColorsEnabled) {
+            function updateStatusColorsUI() {
+                statusColors = statusColorsCheckbox.checked;
+                if (statusColors) {
+                    sidebar.classList.add('status-colors-enabled');
+                } else {
+                    sidebar.classList.remove('status-colors-enabled');
+                }
+                localStorage.setItem('statusColors', statusColors);
+            }
+            statusColorsCheckbox.checked = statusColors;
+            statusColorsCheckbox.addEventListener('change', updateStatusColorsUI);
+            updateStatusColorsUI();
+        } else {
+            // Hide the checkbox when feature is not enabled
+            document.getElementById('status-colors-label').style.display = 'none';
+        }
 
         // Theme toggle
         function initTheme() {
@@ -1614,6 +1677,9 @@
                 <span class="close-btn" title="Close">&times;</span>
             `;
 
+            // Apply status color based on title suffix (e.g., "- Merged", "- Waiting for Input")
+            updateSidebarItemStatusClass(sidebarItem, summaryTitle);
+
             sidebarItem.addEventListener('click', function(e) {
                 if (e.target.classList.contains('close-btn')) {
                     removeSession(sessionId);
@@ -2350,6 +2416,9 @@
                         if (titleSpan) {
                             titleSpan.textContent = newDisplayTitle;
                         }
+
+                        // Update status color based on title suffix
+                        updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle);
 
                         // Update session header title
                         const headerTitleSpan = session.container.querySelector('.session-title-display');
