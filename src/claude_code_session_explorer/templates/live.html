@@ -510,7 +510,7 @@
 
         previewCopyBtn.addEventListener('click', function() {
             if (previewFilePath) {
-                navigator.clipboard.writeText(previewFilePath);
+                copyToClipboard(previewFilePath, null);
                 const originalText = previewCopyBtn.textContent;
                 previewCopyBtn.textContent = 'Copied!';
                 setTimeout(() => previewCopyBtn.textContent = originalText, 1500);
