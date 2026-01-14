@@ -2213,6 +2213,23 @@
 
             eventSource.addEventListener('sessions', function(e) {
                 const data = JSON.parse(e.data);
+
+                // Track which sessions the server knows about
+                const serverSessionIds = new Set(data.sessions.map(function(s) { return s.id; }));
+
+                // Remove sessions that are no longer tracked by the server
+                // (but keep pending sessions as they're client-side only)
+                const sessionsToRemove = [];
+                sessions.forEach(function(session, sessionId) {
+                    if (!session.pending && !serverSessionIds.has(sessionId)) {
+                        sessionsToRemove.push(sessionId);
+                    }
+                });
+                sessionsToRemove.forEach(function(sessionId) {
+                    removeSession(sessionId);
+                });
+
+                // Create or update sessions from server
                 data.sessions.forEach(function(session) {
                     createSession(
                         session.id,
