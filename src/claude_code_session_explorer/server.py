@@ -15,7 +15,10 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+import os
+
 from .backends import CodingToolBackend, get_backend, get_multi_backend
+from .backends.thinking import detect_thinking_level
 from .sessions import (
     MAX_SESSIONS,
     SessionInfo,
@@ -439,9 +442,19 @@ async def run_cli_for_session(
             else None
         )
 
+        # Get thinking token budget based on message keywords
+        thinking_level = detect_thinking_level(message)
+        thinking_env = {"MAX_THINKING_TOKENS": str(thinking_level.budget_tokens)}
+        env = {**os.environ, **thinking_env}
+        logger.info(
+            f"Sending message to {session_id} with thinking level "
+            f"'{thinking_level.name}' ({thinking_level.budget_tokens} tokens)"
+        )
+
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
+            env=env,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
