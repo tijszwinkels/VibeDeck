@@ -150,12 +150,14 @@
 
     <!-- Floating controls -->
     <div class="floating-controls" id="floating-controls">
-        <button class="scroll-btn" id="scroll-top-btn" title="Scroll to top">&#8593;</button>
+        <button class="scroll-btn scroll-btn-end" id="scroll-top-btn" title="Scroll to top">⤒</button>
+        <button class="scroll-btn" id="prev-user-btn" title="Previous user message">↑</button>
         <label class="auto-scroll-float" id="auto-scroll-float">
             <input type="checkbox" id="auto-scroll-checkbox" checked>
             <span>Auto</span>
         </label>
-        <button class="scroll-btn" id="scroll-bottom-btn" title="Scroll to bottom">&#8595;</button>
+        <button class="scroll-btn" id="next-user-btn" title="Next user message">↓</button>
+        <button class="scroll-btn scroll-btn-end" id="scroll-bottom-btn" title="Scroll to bottom">⤓</button>
     </div>
 
     <script>
@@ -198,6 +200,8 @@
         const messageTooltip = document.getElementById('message-tooltip');
         const scrollTopBtn = document.getElementById('scroll-top-btn');
         const scrollBottomBtn = document.getElementById('scroll-bottom-btn');
+        const prevUserBtn = document.getElementById('prev-user-btn');
+        const nextUserBtn = document.getElementById('next-user-btn');
         const autoScrollCheckbox = document.getElementById('auto-scroll-checkbox');
         const autoScrollFloat = document.getElementById('auto-scroll-float');
         const projectTitle = document.getElementById('project-title');
@@ -715,6 +719,70 @@
         });
         scrollBottomBtn.addEventListener('click', function() {
             window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        });
+
+        // User message navigation
+        function getUserMessages() {
+            // Get user messages in the active session (class="message user" but NOT "tool-reply")
+            const session = sessions.get(activeSessionId);
+            if (!session || !session.container) return [];
+            return Array.from(session.container.querySelectorAll('.message.user:not(.tool-reply)'));
+        }
+
+        function findCurrentUserMessageIndex() {
+            const userMessages = getUserMessages();
+            if (userMessages.length === 0) return -1;
+
+            const scrollTop = window.scrollY;
+            const viewportMiddle = scrollTop + window.innerHeight / 3;
+
+            // Find the user message closest to (or just above) the viewport middle
+            for (let i = userMessages.length - 1; i >= 0; i--) {
+                const rect = userMessages[i].getBoundingClientRect();
+                const msgTop = rect.top + scrollTop;
+                if (msgTop <= viewportMiddle) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        function updateUserNavButtons() {
+            const userMessages = getUserMessages();
+            const currentIndex = findCurrentUserMessageIndex();
+            prevUserBtn.disabled = currentIndex <= 0;
+            nextUserBtn.disabled = currentIndex >= userMessages.length - 1 || userMessages.length === 0;
+        }
+
+        prevUserBtn.addEventListener('click', function() {
+            const userMessages = getUserMessages();
+            const currentIndex = findCurrentUserMessageIndex();
+            if (currentIndex > 0) {
+                userMessages[currentIndex - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Disable auto-scroll when manually navigating
+                autoScroll = false;
+                autoScrollCheckbox.checked = false;
+                autoScrollFloat.classList.remove('active');
+                localStorage.setItem('autoScroll', 'false');
+            }
+        });
+
+        nextUserBtn.addEventListener('click', function() {
+            const userMessages = getUserMessages();
+            const currentIndex = findCurrentUserMessageIndex();
+            if (currentIndex < userMessages.length - 1) {
+                userMessages[currentIndex + 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Disable auto-scroll when manually navigating
+                autoScroll = false;
+                autoScrollCheckbox.checked = false;
+                autoScrollFloat.classList.remove('active');
+                localStorage.setItem('autoScroll', 'false');
+            }
+        });
+
+        // Update button states on scroll
+        window.addEventListener('scroll', function() {
+            updateUserNavButtons();
         });
 
         // Search functionality
@@ -2081,6 +2149,7 @@
             }
 
             updateInputBarUI();
+            updateUserNavButtons();
 
             // Restore preview for this session if one was open
             const savedPreviewPath = sessionPreviewPaths.get(sessionId);
@@ -2209,6 +2278,11 @@
                 // Auto-scroll within session
                 if (isActiveSession && (autoScroll || wasNearBottom)) {
                     msg.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                }
+
+                // Update navigation buttons when a new message arrives
+                if (isActiveSession) {
+                    updateUserNavButtons();
                 }
             }
         }
