@@ -2374,6 +2374,10 @@
 
             eventSource.onopen = function() {
                 updateStatus('', 'Connected');
+                // Reset catchupComplete on EVERY connection (including auto-reconnects)
+                // This ensures catchup messages aren't treated as new messages
+                // when EventSource auto-reconnects without calling connect()
+                catchupComplete = false;
             };
 
             eventSource.onerror = function(e) {
