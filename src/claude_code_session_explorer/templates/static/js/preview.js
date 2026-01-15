@@ -1,7 +1,7 @@
 
 import { dom, state } from './state.js';
 import { isMobile, copyToClipboard } from './utils.js';
-import { openRightPane } from './filetree.js';
+import { openRightPane, syncTreeToFile } from './filetree.js';
 
 // Initialize preview pane width
 export function initPreviewPane() {
@@ -110,6 +110,9 @@ export async function openPreviewPane(filePath) {
 
     // Open the pane (ensures parent classes are set)
     openRightPane();
+    
+    // Sync tree to this file
+    syncTreeToFile(filePath);
 
     try {
         const response = await fetch(`/api/file?path=${encodeURIComponent(filePath)}`);

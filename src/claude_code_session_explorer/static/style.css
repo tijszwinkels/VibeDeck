@@ -598,7 +598,27 @@ button:hover .hamburger-icon span {
 .markdown-preview td { padding: 10px 16px; border-bottom: 1px solid var(--border-color); }
 .markdown-preview tbody tr:last-child td { border-bottom: none; }
 .markdown-preview tbody tr:hover { background: rgba(25, 118, 210, 0.04); }
-.markdown-preview tbody tr:nth-child(even) { background: rgba(0,0,0,0.02); }
+.markdown-preview tbody tr:nth-child(even) { 
+    background: rgba(0,0,0,0.05); /* Slightly darker than header */
+}
+
+/* Tree Resize Handle */
+.tree-resize-handle {
+    width: 4px;
+    background: transparent;
+    cursor: ew-resize;
+    flex-shrink: 0;
+    transition: background 0.2s ease;
+    z-index: 10;
+}
+.tree-resize-handle:hover,
+.tree-resize-handle.dragging {
+    background: var(--user-border);
+}
+.preview-pane.tree-collapsed .tree-resize-handle {
+    display: none;
+}
+
 .markdown-preview tbody tr:nth-child(even):hover { background: rgba(25, 118, 210, 0.06); }
 
 /* Markdown code blocks */

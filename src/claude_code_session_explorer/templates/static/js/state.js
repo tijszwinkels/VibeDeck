@@ -196,7 +196,11 @@ export const state = {
     sidebarStartWidth: 0,
     isPreviewResizing: false,
     previewStartX: 0,
-    previewStartWidth: 0
+    previewStartWidth: 0,
+    isTreeResizing: false,
+    treeStartX: 0,
+    treeStartWidth: 0,
+    treeSidebarWidth: 250 // Default tree width
 };
 
 // Initialize status colors based on URL param

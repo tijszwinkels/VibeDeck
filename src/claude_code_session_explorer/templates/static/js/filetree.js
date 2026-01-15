@@ -1,6 +1,7 @@
 
 import { dom, state } from './state.js';
 import { openPreviewPane, closePreviewPane } from './preview.js';
+import { isMobile } from './utils.js';
 
 // We store the full tree data here so we can navigate client-side
 let fullTreeData = null;
@@ -26,6 +27,57 @@ export function initFileTree() {
              dom.previewPane.classList.remove('tree-collapsed');
         });
     }
+    
+    // Resize handle for tree split
+    const resizeHandle = document.getElementById('tree-resize-handle');
+    if (resizeHandle) {
+        resizeHandle.addEventListener('mousedown', function(e) {
+            if (isMobile()) return;
+            state.isTreeResizing = true;
+            state.treeStartX = e.clientX;
+            // Get current width (computed style or inline)
+            const sidebar = document.querySelector('.file-tree-sidebar');
+            state.treeStartWidth = sidebar.getBoundingClientRect().width;
+            
+            resizeHandle.classList.add('dragging');
+            document.body.style.cursor = 'ew-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        });
+    }
+    
+    // Global mouse events for dragging (shared with preview pane resize, but separate logic)
+    document.addEventListener('mousemove', function(e) {
+        if (!state.isTreeResizing) return;
+        
+        // Calculate new width
+        // For tree sidebar, resizing moves the RIGHT edge.
+        // It's inside a right-aligned pane, but flex direction is row (left-to-right).
+        // So moving mouse RIGHT increases width.
+        const delta = e.clientX - state.treeStartX;
+        let newWidth = state.treeStartWidth + delta;
+        
+        // Clamp width: min 150px, max 60% of preview pane
+        const maxTreeWidth = state.previewPaneWidth * 0.6;
+        newWidth = Math.max(150, Math.min(maxTreeWidth, newWidth));
+        
+        state.treeSidebarWidth = newWidth;
+        const sidebar = document.querySelector('.file-tree-sidebar');
+        if (sidebar) {
+            sidebar.style.width = newWidth + 'px';
+        }
+    });
+    
+    document.addEventListener('mouseup', function() {
+        if (state.isTreeResizing) {
+            state.isTreeResizing = false;
+            const resizeHandle = document.getElementById('tree-resize-handle');
+            if (resizeHandle) resizeHandle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            // Could save to localStorage here
+        }
+    });
 }
 
 export async function loadFileTree(sessionId) {
@@ -210,6 +262,26 @@ export function openRightPane() {
     // Make sure we have a tree render
     if (!dom.fileTreeContent.innerHTML) {
          renderCurrentPath();
+    }
+}
+
+export function syncTreeToFile(filePath) {
+    if (!fullTreeData) return;
+    
+    const parent = findParentNode(fullTreeData, filePath);
+    if (parent) {
+        currentPath = parent.path;
+        renderCurrentPath();
+        
+        // Highlight the file
+        setTimeout(() => {
+            const fileEl = dom.fileTreeContent.querySelector(`.tree-summary[data-path="${filePath}"]`);
+            if (fileEl) {
+                document.querySelectorAll('.tree-summary.selected').forEach(el => el.classList.remove('selected'));
+                fileEl.classList.add('selected');
+                fileEl.scrollIntoView({ block: 'nearest' });
+            }
+        }, 0);
     }
 }
 
