@@ -1,7 +1,7 @@
 
 import { dom, state } from './state.js';
 import { openPreviewPane, closePreviewPane } from './preview.js';
-import { isMobile } from './utils.js';
+import { isMobile, escapeHtml } from './utils.js';
 
 // We store the current directory contents here
 let currentTreeData = null;
@@ -94,19 +94,19 @@ export async function loadFileTree(sessionId, path = null) {
         const data = await response.json();
         
         if (data.error) {
-             dom.fileTreeContent.innerHTML = `<div class="preview-status visible warning">${data.error}</div>`;
+             dom.fileTreeContent.innerHTML = `<div class="preview-status visible warning">${escapeHtml(data.error)}</div>`;
              return;
         }
-        
+
         currentTreeData = data.tree;
         homeDir = data.home;
-        currentPath = currentTreeData.path; 
-        
+        currentPath = currentTreeData.path;
+
         renderCurrentPath();
-        
+
     } catch (err) {
         if (dom.fileTreeContent) {
-            dom.fileTreeContent.innerHTML = `<div class="preview-status visible error">Error loading tree: ${err.message}</div>`;
+            dom.fileTreeContent.innerHTML = `<div class="preview-status visible error">Error loading tree: ${escapeHtml(err.message)}</div>`;
         }
     }
 }
