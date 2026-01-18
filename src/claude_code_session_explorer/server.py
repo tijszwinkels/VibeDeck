@@ -201,9 +201,12 @@ async def _summarize_session_async(session: SessionInfo, model: str | None = Non
     effective_model = model if model is not None else _idle_summary_model
     result = await session_summarizer.summarize(session, model=effective_model)
 
-    # If summary was successful, broadcast the update
+    # If summary was successful, broadcast the update and notify idle tracker
     if result.success:
         await broadcast_session_summary_updated(session.session_id)
+        # Mark session as summarized in idle tracker to cancel pending timer
+        if _idle_tracker is not None:
+            _idle_tracker.mark_session_summarized(session.session_id)
 
     return result.success
 

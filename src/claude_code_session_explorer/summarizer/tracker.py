@@ -116,6 +116,30 @@ class IdleTracker:
             self._stuck_check_task = asyncio.create_task(self._stuck_check_loop())
             logger.info(f"Idle tracker started (threshold: {self.idle_threshold_seconds}s)")
 
+    def mark_session_summarized(self, session_id: str) -> None:
+        """Mark a session as summarized (from external immediate summarization).
+
+        This cancels any pending idle timer and marks the session as DONE,
+        preventing redundant re-summarization until new activity occurs.
+
+        Args:
+            session_id: The session that was summarized.
+        """
+        # Cancel pending timer if any
+        if session_id in self._timers:
+            self._timers[session_id].cancel()
+            del self._timers[session_id]
+
+        # Mark session as done
+        if session_id in self.sessions:
+            self.sessions[session_id].mark_done()
+        else:
+            # Create a new tracked session in DONE state
+            tracked = TrackedSession(session_id=session_id, state=SummaryState.DONE)
+            self.sessions[session_id] = tracked
+
+        logger.debug(f"Session {session_id} marked as summarized (external)")
+
     def on_session_activity(self, session_id: str) -> None:
         """Handle activity on a session.
 
