@@ -739,6 +739,44 @@ details[open] > summary .tree-icon-folder::before {
     opacity: 0.7;
 }
 
+/* Context menu for file tree */
+.tree-context-menu {
+    position: fixed;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 4px 0;
+    min-width: 160px;
+    z-index: 2000;
+}
+
+.context-menu-item {
+    display: block;
+    width: 100%;
+    padding: 8px 14px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+
+.context-menu-item:hover {
+    background: rgba(25, 118, 210, 0.1);
+    color: var(--user-border);
+}
+
+[data-theme="dark"] .tree-context-menu {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+[data-theme="dark"] .context-menu-item:hover {
+    background: rgba(66, 165, 245, 0.15);
+}
+
 /* Back Button in Preview Header */
 .preview-back-btn {
     padding: 4px 8px;

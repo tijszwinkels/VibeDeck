@@ -1520,7 +1520,9 @@ async def get_session_file_tree(session_id: str, path: str | None = None) -> dic
     try:
         # Use shallow listing for navigation efficiency
         tree = _get_directory_structure(target_path, shallow=True)
-        return {"tree": tree, "home": str(Path.home())}
+        # Include project root for relative path calculations
+        project_root = info.project_path if info.project_path else None
+        return {"tree": tree, "home": str(Path.home()), "projectRoot": project_root}
     except Exception as e:
         logger.error(f"Error generating file tree for {session_id}: {e}")
         return {"tree": None, "error": str(e)}

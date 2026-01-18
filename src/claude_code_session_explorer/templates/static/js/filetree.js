@@ -5,8 +5,9 @@ import { isMobile, escapeHtml } from './utils.js';
 
 // We store the current directory contents here
 let currentTreeData = null;
-let currentPath = null; 
-let homeDir = null; 
+let currentPath = null;
+let homeDir = null;
+let projectRoot = null; // The project directory for the active session 
 
 // Tracking triple click
 let lastClickTime = 0;
@@ -19,29 +20,165 @@ export function initFileTree() {
     if (dom.rightSidebarToggle) {
         dom.rightSidebarToggle.addEventListener('click', toggleRightSidebar);
     }
-    
+
     // Collapse Tree Button
     if (dom.treeCollapseBtn) {
         dom.treeCollapseBtn.addEventListener('click', () => {
              dom.previewPane.classList.add('tree-collapsed');
         });
     }
-    
+
     // Expand Tree Button
     if (dom.treeExpandBtn) {
         dom.treeExpandBtn.addEventListener('click', () => {
              dom.previewPane.classList.remove('tree-collapsed');
         });
     }
-    
+
     // Resize handle
     const resizeHandle = document.getElementById('tree-resize-handle');
     if (resizeHandle) {
         resizeHandle.addEventListener('mousedown', startTreeResize);
     }
-    
+
     document.addEventListener('mousemove', onTreeResize);
     document.addEventListener('mouseup', endTreeResize);
+
+    // Initialize context menu
+    initContextMenu();
+}
+
+// Context menu for file/folder right-click actions
+let contextMenu = null;
+
+function initContextMenu() {
+    // Create the context menu element
+    contextMenu = document.createElement('div');
+    contextMenu.className = 'tree-context-menu';
+    contextMenu.innerHTML = `
+        <button class="context-menu-item" data-action="copy-relative">Copy relative path</button>
+        <button class="context-menu-item" data-action="copy-full">Copy full path</button>
+    `;
+    contextMenu.style.display = 'none';
+    document.body.appendChild(contextMenu);
+
+    // Handle menu item clicks
+    contextMenu.addEventListener('click', handleContextMenuClick);
+
+    // Close menu when clicking elsewhere
+    document.addEventListener('click', hideContextMenu);
+    document.addEventListener('contextmenu', (e) => {
+        // Close existing menu if right-clicking elsewhere
+        if (!e.target.closest('.tree-summary')) {
+            hideContextMenu();
+        }
+    });
+}
+
+function showContextMenu(e, itemPath) {
+    e.preventDefault();
+
+    if (!contextMenu) return;
+
+    // Store the path for the menu action
+    contextMenu.dataset.itemPath = itemPath;
+
+    // Position the menu at cursor
+    contextMenu.style.display = 'block';
+    contextMenu.style.left = e.clientX + 'px';
+    contextMenu.style.top = e.clientY + 'px';
+
+    // Ensure menu stays within viewport
+    const rect = contextMenu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+        contextMenu.style.left = (e.clientX - rect.width) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+        contextMenu.style.top = (e.clientY - rect.height) + 'px';
+    }
+}
+
+function hideContextMenu() {
+    if (contextMenu) {
+        contextMenu.style.display = 'none';
+    }
+}
+
+function handleContextMenuClick(e) {
+    const action = e.target.dataset.action;
+    const itemPath = contextMenu.dataset.itemPath;
+
+    if (!action || !itemPath) return;
+
+    if (action === 'copy-relative') {
+        copyRelativePath(itemPath);
+    } else if (action === 'copy-full') {
+        copyFullPath(itemPath);
+    }
+
+    hideContextMenu();
+}
+
+function copyRelativePath(fullPath) {
+    let relativePath = fullPath;
+
+    // Make path relative to project root if available
+    if (projectRoot && fullPath.startsWith(projectRoot)) {
+        relativePath = fullPath.substring(projectRoot.length);
+        // Remove leading slash
+        if (relativePath.startsWith('/')) {
+            relativePath = relativePath.substring(1);
+        }
+        // If empty (same as project root), use '.'
+        if (!relativePath) {
+            relativePath = '.';
+        }
+    }
+
+    copyToClipboard(relativePath, 'Relative path copied');
+}
+
+function copyFullPath(fullPath) {
+    copyToClipboard(fullPath, 'Full path copied');
+}
+
+function copyToClipboard(text, successMessage) {
+    // Try modern clipboard API first, fall back to execCommand for non-HTTPS
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showFlashMessage(successMessage, 'success');
+        }).catch(() => {
+            fallbackCopy(text, successMessage);
+        });
+    } else {
+        fallbackCopy(text, successMessage);
+    }
+}
+
+function fallbackCopy(text, successMessage) {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
+        showFlashMessage(successMessage, 'success');
+    } catch (err) {
+        console.error('Failed to copy:', err);
+        showFlashMessage('Failed to copy path', 'error');
+    }
+    document.body.removeChild(textarea);
+}
+
+function showFlashMessage(message, type) {
+    const flash = document.getElementById('flash-message');
+    if (flash) {
+        flash.textContent = message;
+        flash.className = 'flash-message visible ' + type;
+        setTimeout(() => flash.classList.remove('visible'), 2000);
+    }
 }
 
 function startTreeResize(e) {
@@ -82,18 +219,18 @@ function endTreeResize() {
 export async function loadFileTree(sessionId, path = null) {
     if (!sessionId) return;
     if (!dom.fileTreeContent) return;
-    
+
     // Show loading state
     dom.fileTreeContent.innerHTML = '<div class="preview-status visible loading">Loading...</div>';
-    
+
     try {
-        const url = path 
-            ? `/sessions/${sessionId}/tree?path=${encodeURIComponent(path)}` 
+        const url = path
+            ? `/sessions/${sessionId}/tree?path=${encodeURIComponent(path)}`
             : `/sessions/${sessionId}/tree`;
-            
+
         const response = await fetch(url);
         const data = await response.json();
-        
+
         if (data.error) {
              dom.fileTreeContent.innerHTML = `<div class="preview-status visible warning">${escapeHtml(data.error)}</div>`;
              return;
@@ -103,6 +240,14 @@ export async function loadFileTree(sessionId, path = null) {
         homeDir = data.home;
         currentPath = currentTreeData.path;
 
+        // Store project root from the response (first load without path = project root)
+        if (data.projectRoot) {
+            projectRoot = data.projectRoot;
+        } else if (!path && currentTreeData.path) {
+            // First call without explicit path - this is the project root
+            projectRoot = currentTreeData.path;
+        }
+
         renderCurrentPath();
 
     } catch (err) {
@@ -110,6 +255,11 @@ export async function loadFileTree(sessionId, path = null) {
             dom.fileTreeContent.innerHTML = `<div class="preview-status visible error">Error loading tree: ${escapeHtml(err.message)}</div>`;
         }
     }
+}
+
+// Set the project root (called when session changes)
+export function setProjectRoot(path) {
+    projectRoot = path;
 }
 
 function formatPath(path) {
@@ -196,6 +346,11 @@ function createBrowserItem(item) {
 
     // Add file/folder name as text node (prevents XSS from malicious filenames)
     div.appendChild(document.createTextNode(' ' + item.name));
+
+    // Right-click context menu for all items
+    div.addEventListener('contextmenu', (e) => {
+        showContextMenu(e, item.path);
+    });
 
     if (item.type === 'directory') {
         // Single Click -> Navigate

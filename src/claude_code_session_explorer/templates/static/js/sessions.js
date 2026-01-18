@@ -12,7 +12,7 @@ import {
     updateSidebarState, updateUserNavButtons
 } from './ui.js';
 import { closePreviewPane, openPreviewPane } from './preview.js';
-import { loadFileTree } from './filetree.js';
+import { loadFileTree, setProjectRoot } from './filetree.js';
 
 // Forward declaration for circular dependency - will be set by messaging.js
 let updateInputBarUI = () => {};
@@ -24,6 +24,17 @@ export function setUpdateInputBarUI(fn) {
 let createPendingSession = () => {};
 export function setCreatePendingSession(fn) {
     createPendingSession = fn;
+}
+
+// Find a real (non-pending) session ID to use for file tree API calls
+// when the current session is pending (not yet created on backend)
+function findFallbackSessionId() {
+    for (const [sessionId, session] of state.sessions) {
+        if (!session.pending) {
+            return sessionId;
+        }
+    }
+    return null;
 }
 
 export function updateSidebarItemStatusClass(sidebarItem, title) {
@@ -413,9 +424,26 @@ export function switchToSession(sessionId, scrollToBottom = false) {
     if (savedPreviewPath) {
         openPreviewPane(savedPreviewPath);
     }
-    
-    // Always load file tree for the session
-    loadFileTree(sessionId);
+
+    // Set project root for relative path calculations in file tree
+    if (session.cwd) {
+        setProjectRoot(session.cwd);
+    }
+
+    // Load file tree for the session
+    // For pending sessions or sessions without backend project_path, use cwd directly
+    // This ensures the file tree opens in the project directory even for new sessions
+    if (session.pending && session.cwd) {
+        // For pending sessions, use the cwd directly as the path
+        // Since there's no real session on the backend yet, we need to use a real session ID
+        // to make the API call work, but pass the cwd as the explicit path
+        const fallbackSessionId = findFallbackSessionId();
+        if (fallbackSessionId) {
+            loadFileTree(fallbackSessionId, session.cwd);
+        }
+    } else {
+        loadFileTree(sessionId, session.cwd || null);
+    }
 
     if (scrollToBottom) {
         requestAnimationFrame(function() {
