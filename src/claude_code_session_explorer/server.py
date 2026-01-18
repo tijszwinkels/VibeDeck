@@ -18,7 +18,9 @@ from sse_starlette.sse import EventSourceResponse
 import os
 
 from .backends import CodingToolBackend, get_backend, get_multi_backend
+from .backends.claude_code.pricing import get_session_model
 from .backends.thinking import detect_thinking_level
+from .summarizer import Summarizer, LogWriter, IdleTracker
 from .sessions import (
     MAX_SESSIONS,
     SessionInfo,
@@ -51,6 +53,12 @@ _disable_thinking = False  # Enable with --disable-thinking CLI flag
 # Global state for server (not session-related)
 _clients: set[asyncio.Queue] = set()
 _watch_task: asyncio.Task | None = None
+
+# Summarization state
+_summarizer: "Summarizer | None" = None
+_idle_tracker: "IdleTracker | None" = None
+_summarize_after_idle_for: int | None = None
+_idle_summary_model: str = "haiku"  # Model to use for idle summarization
 
 # Pending processes for new sessions (cwd -> process)
 # When a new session is started, we store the process here until the session file appears
@@ -113,6 +121,80 @@ def set_disable_thinking(disabled: bool) -> None:
 def is_send_enabled() -> bool:
     """Check if sending messages is enabled."""
     return _send_enabled
+
+
+def configure_summarization(
+    backend: CodingToolBackend,
+    summary_log: "Path | None" = None,
+    summarize_after_idle_for: int | None = None,
+    idle_summary_model: str = "haiku",
+    summary_prompt: str | None = None,
+    summary_prompt_file: "Path | None" = None,
+    summary_log_keys: list[str] | None = None,
+) -> None:
+    """Configure session summarization.
+
+    Args:
+        backend: The backend to use for CLI commands.
+        summary_log: Path to JSONL log file for summaries.
+        summarize_after_idle_for: Seconds of idle before re-summarizing.
+        idle_summary_model: Model to use for idle summarization (default: haiku).
+        summary_prompt: Custom prompt template.
+        summary_prompt_file: Path to prompt template file.
+        summary_log_keys: Keys to include in JSONL log.
+    """
+    global _summarizer, _idle_tracker, _summarize_after_idle_for, _idle_summary_model
+
+    # Create log writer
+    log_writer = LogWriter(
+        log_path=summary_log,
+        log_keys=summary_log_keys,
+    )
+
+    # Create summarizer
+    _summarizer = Summarizer(
+        backend=backend,
+        log_writer=log_writer,
+        prompt=summary_prompt,
+        prompt_file=summary_prompt_file,
+    )
+
+    # Store idle settings for later use
+    _summarize_after_idle_for = summarize_after_idle_for
+    _idle_summary_model = idle_summary_model
+
+    # Create idle tracker if threshold is set
+    if summarize_after_idle_for is not None:
+        _idle_tracker = IdleTracker(
+            idle_threshold_seconds=summarize_after_idle_for,
+            summarize_callback=_summarize_session_async,
+            get_session_callback=get_session,
+        )
+
+
+async def _summarize_session_async(session: SessionInfo, model: str | None = None) -> bool:
+    """Async wrapper for summarization.
+
+    Args:
+        session: The session to summarize.
+        model: Model to use for summarization. If None, uses _idle_summary_model
+               (for idle-triggered summarization).
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if _summarizer is None:
+        return False
+
+    # Use idle model by default (for idle tracker callbacks)
+    effective_model = model if model is not None else _idle_summary_model
+    result = await _summarizer.summarize(session, model=effective_model)
+
+    # If summary was successful, broadcast the update
+    if result.success:
+        await broadcast_session_summary_updated(session.session_id)
+
+    return result.success
 
 
 def initialize_backend(backend_name: str | None = None, **config) -> CodingToolBackend:
@@ -509,6 +591,13 @@ async def run_cli_for_session(
         if not fork:
             info.process = None
 
+            # Trigger summarization if configured (cache is hot right after completion)
+            if _summarizer is not None:
+                # Use the same model that was used for the conversation
+                session_model = get_session_model(info.path)
+                logger.info(f"Triggering summary for session {session_id} with model {session_model}")
+                asyncio.create_task(_summarize_session_async(info, model=session_model))
+
             # Process queue if messages waiting
             if info.message_queue:
                 next_message = info.message_queue.pop(0)
@@ -683,6 +772,9 @@ async def watch_loop() -> None:
             # Process messages for known sessions (doesn't need lock)
             for session_id in sessions_to_process:
                 await process_session_messages(session_id)
+                # Notify idle tracker of activity (for re-summarization after idle)
+                if _idle_tracker is not None:
+                    _idle_tracker.on_session_activity(session_id)
 
             # Process summary updates for known sessions
             for session_id in sessions_with_summary_updates:
@@ -716,9 +808,17 @@ async def lifespan(app: FastAPI):
     # Start watching for changes
     _watch_task = asyncio.create_task(watch_loop())
 
+    # Start idle tracker if configured
+    if _idle_tracker is not None:
+        _idle_tracker.start()
+        logger.info("Idle summarization tracker started")
+
     yield
 
     # Shutdown
+    if _idle_tracker is not None:
+        _idle_tracker.shutdown()
+
     if _watch_task:
         _watch_task.cancel()
         try:

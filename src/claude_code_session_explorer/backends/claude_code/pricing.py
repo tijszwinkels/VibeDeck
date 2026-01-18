@@ -103,6 +103,37 @@ def calculate_message_cost(usage: dict, model: str | None = None) -> float:
     return cost
 
 
+def get_session_model(session_path: Path) -> str | None:
+    """Get the first model used in a session.
+
+    Reads the session file and returns the model from the first assistant message.
+
+    Args:
+        session_path: Path to the session JSONL file
+
+    Returns:
+        Model ID string (e.g., 'claude-opus-4-5-20251101') or None if not found.
+    """
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") == "assistant":
+                        message = entry.get("message", {})
+                        model = message.get("model")
+                        if model:
+                            return model
+                except json.JSONDecodeError:
+                    continue
+    except (FileNotFoundError, IOError):
+        pass
+    return None
+
+
 def get_session_token_usage(session_path: Path) -> TokenUsage:
     """Calculate total token usage and cost from a session file.
 

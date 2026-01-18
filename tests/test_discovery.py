@@ -15,6 +15,7 @@ from claude_code_session_explorer.backends.claude_code.discovery import (
     is_summary_file,
     get_session_id_from_summary_file,
 )
+from claude_code_session_explorer.backends.claude_code.pricing import get_session_model
 from claude_code_session_explorer.backends.claude_code.tailer import is_warmup_session
 
 
@@ -325,3 +326,62 @@ class TestGetSessionIdFromSummaryFile:
         """Should return None for non-summary files."""
         assert get_session_id_from_summary_file(Path("/path/config.json")) is None
         assert get_session_id_from_summary_file(Path("/path/abc123.jsonl")) is None
+
+
+class TestGetSessionModel:
+    """Tests for get_session_model function."""
+
+    def test_gets_model_from_first_assistant_message(self):
+        """Should extract model from first assistant message."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "user",
+                "message": {"content": "Hello"}
+            }) + "\n")
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Hi"}],
+                    "model": "claude-opus-4-5-20251101"
+                }
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_session_model(path)
+        assert model == "claude-opus-4-5-20251101"
+
+    def test_returns_none_for_session_without_model(self):
+        """Should return None if no model field in assistant messages."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "user",
+                "message": {"content": "Hello"}
+            }) + "\n")
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Hi"}]}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_session_model(path)
+        assert model is None
+
+    def test_returns_none_for_nonexistent_file(self):
+        """Should return None for nonexistent files."""
+        model = get_session_model(Path("/nonexistent/session.jsonl"))
+        assert model is None
+
+    def test_returns_none_for_user_only_session(self):
+        """Should return None if session has no assistant messages."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "user",
+                "message": {"content": "Hello"}
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_session_model(path)
+        assert model is None

@@ -38,6 +38,13 @@ class ServeConfig:
     fork: bool = False
     default_send_backend: str | None = None
     disable_thinking: bool = False
+    # Summary options
+    summary_log: str | None = None  # Path to JSONL log file
+    summarize_after_idle_for: int | None = None  # Seconds of idle before re-summarizing
+    idle_summary_model: str = "haiku"  # Model to use for idle summarization
+    summary_prompt: str | None = None  # Custom prompt template
+    summary_prompt_file: str | None = None  # Path to prompt template file
+    summary_log_keys: list[str] | None = None  # Keys to include in JSONL log
 
 
 @dataclass
@@ -125,6 +132,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "fork": False,
         "default_send_backend": None,
         "disable_thinking": False,
+        "summary_log": None,
+        "summarize_after_idle_for": None,
+        "idle_summary_model": "haiku",
+        "summary_prompt": None,
+        "summary_prompt_file": None,
+        "summary_log_keys": None,
     },
     "html": {
         "output": None,

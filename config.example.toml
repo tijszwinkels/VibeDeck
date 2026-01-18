@@ -13,15 +13,22 @@
 # no_open = false                # Don't auto-open browser
 # debug = false                  # Enable debug logging
 # max_sessions = 100             # Max sessions to track
-# backend = "all"                # Backend: "all", "claude_code", or "opencode"
+# backend = "all"                # Backend: "all", "claude-code", or "opencode"
 # include_subagents = false      # Include subagent sessions in list
+
+# Summarization options
+# summary_log = "~/.mycel/agents/assistant/daily-assistant/incoming.jsonl"  # Append summaries to JSONL file
+# summarize_after_idle_for = 270  # Re-summarize after N seconds idle (optional)
+# idle_summary_model = "haiku"    # Model for idle summarization (default: haiku). Immediate summaries use the conversation's model.
+# summary_prompt_file = "~/.config/claude-code-session-explorer/prompt.txt"  # Custom prompt template file
+# summary_log_keys = ["title", "short_summary", "summary_generated_at", "session_id", "path"]  # Keys to include in log
 
 # Experimental features (use with caution)
 # experimental = false           # Enable experimental features
 # enable_send = false            # Allow sending messages to sessions
 # dangerously_skip_permissions = false  # Skip Claude permission prompts
 # fork = false                   # Enable session forking
-# default_send_backend = "claude_code"  # Default backend for new sessions
+# default_send_backend = "claude-code"  # Default backend for new sessions
 # disable_thinking = false       # Disable thinking level detection
 
 [html]
