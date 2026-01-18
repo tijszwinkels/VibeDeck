@@ -59,6 +59,7 @@ _summarizer: "Summarizer | None" = None
 _idle_tracker: "IdleTracker | None" = None
 _summarize_after_idle_for: int | None = None
 _idle_summary_model: str = "haiku"  # Model to use for idle summarization
+_summary_after_long_running: int | None = None  # Summarize if CLI runs longer than N seconds
 
 # Pending processes for new sessions (cwd -> process)
 # When a new session is started, we store the process here until the session file appears
@@ -128,6 +129,7 @@ def configure_summarization(
     summary_log: "Path | None" = None,
     summarize_after_idle_for: int | None = None,
     idle_summary_model: str = "haiku",
+    summary_after_long_running: int | None = None,
     summary_prompt: str | None = None,
     summary_prompt_file: "Path | None" = None,
     summary_log_keys: list[str] | None = None,
@@ -139,11 +141,12 @@ def configure_summarization(
         summary_log: Path to JSONL log file for summaries.
         summarize_after_idle_for: Seconds of idle before re-summarizing.
         idle_summary_model: Model to use for idle summarization (default: haiku).
+        summary_after_long_running: Summarize if CLI runs longer than N seconds.
         summary_prompt: Custom prompt template.
         summary_prompt_file: Path to prompt template file.
         summary_log_keys: Keys to include in JSONL log.
     """
-    global _summarizer, _idle_tracker, _summarize_after_idle_for, _idle_summary_model
+    global _summarizer, _idle_tracker, _summarize_after_idle_for, _idle_summary_model, _summary_after_long_running
 
     # Create log writer
     log_writer = LogWriter(
@@ -159,9 +162,10 @@ def configure_summarization(
         prompt_file=summary_prompt_file,
     )
 
-    # Store idle settings for later use
+    # Store settings for later use
     _summarize_after_idle_for = summarize_after_idle_for
     _idle_summary_model = idle_summary_model
+    _summary_after_long_running = summary_after_long_running
 
     # Create idle tracker if threshold is set
     if summarize_after_idle_for is not None:
@@ -484,20 +488,36 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
     if info.process is None:
         return
 
+    start_time = time.monotonic()
+    duration = 0.0
+
     try:
         # Wait for process to complete
         await info.process.wait()
-        logger.debug(f"Attached process completed for session {info.session_id}")
+        duration = time.monotonic() - start_time
+        logger.debug(f"Attached process completed for session {info.session_id} ({duration:.1f}s)")
     except Exception as e:
         logger.error(f"Error monitoring attached process for {info.session_id}: {e}")
     finally:
         info.process = None
 
-        # Trigger immediate summarization only for NEW sessions (no summary yet)
-        # Idle tracker handles re-summarization after activity
-        if _summarizer is not None and not info.get_summary_path().exists():
+        # Determine if we should summarize:
+        # 1. New session (no summary yet) - always summarize immediately
+        # 2. Long-running session (duration > threshold) - summarize to use warm cache
+        should_summarize = False
+        summary_reason = ""
+
+        if _summarizer is not None:
+            if not info.get_summary_path().exists():
+                should_summarize = True
+                summary_reason = "new session"
+            elif _summary_after_long_running is not None and duration >= _summary_after_long_running:
+                should_summarize = True
+                summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
+
+        if should_summarize:
             session_model = get_session_model(info.path)
-            logger.info(f"Triggering summary for new session {info.session_id} with model {session_model}")
+            logger.info(f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}")
             asyncio.create_task(_summarize_session_async(info, model=session_model))
 
         await broadcast_session_status(info.session_id)
@@ -585,6 +605,9 @@ async def run_cli_for_session(
                 f"'{thinking_level.name}' ({thinking_level.budget_tokens} tokens)"
             )
 
+        # Track start time for long-running session detection
+        start_time = time.monotonic()
+
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
@@ -602,6 +625,7 @@ async def run_cli_for_session(
 
         # Wait for completion
         _, stderr = await proc.communicate()
+        duration = time.monotonic() - start_time
 
         if proc.returncode != 0:
             logger.error(f"CLI process failed for {session_id}: {stderr.decode()}")
@@ -613,12 +637,24 @@ async def run_cli_for_session(
         if not fork:
             info.process = None
 
-            # Trigger immediate summarization only for NEW sessions (no summary yet)
-            # Idle tracker handles re-summarization after activity
-            if _summarizer is not None and not info.get_summary_path().exists():
+            # Determine if we should summarize:
+            # 1. New session (no summary yet) - always summarize immediately
+            # 2. Long-running session (duration > threshold) - summarize to use warm cache
+            should_summarize = False
+            summary_reason = ""
+
+            if _summarizer is not None:
+                if not info.get_summary_path().exists():
+                    should_summarize = True
+                    summary_reason = "new session"
+                elif _summary_after_long_running is not None and duration >= _summary_after_long_running:
+                    should_summarize = True
+                    summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
+
+            if should_summarize:
                 # Use the same model that was used for the conversation
                 session_model = get_session_model(info.path)
-                logger.info(f"Triggering summary for new session {session_id} with model {session_model}")
+                logger.info(f"Triggering summary for {summary_reason} session {session_id} with model {session_model}")
                 asyncio.create_task(_summarize_session_async(info, model=session_model))
 
             # Process queue if messages waiting

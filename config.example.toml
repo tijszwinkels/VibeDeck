@@ -20,6 +20,7 @@
 # summary_log = "~/.mycel/agents/assistant/daily-assistant/incoming.jsonl"  # Append summaries to JSONL file
 # summarize_after_idle_for = 270  # Re-summarize after N seconds idle (optional)
 # idle_summary_model = "haiku"    # Model for idle summarization (default: haiku). Immediate summaries use the conversation's model.
+# summary_after_long_running = 180  # Summarize if CLI runs longer than N seconds (uses conversation's model for warm cache)
 # summary_prompt_file = "~/.config/claude-code-session-explorer/prompt.txt"  # Custom prompt template file
 # summary_log_keys = ["title", "short_summary", "summary_generated_at", "session_id", "path"]  # Keys to include in log
 

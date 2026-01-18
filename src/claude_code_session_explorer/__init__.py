@@ -130,6 +130,12 @@ def main() -> None:
     help="Model to use for idle summarization (default: haiku)",
 )
 @click.option(
+    "--summary-after-long-running",
+    type=int,
+    default=None,
+    help="Summarize if CLI runs longer than N seconds (uses conversation's model for warm cache)",
+)
+@click.option(
     "--summary-prompt",
     type=str,
     default=None,
@@ -161,6 +167,7 @@ def serve(
     summary_log: Path | None,
     summarize_after_idle_for: int | None,
     idle_summary_model: str,
+    summary_after_long_running: int | None,
     summary_prompt: str | None,
     summary_prompt_file: Path | None,
 ) -> None:
@@ -240,6 +247,7 @@ def serve(
         summary_log=summary_log,
         summarize_after_idle_for=summarize_after_idle_for,
         idle_summary_model=idle_summary_model,
+        summary_after_long_running=summary_after_long_running,
         summary_prompt=summary_prompt,
         summary_prompt_file=summary_prompt_file,
     )
