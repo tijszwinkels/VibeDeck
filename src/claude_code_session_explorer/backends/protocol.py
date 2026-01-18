@@ -255,6 +255,21 @@ class CodingToolBackend(Protocol):
         """
         ...
 
+    def get_session_model(self, session_path: Path) -> str | None:
+        """Get the primary model used in a session.
+
+        Returns the model from the first assistant message, which is used for
+        determining warm cache optimization when summarizing.
+
+        Args:
+            session_path: Session identifier.
+
+        Returns:
+            Model ID string (e.g., 'claude-opus-4-5-20251101') or None if
+            not found or not implemented for this backend.
+        """
+        ...
+
     # ===== CLI Interaction (Optional) =====
 
     def supports_send_message(self) -> bool:

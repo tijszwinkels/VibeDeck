@@ -18,7 +18,6 @@ from sse_starlette.sse import EventSourceResponse
 import os
 
 from .backends import CodingToolBackend, get_backend, get_multi_backend
-from .backends.claude_code.pricing import get_session_model
 from .backends.thinking import detect_thinking_level
 from .summarizer import Summarizer, LogWriter, IdleTracker
 from .sessions import (
@@ -516,7 +515,8 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
                 summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
 
         if should_summarize:
-            session_model = get_session_model(info.path)
+            session_backend = get_backend_for_session(info.path)
+            session_model = session_backend.get_session_model(info.path)
             logger.info(f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}")
             asyncio.create_task(_summarize_session_async(info, model=session_model))
 
@@ -607,6 +607,7 @@ async def run_cli_for_session(
 
         # Track start time for long-running session detection
         start_time = time.monotonic()
+        duration = 0.0  # Initialize in case of early exception
 
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
@@ -653,7 +654,8 @@ async def run_cli_for_session(
 
             if should_summarize:
                 # Use the same model that was used for the conversation
-                session_model = get_session_model(info.path)
+                session_backend = get_backend_for_session(info.path)
+                session_model = session_backend.get_session_model(info.path)
                 logger.info(f"Triggering summary for {summary_reason} session {session_id} with model {session_model}")
                 asyncio.create_task(_summarize_session_async(info, model=session_model))
 

@@ -6,7 +6,10 @@ CodingToolBackend protocol for OpenCode sessions.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ..protocol import (
     SessionMetadata,
@@ -168,6 +171,20 @@ class OpenCodeBackend:
             Token usage statistics.
         """
         return get_session_token_usage(session_path, self._storage_dir)
+
+    def get_session_model(self, session_path: Path) -> str | None:
+        """Get the primary model used in a session.
+
+        Not implemented for OpenCode backend - returns None.
+
+        Args:
+            session_path: Path to the session file.
+
+        Returns:
+            None (not implemented).
+        """
+        logger.debug("get_session_model() not implemented for OpenCode backend")
+        return None
 
     # ===== CLI Interaction =====
 

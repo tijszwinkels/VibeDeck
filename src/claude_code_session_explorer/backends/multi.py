@@ -239,6 +239,16 @@ class MultiBackend:
             return TokenUsage()
         return backend.get_session_token_usage(session_path)
 
+    def get_session_model(self, session_path: Path) -> str | None:
+        """Get the primary model used in a session.
+
+        Delegates to the appropriate backend.
+        """
+        backend = self._session_backend.get(session_path)
+        if backend is None:
+            return None
+        return backend.get_session_model(session_path)
+
     # ===== CLI Interaction =====
 
     def supports_send_message(self) -> bool:

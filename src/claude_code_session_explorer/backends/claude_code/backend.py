@@ -27,7 +27,7 @@ from .discovery import (
     get_session_id_from_summary_file,
     DEFAULT_PROJECTS_DIR,
 )
-from .pricing import get_session_token_usage
+from .pricing import get_session_token_usage, get_session_model
 from .cli import (
     CLI_COMMAND,
     CLI_INSTALL_INSTRUCTIONS,
@@ -175,6 +175,17 @@ class ClaudeCodeBackend:
             Token usage statistics.
         """
         return get_session_token_usage(session_path)
+
+    def get_session_model(self, session_path: Path) -> str | None:
+        """Get the primary model used in a session.
+
+        Args:
+            session_path: Path to the session file.
+
+        Returns:
+            Model ID string or None if not found.
+        """
+        return get_session_model(session_path)
 
     # ===== CLI Interaction =====
 
