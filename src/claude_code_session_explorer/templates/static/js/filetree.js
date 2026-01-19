@@ -7,7 +7,8 @@ import { isMobile, escapeHtml } from './utils.js';
 let currentTreeData = null;
 let currentPath = null;
 let homeDir = null;
-let projectRoot = null; // The project directory for the active session 
+let projectRoot = null; // The project directory for the active session
+let currentSessionId = null; // The current session ID for file tree operations 
 
 // Tracking triple click
 let lastClickTime = 0;
@@ -58,6 +59,8 @@ function initContextMenu() {
     contextMenu.innerHTML = `
         <button class="context-menu-item" data-action="copy-relative">Copy relative path</button>
         <button class="context-menu-item" data-action="copy-full">Copy full path</button>
+        <hr class="context-menu-divider">
+        <button class="context-menu-item context-menu-item-danger" data-action="delete">Delete</button>
     `;
     contextMenu.style.display = 'none';
     document.body.appendChild(contextMenu);
@@ -114,6 +117,8 @@ function handleContextMenuClick(e) {
         copyRelativePath(itemPath);
     } else if (action === 'copy-full') {
         copyFullPath(itemPath);
+    } else if (action === 'delete') {
+        deleteFile(itemPath);
     }
 
     hideContextMenu();
@@ -140,6 +145,42 @@ function copyRelativePath(fullPath) {
 
 function copyFullPath(fullPath) {
     copyToClipboard(fullPath, 'Full path copied');
+}
+
+async function deleteFile(filePath) {
+    // Get filename for display
+    const fileName = filePath.split('/').pop();
+
+    // Confirm deletion
+    if (!confirm(`Delete "${fileName}"?\n\nThis cannot be undone.`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/file/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: filePath }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            showFlashMessage(`Deleted ${fileName}`, 'success');
+            // Refresh the file tree - navigate to parent directory of deleted file
+            const parentDir = filePath.substring(0, filePath.lastIndexOf('/'));
+            if (currentSessionId) {
+                loadFileTree(currentSessionId, parentDir);
+            }
+        } else {
+            showFlashMessage(data.error || 'Failed to delete file', 'error');
+        }
+    } catch (err) {
+        console.error('Delete failed:', err);
+        showFlashMessage('Failed to delete file', 'error');
+    }
 }
 
 function copyToClipboard(text, successMessage) {
@@ -219,6 +260,9 @@ function endTreeResize() {
 export async function loadFileTree(sessionId, path = null) {
     if (!sessionId) return;
     if (!dom.fileTreeContent) return;
+
+    // Store session ID for later use (e.g., after file deletion)
+    currentSessionId = sessionId;
 
     // Show loading state
     dom.fileTreeContent.innerHTML = '<div class="preview-status visible loading">Loading...</div>';

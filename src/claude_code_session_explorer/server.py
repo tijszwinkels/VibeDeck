@@ -1686,6 +1686,73 @@ async def get_file_raw(path: str) -> Response:
         raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
 
 
+class DeleteFileRequest(BaseModel):
+    """Request body for file deletion."""
+
+    path: str
+
+
+class DeleteFileResponse(BaseModel):
+    """Response for file deletion."""
+
+    success: bool
+    error: str | None = None
+
+
+@app.post("/api/file/delete")
+async def delete_file(request: DeleteFileRequest) -> DeleteFileResponse:
+    """Delete a file or empty directory.
+
+    Args:
+        request: DeleteFileRequest containing the path to delete.
+
+    Returns:
+        DeleteFileResponse indicating success or failure.
+    """
+    file_path = Path(request.path)
+
+    # Security: Restrict to user's home directory to prevent path traversal
+    home_dir = Path.home()
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(home_dir)
+    except ValueError:
+        return DeleteFileResponse(
+            success=False,
+            error=f"Access denied: path must be within home directory ({home_dir})",
+        )
+
+    # Validate path exists
+    if not file_path.exists():
+        return DeleteFileResponse(success=False, error=f"File not found: {request.path}")
+
+    try:
+        if file_path.is_file():
+            file_path.unlink()
+            logger.info(f"Deleted file: {request.path}")
+        elif file_path.is_dir():
+            # Only delete empty directories for safety
+            if any(file_path.iterdir()):
+                return DeleteFileResponse(
+                    success=False, error="Directory is not empty"
+                )
+            file_path.rmdir()
+            logger.info(f"Deleted directory: {request.path}")
+        else:
+            return DeleteFileResponse(
+                success=False, error="Path is neither a file nor directory"
+            )
+
+        return DeleteFileResponse(success=True)
+    except PermissionError:
+        return DeleteFileResponse(
+            success=False, error=f"Permission denied: {request.path}"
+        )
+    except Exception as e:
+        logger.error(f"Error deleting {request.path}: {e}")
+        return DeleteFileResponse(success=False, error=str(e))
+
+
 class PathTypeResponse(BaseModel):
     """Response for path type check."""
 

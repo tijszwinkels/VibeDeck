@@ -777,6 +777,30 @@ details[open] > summary .tree-icon-folder::before {
     background: rgba(66, 165, 245, 0.15);
 }
 
+.context-menu-divider {
+    margin: 4px 8px;
+    border: none;
+    border-top: 1px solid var(--border-color);
+}
+
+.context-menu-item-danger {
+    color: #d32f2f;
+}
+
+.context-menu-item-danger:hover {
+    background: rgba(211, 47, 47, 0.1);
+    color: #d32f2f;
+}
+
+[data-theme="dark"] .context-menu-item-danger {
+    color: #ef5350;
+}
+
+[data-theme="dark"] .context-menu-item-danger:hover {
+    background: rgba(239, 83, 80, 0.15);
+    color: #ef5350;
+}
+
 /* Back Button in Preview Header */
 .preview-back-btn {
     padding: 4px 8px;
