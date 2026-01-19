@@ -94,6 +94,7 @@ export function connect() {
         if (mergedPendingId) {
             const pendingSession = state.sessions.get(mergedPendingId);
             const wasPendingActive = (state.activeSessionId === mergedPendingId);
+            const pendingCwd = pendingSession?.cwd;  // Preserve cwd before removal
 
             removeSession(mergedPendingId);
 
@@ -104,7 +105,7 @@ export function connect() {
                 data.firstMessage,
                 data.startedAt,
                 data.lastUpdatedAt,
-                data.projectPath,
+                data.projectPath || pendingCwd,  // Fallback to pending session's cwd
                 data.tokenUsage,
                 data.backend,
                 data.summaryTitle,

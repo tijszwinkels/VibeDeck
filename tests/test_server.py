@@ -1357,6 +1357,100 @@ class TestSessionTreeAPI:
         assert data["home"] == str(Path.home())
 
 
+class TestFileDeleteAPI:
+    """Tests for the /api/file/delete endpoint."""
+
+    def test_delete_file_success(self, home_tmp_path):
+        """Test successful file deletion."""
+        test_file = home_tmp_path / "to_delete.txt"
+        test_file.write_text("delete me")
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": str(test_file)},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["error"] is None
+        assert not test_file.exists()
+
+    def test_delete_empty_directory_success(self, home_tmp_path):
+        """Test successful empty directory deletion."""
+        empty_dir = home_tmp_path / "empty_dir"
+        empty_dir.mkdir()
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": str(empty_dir)},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert not empty_dir.exists()
+
+    def test_delete_non_empty_directory_rejected(self, home_tmp_path):
+        """Test that non-empty directories cannot be deleted."""
+        non_empty_dir = home_tmp_path / "non_empty"
+        non_empty_dir.mkdir()
+        (non_empty_dir / "file.txt").write_text("content")
+
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": str(non_empty_dir)},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "not empty" in data["error"].lower()
+        assert non_empty_dir.exists()
+
+    def test_delete_file_not_found(self, home_tmp_path):
+        """Test deletion of non-existent file."""
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": str(home_tmp_path / "nonexistent.txt")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+    def test_delete_outside_home_rejected(self):
+        """Test that files outside home directory cannot be deleted."""
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": "/etc/passwd"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "home directory" in data["error"].lower()
+
+    def test_delete_path_traversal_blocked(self, home_tmp_path):
+        """Test that path traversal attempts are blocked."""
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/delete",
+            json={"path": str(home_tmp_path / ".." / ".." / "etc" / "passwd")},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "home directory" in data["error"].lower()
+
+
 # Note: SSE endpoint streaming tests are skipped because TestClient
 # doesn't handle SSE event generators well. The endpoint is tested
 # manually and through integration tests.
