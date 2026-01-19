@@ -96,6 +96,10 @@
                             <input type="checkbox" id="preview-view-checkbox" checked>
                             <span class="toggle-label">Rendered</span>
                         </label>
+                        <label class="preview-follow-toggle" id="preview-follow-toggle" style="display: none;" title="Auto-scroll to bottom on new content">
+                            <input type="checkbox" id="preview-follow-checkbox" checked>
+                            <span>Follow</span>
+                        </label>
                         <button class="preview-copy-btn" id="preview-copy-btn" title="Copy file path" style="display: none;">Copy Path</button>
                         <button class="preview-close-btn" id="preview-close-btn" title="Close preview">&times;</button>
                     </div>
@@ -185,7 +189,7 @@
         <button class="scroll-btn" id="prev-user-btn" title="Previous user message">↑</button>
         <label class="auto-scroll-float" id="auto-scroll-float">
             <input type="checkbox" id="auto-scroll-checkbox" checked>
-            <span>Auto</span>
+            <span>Follow</span>
         </label>
         <button class="scroll-btn" id="next-user-btn" title="Next user message">↓</button>
         <button class="scroll-btn scroll-btn-end" id="scroll-bottom-btn" title="Scroll to bottom">⤓</button>

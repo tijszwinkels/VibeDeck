@@ -574,9 +574,9 @@ button:hover .hamburger-icon span {
 .preview-filename { font-weight: 600; font-size: 0.95rem; color: var(--text-color); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .preview-path { font-size: 0.75rem; color: var(--text-muted); font-family: monospace; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .preview-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
-.preview-view-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); cursor: pointer; font-size: 0.8rem; color: var(--text-muted); user-select: none; }
-.preview-view-toggle:hover { border-color: var(--user-border); color: var(--user-border); }
-.preview-view-toggle input[type="checkbox"] { width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: var(--user-border); }
+.preview-view-toggle, .preview-follow-toggle { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); cursor: pointer; font-size: 0.8rem; color: var(--text-muted); user-select: none; }
+.preview-view-toggle:hover, .preview-follow-toggle:hover { border-color: var(--user-border); color: var(--user-border); }
+.preview-view-toggle input[type="checkbox"], .preview-follow-toggle input[type="checkbox"] { width: 14px; height: 14px; margin: 0; cursor: pointer; accent-color: var(--user-border); }
 .preview-view-toggle .toggle-label { font-size: 0.8rem; }
 .preview-copy-btn { padding: 6px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-bg); color: var(--text-muted); font-size: 0.8rem; cursor: pointer; }
 .preview-copy-btn:hover { border-color: var(--user-border); color: var(--user-border); }

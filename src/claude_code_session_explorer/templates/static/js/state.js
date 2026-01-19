@@ -41,6 +41,8 @@ export const dom = {
     previewResizeHandle: null,
     previewViewToggle: null,
     previewViewCheckbox: null,
+    previewFollowToggle: null,
+    previewFollowCheckbox: null,
     floatingControls: null,
     messageInput: null,
     inputStatus: null,
@@ -103,6 +105,8 @@ export function initDom() {
     dom.previewResizeHandle = document.getElementById('preview-resize-handle');
     dom.previewViewToggle = document.getElementById('preview-view-toggle');
     dom.previewViewCheckbox = document.getElementById('preview-view-checkbox');
+    dom.previewFollowToggle = document.getElementById('preview-follow-toggle');
+    dom.previewFollowCheckbox = document.getElementById('preview-follow-checkbox');
     dom.floatingControls = document.getElementById('floating-controls');
     dom.messageInput = document.getElementById('message-input');
     dom.inputStatus = document.getElementById('input-status');
@@ -163,6 +167,7 @@ export const state = {
     previewPaneWidth: parseInt(localStorage.getItem('previewPaneWidth')) || 700,
     previewFilePath: null,
     previewFileData: null,
+    previewFollow: localStorage.getItem('previewFollow') !== 'false',  // Follow mode for file preview
 
     // Settings (with localStorage persistence)
     autoSwitch: localStorage.getItem('autoSwitch') !== 'false',

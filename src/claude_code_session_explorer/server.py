@@ -1641,3 +1641,212 @@ async def check_path_type(path: str) -> PathTypeResponse:
         raise
     except (PermissionError, OSError):
         raise HTTPException(status_code=404)
+
+
+# File watch SSE endpoint for live file updates
+async def _file_watch_generator(
+    file_path: Path, request: Request, follow: bool = True
+) -> AsyncGenerator[dict, None]:
+    """Generate SSE events for file changes using tail-style heuristic.
+
+    Args:
+        file_path: Path to the file to watch.
+        request: The request object to check for disconnection.
+        follow: If True, detect appends and send only new bytes (for tailing logs).
+                If False, always send full file content on any change.
+
+    Events:
+    - initial: Full file content on connect
+    - append: New content appended to file (size increased) - only when follow=True
+    - replace: Full file content (truncation, rewrite, or in-place edit)
+    - error: File deleted, permission denied, etc.
+    """
+    try:
+        # Get initial file state
+        stat = file_path.stat()
+        last_size = stat.st_size
+        last_inode = stat.st_ino
+
+        # Send initial content
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read(MAX_FILE_SIZE)
+
+        # Check for binary content
+        if "\x00" in content[:8192]:
+            yield {
+                "event": "error",
+                "data": json.dumps({"message": "Binary file cannot be displayed"}),
+            }
+            return
+
+        yield {
+            "event": "initial",
+            "data": json.dumps(
+                {
+                    "content": content,
+                    "size": last_size,
+                    "inode": last_inode,
+                    "truncated": last_size > MAX_FILE_SIZE,
+                }
+            ),
+        }
+
+        # Watch for changes with debouncing to batch rapid updates
+        # 100ms debounce prevents overwhelming the client with rapid file changes
+        async for changes in watchfiles.awatch(file_path, debounce=100):
+            # Check if client disconnected
+            if await request.is_disconnected():
+                logger.debug(f"Client disconnected, stopping file watch for {file_path}")
+                return
+
+            try:
+                stat = file_path.stat()
+                new_size = stat.st_size
+                new_inode = stat.st_ino
+
+                # When follow=false, just notify of change - frontend will refetch via /api/file
+                # This allows the existing endpoint to handle markdown rendering, etc.
+                if not follow:
+                    yield {
+                        "event": "changed",
+                        "data": json.dumps({"size": new_size, "inode": new_inode}),
+                    }
+                # When follow=true, use tail-style heuristic for efficient append detection
+                elif new_inode != last_inode:
+                    # File replaced (different inode) - send full content
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read(MAX_FILE_SIZE)
+                    yield {
+                        "event": "replace",
+                        "data": json.dumps(
+                            {
+                                "content": content,
+                                "size": new_size,
+                                "inode": new_inode,
+                                "truncated": new_size > MAX_FILE_SIZE,
+                            }
+                        ),
+                    }
+                elif new_size > last_size:
+                    # File grew - likely append, read only new bytes
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        f.seek(last_size)
+                        new_content = f.read(MAX_FILE_SIZE)
+                    yield {
+                        "event": "append",
+                        "data": json.dumps(
+                            {
+                                "content": new_content,
+                                "offset": last_size,
+                            }
+                        ),
+                    }
+                elif new_size < last_size:
+                    # File truncated - send full content
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read(MAX_FILE_SIZE)
+                    yield {
+                        "event": "replace",
+                        "data": json.dumps(
+                            {
+                                "content": content,
+                                "size": new_size,
+                                "inode": new_inode,
+                                "truncated": new_size > MAX_FILE_SIZE,
+                            }
+                        ),
+                    }
+                else:
+                    # Same size but modified - in-place edit, send full content
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read(MAX_FILE_SIZE)
+                    yield {
+                        "event": "replace",
+                        "data": json.dumps(
+                            {
+                                "content": content,
+                                "size": new_size,
+                                "inode": new_inode,
+                                "truncated": new_size > MAX_FILE_SIZE,
+                            }
+                        ),
+                    }
+
+                last_size = new_size
+                last_inode = new_inode
+
+            except FileNotFoundError:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": "File was deleted"}),
+                }
+                return
+            except PermissionError:
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"message": "Permission denied"}),
+                }
+                return
+
+    except FileNotFoundError:
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": "File not found"}),
+        }
+    except PermissionError:
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": "Permission denied"}),
+        }
+    except Exception as e:
+        logger.error(f"Error in file watch for {file_path}: {e}")
+        yield {
+            "event": "error",
+            "data": json.dumps({"message": f"Error: {e}"}),
+        }
+
+
+@app.get("/api/file/watch")
+async def watch_file(path: str, request: Request, follow: bool = True) -> EventSourceResponse:
+    """SSE endpoint for live file updates.
+
+    Uses tail-style heuristic to efficiently detect appends vs full rewrites:
+    - Tracks file size and inode
+    - If size increases and follow=True: assume append, send only new bytes
+    - If size decreases or inode changes: send full content
+    - If follow=False: always send full content on any change
+
+    Args:
+        path: Absolute path to the file to watch.
+        follow: If True (default), detect appends and send only new bytes.
+                If False, always send full file content on any change.
+
+    Returns:
+        EventSourceResponse streaming file changes.
+
+    Events:
+        - initial: {content, size, inode, truncated} - Full file on connect
+        - append: {content, offset} - New content (file grew, only when follow=True)
+        - replace: {content, size, inode, truncated} - Full content (truncation/rewrite)
+        - error: {message} - File deleted, permission denied, etc.
+    """
+    file_path = Path(path)
+
+    # Security: Restrict to user's home directory
+    home_dir = Path.home()
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(home_dir)
+    except ValueError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: path must be within home directory ({home_dir})",
+        )
+
+    # Validate path exists and is a file
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+
+    return EventSourceResponse(_file_watch_generator(file_path, request, follow=follow))
