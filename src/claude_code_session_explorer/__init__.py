@@ -106,10 +106,10 @@ def main() -> None:
     help="Include subagent sessions in the session list",
 )
 @click.option(
-    "--disable-thinking",
+    "--enable-thinking",
     is_flag=True,
     hidden=True,
-    help="Disable thinking level detection (don't set MAX_THINKING_TOKENS)",
+    help="Enable thinking level detection (set MAX_THINKING_TOKENS based on keywords)",
 )
 @click.option(
     "--summary-log",
@@ -163,7 +163,7 @@ def serve(
     fork: bool,
     default_send_backend: str | None,
     include_subagents: bool,
-    disable_thinking: bool,
+    enable_thinking: bool,
     summary_log: Path | None,
     summarize_after_idle_for: int | None,
     idle_summary_model: str,
@@ -237,7 +237,7 @@ def serve(
     server.set_skip_permissions(dangerously_skip_permissions)
     server.set_fork_enabled(fork)
     server.set_include_subagents(include_subagents)
-    server.set_disable_thinking(disable_thinking)
+    server.set_enable_thinking(enable_thinking)
     if default_send_backend:
         server.set_default_send_backend(default_send_backend)
 

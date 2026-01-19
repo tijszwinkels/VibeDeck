@@ -37,7 +37,7 @@ class ServeConfig:
     dangerously_skip_permissions: bool = False
     fork: bool = False
     default_send_backend: str | None = None
-    disable_thinking: bool = False
+    enable_thinking: bool = False
     # Summary options
     summary_log: str | None = None  # Path to JSONL log file
     summarize_after_idle_for: int | None = None  # Seconds of idle before re-summarizing
@@ -132,7 +132,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dangerously_skip_permissions": False,
         "fork": False,
         "default_send_backend": None,
-        "disable_thinking": False,
+        "enable_thinking": False,
         "summary_log": None,
         "summarize_after_idle_for": None,
         "idle_summary_model": "haiku",

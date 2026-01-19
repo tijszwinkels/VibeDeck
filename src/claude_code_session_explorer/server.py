@@ -47,7 +47,7 @@ _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
 _default_send_backend: str | None = None  # Enable with --default-send-backend CLI flag
 _include_subagents = False  # Enable with --include-subagents CLI flag
-_disable_thinking = False  # Enable with --disable-thinking CLI flag
+_enable_thinking = False  # Enable with --enable-thinking CLI flag
 
 # Global state for server (not session-related)
 _clients: set[asyncio.Queue] = set()
@@ -112,10 +112,10 @@ def get_include_subagents() -> bool:
     return _include_subagents
 
 
-def set_disable_thinking(disabled: bool) -> None:
-    """Set whether to disable thinking level detection."""
-    global _disable_thinking
-    _disable_thinking = disabled
+def set_enable_thinking(enabled: bool) -> None:
+    """Set whether to enable thinking level detection."""
+    global _enable_thinking
+    _enable_thinking = enabled
 
 
 def is_send_enabled() -> bool:
@@ -606,11 +606,8 @@ async def run_cli_for_session(
             else None
         )
 
-        # Get thinking token budget based on message keywords (unless disabled)
-        if _disable_thinking:
-            env = os.environ.copy()
-            logger.info(f"Sending message to {session_id} with thinking disabled")
-        else:
+        # Get thinking token budget based on message keywords (if enabled)
+        if _enable_thinking:
             thinking_level = detect_thinking_level(message)
             thinking_env = {"MAX_THINKING_TOKENS": str(thinking_level.budget_tokens)}
             env = {**os.environ, **thinking_env}
@@ -618,6 +615,9 @@ async def run_cli_for_session(
                 f"Sending message to {session_id} with thinking level "
                 f"'{thinking_level.name}' ({thinking_level.budget_tokens} tokens)"
             )
+        else:
+            env = os.environ.copy()
+            logger.info(f"Sending message to {session_id} (thinking disabled by default)")
 
         # Track start time for long-running session detection
         start_time = time.monotonic()

@@ -30,7 +30,7 @@
 # dangerously_skip_permissions = false  # Skip Claude permission prompts
 # fork = false                   # Enable session forking
 # default_send_backend = "claude-code"  # Default backend for new sessions
-# disable_thinking = false       # Disable thinking level detection
+# enable_thinking = false        # Enable thinking level detection (off by default)
 
 [html]
 # output = "/path/to/output"     # Default output directory
