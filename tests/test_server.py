@@ -1451,6 +1451,169 @@ class TestFileDeleteAPI:
         assert "home directory" in data["error"].lower()
 
 
+class TestFileDownloadEndpoint:
+    """Tests for file download endpoint."""
+
+    def test_download_file_success(self, home_tmp_path):
+        """Test downloading a file."""
+        test_file = home_tmp_path / "download_test.txt"
+        test_file.write_text("Test content for download")
+
+        client = TestClient(app)
+        response = client.get(f"/api/file/download?path={test_file}")
+
+        assert response.status_code == 200
+        assert response.content == b"Test content for download"
+        assert "attachment" in response.headers.get("content-disposition", "")
+        assert "download_test.txt" in response.headers.get("content-disposition", "")
+
+    def test_download_binary_file(self, home_tmp_path):
+        """Test downloading a binary file."""
+        test_file = home_tmp_path / "test.bin"
+        test_file.write_bytes(bytes([0, 1, 2, 3, 255]))
+
+        client = TestClient(app)
+        response = client.get(f"/api/file/download?path={test_file}")
+
+        assert response.status_code == 200
+        assert response.content == bytes([0, 1, 2, 3, 255])
+
+    def test_download_nonexistent_file(self, home_tmp_path):
+        """Test that downloading a nonexistent file returns 404."""
+        client = TestClient(app)
+        response = client.get(f"/api/file/download?path={home_tmp_path}/nonexistent.txt")
+
+        assert response.status_code == 404
+
+    def test_download_directory_fails(self, home_tmp_path):
+        """Test that downloading a directory fails."""
+        client = TestClient(app)
+        response = client.get(f"/api/file/download?path={home_tmp_path}")
+
+        assert response.status_code == 400
+
+    def test_download_path_traversal_blocked(self, home_tmp_path):
+        """Test that path traversal attempts are blocked."""
+        client = TestClient(app)
+        response = client.get(
+            f"/api/file/download?path={home_tmp_path}/../../../etc/passwd"
+        )
+
+        assert response.status_code == 403
+
+
+class TestFileUploadEndpoint:
+    """Tests for file upload endpoint."""
+
+    def test_upload_file_success(self, home_tmp_path):
+        """Test uploading a file."""
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={home_tmp_path}&filename=uploaded.txt",
+            content=b"Uploaded content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["path"] == str(home_tmp_path / "uploaded.txt")
+
+        # Verify file was actually created
+        uploaded = home_tmp_path / "uploaded.txt"
+        assert uploaded.exists()
+        assert uploaded.read_text() == "Uploaded content"
+
+    def test_upload_binary_file(self, home_tmp_path):
+        """Test uploading a binary file."""
+        binary_content = bytes([0, 1, 2, 255, 128])
+
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={home_tmp_path}&filename=test.bin",
+            content=binary_content,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+        uploaded = home_tmp_path / "test.bin"
+        assert uploaded.read_bytes() == binary_content
+
+    def test_upload_to_nonexistent_directory(self, home_tmp_path):
+        """Test uploading to nonexistent directory."""
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={home_tmp_path}/nonexistent&filename=test.txt",
+            content=b"content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+    def test_upload_to_file_path(self, home_tmp_path):
+        """Test uploading to a file path (not directory)."""
+        file_path = home_tmp_path / "existing.txt"
+        file_path.write_text("existing")
+
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={file_path}&filename=test.txt",
+            content=b"content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "not a directory" in data["error"].lower()
+
+    def test_upload_path_traversal_in_filename(self, home_tmp_path):
+        """Test that path traversal in filename is sanitized."""
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={home_tmp_path}&filename=../../../etc/evil.txt",
+            content=b"malicious content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        # Should sanitize to just "evil.txt" in the target directory
+        assert data["success"] is True
+        assert "evil.txt" in data["path"]
+        assert home_tmp_path.as_posix() in data["path"]
+
+    def test_upload_path_traversal_in_directory(self, home_tmp_path):
+        """Test that path traversal in directory is blocked."""
+        client = TestClient(app)
+        response = client.post(
+            "/api/file/upload?directory=/etc&filename=test.txt",
+            content=b"content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert "home directory" in data["error"].lower()
+
+    def test_upload_overwrites_existing_file(self, home_tmp_path):
+        """Test that uploading overwrites an existing file."""
+        existing = home_tmp_path / "existing.txt"
+        existing.write_text("old content")
+
+        client = TestClient(app)
+        response = client.post(
+            f"/api/file/upload?directory={home_tmp_path}&filename=existing.txt",
+            content=b"new content",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert existing.read_text() == "new content"
+
+
 # Note: SSE endpoint streaming tests are skipped because TestClient
 # doesn't handle SSE event generators well. The endpoint is tested
 # manually and through integration tests.

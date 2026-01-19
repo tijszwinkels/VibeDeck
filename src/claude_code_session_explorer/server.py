@@ -1787,6 +1787,138 @@ async def delete_file(request: DeleteFileRequest) -> DeleteFileResponse:
         return DeleteFileResponse(success=False, error=str(e))
 
 
+@app.get("/api/file/download")
+async def download_file(path: str) -> Response:
+    """Download a file with proper Content-Disposition header.
+
+    Args:
+        path: Absolute path to the file to download.
+
+    Returns:
+        File bytes with Content-Disposition attachment header.
+
+    Raises:
+        HTTPException: 404 if file not found, 403 if permission denied.
+    """
+    file_path = Path(path)
+
+    # Security: Restrict to user's home directory to prevent path traversal
+    home_dir = Path.home()
+    try:
+        resolved_path = file_path.resolve()
+        resolved_path.relative_to(home_dir)
+    except ValueError:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: path must be within home directory ({home_dir})",
+        )
+
+    # Validate path exists
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+
+    # Ensure it's a file, not directory
+    if not file_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+
+    try:
+        with open(file_path, "rb") as f:
+            content = f.read()
+
+        # Determine content type from extension
+        extension = file_path.suffix.lower()
+        content_type = IMAGE_EXTENSIONS.get(extension, "application/octet-stream")
+
+        # Use filename for Content-Disposition
+        filename = file_path.name
+
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
+    except Exception as e:
+        logger.error(f"Error downloading file {path}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error downloading file: {e}")
+
+
+class UploadFileResponse(BaseModel):
+    """Response for file upload."""
+
+    success: bool
+    path: str | None = None
+    error: str | None = None
+
+
+@app.post("/api/file/upload")
+async def upload_file(
+    request: Request, directory: str, filename: str
+) -> UploadFileResponse:
+    """Upload a file to a directory.
+
+    Args:
+        request: The request with file content in body.
+        directory: Target directory path.
+        filename: Name for the uploaded file.
+
+    Returns:
+        UploadFileResponse indicating success or failure.
+    """
+    dir_path = Path(directory)
+
+    # Security: Restrict to user's home directory
+    home_dir = Path.home()
+    try:
+        resolved_dir = dir_path.resolve()
+        resolved_dir.relative_to(home_dir)
+    except ValueError:
+        return UploadFileResponse(
+            success=False,
+            error=f"Access denied: directory must be within home directory ({home_dir})",
+        )
+
+    # Validate directory exists
+    if not dir_path.exists():
+        return UploadFileResponse(
+            success=False, error=f"Directory not found: {directory}"
+        )
+
+    if not dir_path.is_dir():
+        return UploadFileResponse(
+            success=False, error=f"Not a directory: {directory}"
+        )
+
+    # Sanitize filename (prevent path traversal in filename)
+    safe_filename = Path(filename).name
+    if not safe_filename or safe_filename in (".", ".."):
+        return UploadFileResponse(success=False, error="Invalid filename")
+
+    target_path = dir_path / safe_filename
+
+    try:
+        # Read file content from request body
+        content = await request.body()
+
+        # Write file
+        with open(target_path, "wb") as f:
+            f.write(content)
+
+        logger.info(f"Uploaded file: {target_path}")
+        return UploadFileResponse(success=True, path=str(target_path))
+
+    except PermissionError:
+        return UploadFileResponse(
+            success=False, error=f"Permission denied: {target_path}"
+        )
+    except Exception as e:
+        logger.error(f"Error uploading file to {target_path}: {e}")
+        return UploadFileResponse(success=False, error=str(e))
+
+
 class PathTypeResponse(BaseModel):
     """Response for path type check."""
 

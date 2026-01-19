@@ -357,7 +357,53 @@ export function initMessaging() {
         }
     });
 
+    // Handle file path drops from file browser
+    dom.messageInput.addEventListener('dragover', function(e) {
+        // Accept file paths from internal drag
+        if (e.dataTransfer.types.includes('application/x-file-path') ||
+            e.dataTransfer.types.includes('text/plain')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            dom.messageInput.classList.add('drop-target');
+        }
+    });
+
+    dom.messageInput.addEventListener('dragleave', function(e) {
+        dom.messageInput.classList.remove('drop-target');
+    });
+
+    dom.messageInput.addEventListener('drop', function(e) {
+        dom.messageInput.classList.remove('drop-target');
+
+        // Check for internal file path drag
+        const filePath = e.dataTransfer.getData('application/x-file-path');
+        if (filePath) {
+            e.preventDefault();
+            insertTextAtCursor(dom.messageInput, filePath);
+            autoResizeTextarea();
+            updateInputBarUI();
+        }
+    });
+
     dom.sendBtn.addEventListener('click', sendMessage);
     dom.forkBtn.addEventListener('click', forkMessage);
     dom.interruptBtn.addEventListener('click', interruptSession);
+}
+
+function insertTextAtCursor(textarea, text) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const before = textarea.value.substring(0, start);
+    const after = textarea.value.substring(end);
+
+    // Add space before if needed and not at start
+    const needsSpaceBefore = start > 0 && before.charAt(before.length - 1) !== ' ' && before.charAt(before.length - 1) !== '\n';
+    // Add space after if needed and not at end
+    const needsSpaceAfter = after.length > 0 && after.charAt(0) !== ' ' && after.charAt(0) !== '\n';
+
+    const textToInsert = (needsSpaceBefore ? ' ' : '') + text + (needsSpaceAfter ? ' ' : '');
+
+    textarea.value = before + textToInsert + after;
+    textarea.selectionStart = textarea.selectionEnd = start + textToInsert.length;
+    textarea.focus();
 }

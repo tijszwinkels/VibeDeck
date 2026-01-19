@@ -47,6 +47,9 @@ export function initFileTree() {
 
     // Initialize context menu
     initContextMenu();
+
+    // Initialize drag-and-drop upload for file tree
+    initFileTreeDropZone();
 }
 
 // Context menu for file/folder right-click actions
@@ -59,6 +62,8 @@ function initContextMenu() {
     contextMenu.innerHTML = `
         <button class="context-menu-item" data-action="copy-relative">Copy relative path</button>
         <button class="context-menu-item" data-action="copy-full">Copy full path</button>
+        <hr class="context-menu-divider">
+        <button class="context-menu-item" data-action="download">Download</button>
         <hr class="context-menu-divider">
         <button class="context-menu-item context-menu-item-danger" data-action="delete">Delete</button>
     `;
@@ -78,13 +83,20 @@ function initContextMenu() {
     });
 }
 
-function showContextMenu(e, itemPath) {
+function showContextMenu(e, itemPath, itemType = 'file') {
     e.preventDefault();
 
     if (!contextMenu) return;
 
-    // Store the path for the menu action
+    // Store the path and type for the menu action
     contextMenu.dataset.itemPath = itemPath;
+    contextMenu.dataset.itemType = itemType;
+
+    // Show/hide download button based on type (only for files)
+    const downloadBtn = contextMenu.querySelector('[data-action="download"]');
+    if (downloadBtn) {
+        downloadBtn.style.display = itemType === 'directory' ? 'none' : 'block';
+    }
 
     // Position the menu at cursor
     contextMenu.style.display = 'block';
@@ -110,6 +122,7 @@ function hideContextMenu() {
 function handleContextMenuClick(e) {
     const action = e.target.dataset.action;
     const itemPath = contextMenu.dataset.itemPath;
+    const itemType = contextMenu.dataset.itemType;
 
     if (!action || !itemPath) return;
 
@@ -117,11 +130,120 @@ function handleContextMenuClick(e) {
         copyRelativePath(itemPath);
     } else if (action === 'copy-full') {
         copyFullPath(itemPath);
+    } else if (action === 'download') {
+        downloadFile(itemPath);
     } else if (action === 'delete') {
         deleteFile(itemPath);
     }
 
     hideContextMenu();
+}
+
+function downloadFile(filePath) {
+    // Create a hidden anchor element to trigger download
+    const downloadUrl = `/api/file/download?path=${encodeURIComponent(filePath)}`;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filePath.split('/').pop(); // Suggest filename
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function initFileTreeDropZone() {
+    if (!dom.fileTreeContent) return;
+
+    // Prevent default drag behaviors on the file tree content
+    dom.fileTreeContent.addEventListener('dragover', handleDragOver);
+    dom.fileTreeContent.addEventListener('dragenter', handleDragEnter);
+    dom.fileTreeContent.addEventListener('dragleave', handleDragLeave);
+    dom.fileTreeContent.addEventListener('drop', handleFileDrop);
+}
+
+function handleDragOver(e) {
+    // Check if this is an external file drag (not internal file path drag)
+    if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    }
+}
+
+function handleDragEnter(e) {
+    if (e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        dom.fileTreeContent.classList.add('drag-over');
+    }
+}
+
+function handleDragLeave(e) {
+    // Only remove class if we're actually leaving the container
+    if (!dom.fileTreeContent.contains(e.relatedTarget)) {
+        dom.fileTreeContent.classList.remove('drag-over');
+    }
+}
+
+async function handleFileDrop(e) {
+    e.preventDefault();
+    dom.fileTreeContent.classList.remove('drag-over');
+
+    // Ignore internal file path drags
+    if (e.dataTransfer.getData('application/x-file-path')) {
+        return;
+    }
+
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+
+    // Get target directory - use current path
+    const targetDir = currentPath;
+    if (!targetDir) {
+        showFlashMessage('No target directory selected', 'error');
+        return;
+    }
+
+    // Upload each file
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const file of files) {
+        try {
+            const result = await uploadFile(file, targetDir);
+            if (result.success) {
+                successCount++;
+            } else {
+                errorCount++;
+                console.error(`Upload failed for ${file.name}:`, result.error);
+            }
+        } catch (err) {
+            errorCount++;
+            console.error(`Upload failed for ${file.name}:`, err);
+        }
+    }
+
+    // Show result
+    if (successCount > 0 && errorCount === 0) {
+        showFlashMessage(`Uploaded ${successCount} file${successCount > 1 ? 's' : ''}`, 'success');
+    } else if (errorCount > 0 && successCount > 0) {
+        showFlashMessage(`Uploaded ${successCount}, failed ${errorCount}`, 'warning');
+    } else if (errorCount > 0) {
+        showFlashMessage(`Upload failed for ${errorCount} file${errorCount > 1 ? 's' : ''}`, 'error');
+    }
+
+    // Refresh the file tree to show new files
+    if (successCount > 0 && currentSessionId) {
+        loadFileTree(currentSessionId, currentPath);
+    }
+}
+
+async function uploadFile(file, targetDir) {
+    const url = `/api/file/upload?directory=${encodeURIComponent(targetDir)}&filename=${encodeURIComponent(file.name)}`;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        body: file,
+    });
+
+    return await response.json();
 }
 
 function copyRelativePath(fullPath) {
@@ -393,8 +515,18 @@ function createBrowserItem(item) {
 
     // Right-click context menu for all items
     div.addEventListener('contextmenu', (e) => {
-        showContextMenu(e, item.path);
+        showContextMenu(e, item.path, item.type);
     });
+
+    // Make files draggable for inserting path into chat
+    if (item.type !== 'directory') {
+        div.setAttribute('draggable', 'true');
+        div.addEventListener('dragstart', (e) => {
+            e.dataTransfer.setData('text/plain', item.path);
+            e.dataTransfer.setData('application/x-file-path', item.path);
+            e.dataTransfer.effectAllowed = 'copy';
+        });
+    }
 
     if (item.type === 'directory') {
         // Single Click -> Navigate
