@@ -77,7 +77,12 @@ export const dom = {
     modalBackend: null,
     modalModelField: null,
     modalModel: null,
-    modalModelSearch: null
+    modalModelSearch: null,
+    // Permission modal elements
+    permissionModal: null,
+    permissionDenialsList: null,
+    permissionGrantBtn: null,
+    permissionRejectBtn: null
 };
 
 // Initialize DOM elements
@@ -148,6 +153,11 @@ export function initDom() {
     dom.modalModelField = document.getElementById('modal-model-field');
     dom.modalModel = document.getElementById('modal-model');
     dom.modalModelSearch = document.getElementById('modal-model-search');
+    // Permission modal elements
+    dom.permissionModal = document.getElementById('permission-modal');
+    dom.permissionDenialsList = document.getElementById('permission-denials-list');
+    dom.permissionGrantBtn = document.getElementById('permission-grant-btn');
+    dom.permissionRejectBtn = document.getElementById('permission-reject-btn');
 }
 
 // Application state
@@ -203,6 +213,9 @@ export const state = {
     availableBackends: [],
     cachedModels: {},  // backend_name -> [models]
     allModelsForFilter: [],
+
+    // Permission modal state
+    pendingPermission: null,  // {session_id, denials, original_message}
 
     // Resize state
     isSidebarResizing: false,

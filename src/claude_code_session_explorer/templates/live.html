@@ -194,6 +194,21 @@
         </form>
     </dialog>
 
+    <!-- Permission Modal -->
+    <dialog id="permission-modal" class="permission-modal">
+        <div class="modal-header">
+            <h2>Permission Required</h2>
+        </div>
+        <div class="permission-content">
+            <p class="permission-intro">Claude wants to perform the following operations:</p>
+            <div id="permission-denials-list" class="denials-list"></div>
+        </div>
+        <div class="modal-buttons">
+            <button type="button" class="modal-btn modal-btn-reject" id="permission-reject-btn">Reject</button>
+            <button type="button" class="modal-btn modal-btn-grant" id="permission-grant-btn">Grant</button>
+        </div>
+    </dialog>
+
     <!-- Floating controls -->
     <div class="floating-controls" id="floating-controls">
         <button class="scroll-btn scroll-btn-end" id="scroll-top-btn" title="Scroll to top">⤒</button>

@@ -133,6 +133,12 @@ async function startPendingSession(pendingSession, message) {
     dom.inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
     dom.inputStatus.className = 'input-status running';
 
+    // Mark the pending session as starting BEFORE the fetch call
+    // This ensures session_added SSE events can find and merge with it
+    // even if the server takes time to respond
+    pendingSession.starting = true;
+    pendingSession.startedAt = Date.now();
+
     try {
         const backend = getBackendForNewSession(pendingSession);
         const modelIndex = pendingSession.selectedModelIndex;
@@ -154,18 +160,33 @@ async function startPendingSession(pendingSession, message) {
             body: JSON.stringify(requestBody)
         });
 
+        const data = await response.json();
+
         if (response.ok) {
-            dom.messageInput.value = '';
-            autoResizeTextarea();
-            pendingSession.starting = true;
-            pendingSession.startedAt = Date.now();
+            if (data.status === 'permission_denied') {
+                // Handle permission denial for new session
+                // Reset starting flag since we need user input first
+                pendingSession.starting = false;
+                // Import and show permission modal with special handling for new sessions
+                const { showPermissionModalForNewSession } = await import('./permissions.js');
+                showPermissionModalForNewSession(data);
+                dom.inputStatus.textContent = '';
+                dom.inputStatus.className = 'input-status';
+            } else {
+                dom.messageInput.value = '';
+                autoResizeTextarea();
+                // starting flag already set above
+            }
         } else {
-            const data = await response.json();
+            // Reset starting flag on error
+            pendingSession.starting = false;
             alert('Error: ' + (data.detail || 'Failed to start session'));
             dom.inputStatus.textContent = '';
             dom.inputStatus.className = 'input-status';
         }
     } catch (e) {
+        // Reset starting flag on error
+        pendingSession.starting = false;
         alert('Error: Failed to start session');
         console.error('New session error:', e);
         dom.inputStatus.textContent = '';

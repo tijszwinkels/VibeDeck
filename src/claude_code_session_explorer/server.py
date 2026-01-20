@@ -65,6 +65,9 @@ _summary_after_long_running: int | None = None  # Summarize if CLI runs longer t
 # When a new session is started, we store the process here until the session file appears
 _pending_new_session_processes: dict[str, asyncio.subprocess.Process] = {}
 
+# Allowed directories for sandbox access (dynamically added via API)
+_allowed_directories: set[str] = set()
+
 # Backend and rendering
 _backend: CodingToolBackend | None = None
 _css: str | None = None
@@ -128,6 +131,73 @@ def set_thinking_budget(budget: int | None) -> None:
 def is_send_enabled() -> bool:
     """Check if sending messages is enabled."""
     return _send_enabled
+
+
+def _get_allowed_dirs_path() -> Path:
+    """Get the path to the allowed directories config file."""
+    config_dir = Path.home() / ".config" / "claude-code-session-explorer"
+    return config_dir / "allowed-dirs.json"
+
+
+def _load_allowed_directories() -> set[str]:
+    """Load allowed directories from config file."""
+    config_path = _get_allowed_dirs_path()
+    if not config_path.exists():
+        return set()
+    try:
+        with open(config_path, "r") as f:
+            data = json.load(f)
+            return set(data.get("directories", []))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to load allowed directories: {e}")
+        return set()
+
+
+def _save_allowed_directories(directories: set[str]) -> bool:
+    """Save allowed directories to config file."""
+    config_path = _get_allowed_dirs_path()
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({"directories": sorted(directories)}, f, indent=2)
+        return True
+    except OSError as e:
+        logger.error(f"Failed to save allowed directories: {e}")
+        return False
+
+
+def add_allowed_directory(directory: str) -> None:
+    """Add a directory to the allowed directories for sandbox access.
+
+    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    """
+    _allowed_directories.add(directory)
+    _save_allowed_directories(_allowed_directories)
+
+
+def remove_allowed_directory(directory: str) -> None:
+    """Remove a directory from the allowed directories.
+
+    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    """
+    _allowed_directories.discard(directory)
+    _save_allowed_directories(_allowed_directories)
+
+
+def get_allowed_directories() -> list[str]:
+    """Get the list of allowed directories for sandbox access."""
+    return list(_allowed_directories)
+
+
+def load_allowed_directories_from_config() -> None:
+    """Load allowed directories from config file into memory.
+
+    Should be called on server startup.
+    """
+    global _allowed_directories
+    _allowed_directories = _load_allowed_directories()
+    if _allowed_directories:
+        logger.info(f"Loaded {len(_allowed_directories)} allowed directories from config")
 
 
 def configure_summarization(
@@ -333,6 +403,13 @@ class SendMessageRequest(BaseModel):
     message: str
 
 
+class GrantPermissionRequest(BaseModel):
+    """Request body for granting permissions and re-sending a message."""
+
+    permissions: list[str]  # e.g., ["Bash(npm test:*)", "Read"]
+    original_message: str  # Message to re-send after granting
+
+
 class FileResponse(BaseModel):
     """Response for file preview endpoint."""
 
@@ -500,6 +577,26 @@ async def broadcast_session_status(session_id: str) -> None:
     )
 
 
+async def broadcast_permission_denied(
+    session_id: str, denials: list[dict], original_message: str
+) -> None:
+    """Broadcast permission denial event to clients.
+
+    Args:
+        session_id: The session where permission was denied
+        denials: List of permission denial dicts from CLI output
+        original_message: The original message that triggered the denial
+    """
+    await broadcast_event(
+        "permission_denied",
+        {
+            "session_id": session_id,
+            "denials": denials,
+            "original_message": original_message,
+        },
+    )
+
+
 async def _monitor_attached_process(info: SessionInfo) -> None:
     """Monitor an attached process and clean up when it exits.
 
@@ -586,6 +683,8 @@ async def run_cli_for_session(
         message: The message to send
         fork: If True, fork the session to create a new one with conversation history
     """
+    from .permissions import parse_permission_denials
+
     info = get_session(session_id)
     if info is None:
         logger.error(f"Session not found: {session_id}")
@@ -594,18 +693,29 @@ async def run_cli_for_session(
     # Get the specific backend for this session
     backend = get_backend_for_session(info.path)
 
+    # Determine if we should use permission detection
+    # Only for backends that support it and when not using skip_permissions
+    use_permission_detection = (
+        not _skip_permissions
+        and hasattr(backend, "supports_permission_detection")
+        and backend.supports_permission_detection()
+    )
+
     try:
         # Ensure session is indexed (backend-specific)
         backend.ensure_session_indexed(session_id)
 
         # Build command using session-specific backend
+        output_format = "stream-json" if use_permission_detection else None
+        add_dirs = get_allowed_directories() or None
+
         if fork:
             cmd_args = backend.build_fork_command(
-                session_id, message, _skip_permissions
+                session_id, message, _skip_permissions, output_format, add_dirs
             )
         else:
             cmd_args = backend.build_send_command(
-                session_id, message, _skip_permissions
+                session_id, message, _skip_permissions, output_format, add_dirs
             )
 
         # Determine working directory from session info
@@ -641,12 +751,15 @@ async def run_cli_for_session(
         start_time = time.monotonic()
         duration = 0.0  # Initialize in case of early exception
 
+        # Capture stdout if using permission detection
+        stdout_pipe = asyncio.subprocess.PIPE if use_permission_detection else asyncio.subprocess.DEVNULL
+
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
             env=env,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=stdout_pipe,
             stderr=asyncio.subprocess.PIPE,
         )
 
@@ -657,11 +770,26 @@ async def run_cli_for_session(
             await broadcast_session_status(session_id)
 
         # Wait for completion
-        _, stderr = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         duration = time.monotonic() - start_time
 
         if proc.returncode != 0:
             logger.error(f"CLI process failed for {session_id}: {stderr.decode()}")
+
+        # Check for permission denials if using permission detection
+        if use_permission_detection and stdout:
+            denials = parse_permission_denials(stdout.decode())
+            if denials:
+                logger.info(
+                    f"Permission denials detected for {session_id}: "
+                    f"{[d['tool_name'] for d in denials]}"
+                )
+                await broadcast_permission_denied(session_id, denials, message)
+                # Don't process queue or summarize - wait for user decision
+                if not fork:
+                    info.process = None
+                    await broadcast_session_status(session_id)
+                return
 
     except Exception as e:
         logger.error(f"Error running CLI for {session_id}: {e}")
@@ -886,6 +1014,9 @@ async def lifespan(app: FastAPI):
     global _watch_task
 
     backend = get_server_backend()
+
+    # Load allowed directories from config file
+    load_allowed_directories_from_config()
 
     # Startup: find recent sessions
     recent = backend.find_recent_sessions(
@@ -1258,6 +1389,219 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
     return {"status": "forking", "session_id": session_id}
 
 
+@app.post("/sessions/{session_id}/grant-permission")
+async def grant_permission(
+    session_id: str, request: GrantPermissionRequest
+) -> dict:
+    """Grant permissions and re-send the original message.
+
+    This endpoint is called when the user grants permissions after a
+    permission denial. It writes the permissions to the project's
+    .claude/settings.json file and re-sends the original message.
+    """
+    from .permissions import update_permissions_file
+
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    info = get_session(session_id)
+    if info is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Get the specific backend for this session
+    backend = get_backend_for_session(info.path)
+
+    # Check if backend supports permission detection (and thus settings.json)
+    if not (
+        hasattr(backend, "supports_permission_detection")
+        and backend.supports_permission_detection()
+    ):
+        raise HTTPException(
+            status_code=501,
+            detail="This backend does not support permission management.",
+        )
+
+    if not request.original_message.strip():
+        raise HTTPException(status_code=400, detail="Original message cannot be empty")
+
+    # Write permissions to project's .claude/settings.json (if any)
+    if request.permissions:
+        if not info.project_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot grant permissions: session has no project path",
+            )
+
+        settings_path = Path(info.project_path) / ".claude" / "settings.json"
+
+        try:
+            update_permissions_file(settings_path, request.permissions)
+            logger.info(
+                f"Granted permissions for {session_id}: {request.permissions} "
+                f"(wrote to {settings_path})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to write permissions for {session_id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to write permissions file: {e}",
+            )
+
+    # Re-send the original message (with any newly allowed directories via --add-dir)
+    asyncio.create_task(run_cli_for_session(session_id, request.original_message.strip()))
+
+    return {
+        "status": "granted",
+        "session_id": session_id,
+        "permissions": request.permissions,
+    }
+
+
+class GrantPermissionNewSessionRequest(BaseModel):
+    """Request body for granting permissions and retrying a new session."""
+
+    permissions: list[str]  # e.g., ["Bash(npm test:*)", "Read"]
+    original_message: str  # Message to re-send after granting
+    cwd: str | None = None  # Working directory for the new session
+    backend: str | None = None  # Backend to use
+    model_index: int | None = None  # Model index for backends that support it
+
+
+@app.post("/sessions/grant-permission-new")
+async def grant_permission_new_session(request: GrantPermissionNewSessionRequest) -> dict:
+    """Grant permissions and resume the session that was created.
+
+    This endpoint is called when permission is denied during new session creation.
+    It writes permissions to the project's .claude/settings.json and then sends
+    the message to the session that was already created (not creating a new one).
+    """
+    from .permissions import update_permissions_file
+
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    if not request.original_message.strip():
+        raise HTTPException(status_code=400, detail="Original message cannot be empty")
+
+    # Determine working directory
+    cwd: Path | None = None
+    if request.cwd:
+        cwd = Path(request.cwd).expanduser()
+        if not cwd.is_dir():
+            raise HTTPException(status_code=400, detail="Invalid working directory")
+
+    if not cwd:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot grant permissions: no working directory specified",
+        )
+
+    # Write permissions to project's .claude/settings.json (if any)
+    # For sandbox-only denials, permissions may be empty - that's OK,
+    # we just retry with the newly allowed directories via --add-dir
+    if request.permissions:
+        settings_path = cwd / ".claude" / "settings.json"
+
+        try:
+            update_permissions_file(settings_path, request.permissions)
+            logger.info(f"Granted permissions for new session: {request.permissions} (wrote to {settings_path})")
+        except Exception as e:
+            logger.error(f"Failed to write permissions for new session: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to write permissions file: {e}",
+            )
+
+    # Find the session that was just created for this cwd
+    # The initial create_new_session call already started a session that hit permission denial
+    # We need to find that session and send the message to it instead of creating a new one
+    cwd_str = str(cwd.resolve())
+    matching_session = None
+
+    async with get_sessions_lock():
+        # Find most recently modified session matching this project path
+        sessions = get_sessions()
+        for session_id, info in sessions.items():
+            if info.project_path and str(Path(info.project_path).resolve()) == cwd_str:
+                if matching_session is None or (
+                    info.path.exists()
+                    and (not matching_session.path.exists()
+                         or info.path.stat().st_mtime > matching_session.path.stat().st_mtime)
+                ):
+                    matching_session = info
+
+    if matching_session:
+        logger.info(f"Found existing session {matching_session.session_id} for cwd {cwd_str}, sending message there")
+        # Send to the existing session instead of creating a new one
+        send_request = SendMessageRequest(message=request.original_message.strip())
+        return await send_message(matching_session.session_id, send_request)
+    else:
+        # No existing session found - this shouldn't happen normally, but fall back to creating new
+        logger.warning(f"No existing session found for cwd {cwd_str}, creating new session")
+        new_session_request = NewSessionRequest(
+            message=request.original_message.strip(),
+            cwd=str(cwd) if cwd else None,
+            backend=request.backend,
+            model_index=request.model_index,
+        )
+        return await create_new_session(new_session_request)
+
+
+class AllowDirectoryRequest(BaseModel):
+    """Request body for allowing a directory."""
+
+    directory: str  # Directory path to allow
+    session_id: str | None = None  # Optional session to retry after allowing
+    original_message: str | None = None  # Optional message to retry
+
+
+@app.post("/allow-directory")
+async def allow_directory(request: AllowDirectoryRequest) -> dict:
+    """Allow a directory for sandbox access and optionally retry a message.
+
+    This endpoint adds a directory to the allowed list for --add-dir flag.
+    If session_id and original_message are provided, it retries the message.
+    """
+    if not _send_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Send feature is disabled. Start server with --enable-send to enable.",
+        )
+
+    if not request.directory:
+        raise HTTPException(status_code=400, detail="Directory cannot be empty")
+
+    # Normalize and validate directory path
+    directory = str(Path(request.directory).expanduser().resolve())
+
+    # Add to allowed directories
+    add_allowed_directory(directory)
+    logger.info(f"Added allowed directory: {directory}")
+
+    # If session and message provided, retry the message
+    if request.session_id and request.original_message:
+        info = get_session(request.session_id)
+        if info is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        asyncio.create_task(
+            run_cli_for_session(request.session_id, request.original_message.strip())
+        )
+        return {
+            "status": "allowed_and_retrying",
+            "directory": directory,
+            "session_id": request.session_id,
+        }
+
+    return {"status": "allowed", "directory": directory}
+
+
 @app.post("/sessions/{session_id}/interrupt")
 async def interrupt_session(session_id: str) -> dict:
     """Interrupt a running CLI process and clear the message queue."""
@@ -1409,36 +1753,83 @@ async def create_new_session(request: NewSessionRequest) -> dict:
                 f"Fetch models from /backends/{target_backend.name}/models first.",
             )
 
+    # Determine if we should use permission detection
+    use_permission_detection = (
+        not _skip_permissions
+        and hasattr(target_backend, "supports_permission_detection")
+        and target_backend.supports_permission_detection()
+    )
+    output_format = "stream-json" if use_permission_detection else None
+    add_dirs = get_allowed_directories() or None
+
     if model:
-        cmd_args = build_cmd(message, _skip_permissions, model=model)
+        cmd_args = build_cmd(message, _skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
     else:
-        cmd_args = build_cmd(message, _skip_permissions)
+        cmd_args = build_cmd(message, _skip_permissions, output_format=output_format, add_dirs=add_dirs)
 
     try:
+        # Capture stdout if using permission detection
+        stdout_pipe = asyncio.subprocess.PIPE if use_permission_detection else asyncio.subprocess.DEVNULL
+
         # Start CLI in the working directory
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
             cwd=cwd,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=stdout_pipe,
             stderr=asyncio.subprocess.PIPE,
         )
 
-        # Don't wait for completion - the session will appear via file watcher
-        # Just check it started okay
-        await asyncio.sleep(0.5)
-        if proc.returncode is not None and proc.returncode != 0:
-            stderr = await proc.stderr.read() if proc.stderr else b""
-            logger.error(f"CLI failed to start: {stderr.decode()}")
-            raise HTTPException(status_code=500, detail="Failed to start session")
-
-        # Store process so we can attach it to the session when it appears
-        # Use resolved cwd path as key (or empty string for no cwd)
+        # Store process reference and cwd for permission handling
         cwd_key = str(cwd.resolve()) if cwd else ""
-        _pending_new_session_processes[cwd_key] = proc
-        logger.debug(f"Stored pending process for cwd: {cwd_key}")
 
-        return {"status": "started", "cwd": str(cwd) if cwd else None}
+        if use_permission_detection:
+            # For new sessions with permission detection, we wait for CLI completion
+            # to check for permission denials. This can take a while if the LLM takes
+            # time to respond, but we need to catch denials to show the permission modal.
+            #
+            # Note: The frontend sets pendingSession.starting = true BEFORE this fetch,
+            # so session_added SSE events will be properly merged even if this takes time.
+            from .permissions import parse_permission_denials
+
+            # Store process so we can attach it to the session when it appears
+            _pending_new_session_processes[cwd_key] = proc
+            logger.debug(f"Stored pending process for cwd: {cwd_key}")
+
+            # Wait for completion and capture output
+            stdout, stderr = await proc.communicate()
+
+            if proc.returncode != 0:
+                logger.warning(f"CLI process exited with code {proc.returncode}")
+
+            # Check for permission denials
+            denials = parse_permission_denials(stdout.decode()) if stdout else []
+
+            if denials:
+                logger.info(f"Permission denials in new session: {[d['tool_name'] for d in denials]}")
+                return {
+                    "status": "permission_denied",
+                    "cwd": str(cwd) if cwd else None,
+                    "denials": denials,
+                    "original_message": message,
+                    "backend": target_backend.name,
+                    "model_index": request.model_index,
+                }
+
+            return {"status": "started", "cwd": str(cwd) if cwd else None}
+        else:
+            # Original behavior: don't wait for completion
+            await asyncio.sleep(0.5)
+            if proc.returncode is not None and proc.returncode != 0:
+                stderr = await proc.stderr.read() if proc.stderr else b""
+                logger.error(f"CLI failed to start: {stderr.decode()}")
+                raise HTTPException(status_code=500, detail="Failed to start session")
+
+            # Store process so we can attach it to the session when it appears
+            _pending_new_session_processes[cwd_key] = proc
+            logger.debug(f"Stored pending process for cwd: {cwd_key}")
+
+            return {"status": "started", "cwd": str(cwd) if cwd else None}
 
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="CLI not found")

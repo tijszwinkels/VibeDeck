@@ -280,6 +280,14 @@ class CodingToolBackend(Protocol):
         """Whether this backend supports forking sessions."""
         ...
 
+    def supports_permission_detection(self) -> bool:
+        """Whether this backend supports permission denial detection.
+
+        When True, the backend can capture CLI output in JSON format and
+        parse permission denials for interactive handling.
+        """
+        ...
+
     def is_cli_available(self) -> bool:
         """Check if the CLI tool is installed and available."""
         ...
@@ -293,6 +301,8 @@ class CodingToolBackend(Protocol):
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to send a message.
 
@@ -300,6 +310,8 @@ class CodingToolBackend(Protocol):
             session_id: Session to send to.
             message: Message text.
             skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.
@@ -311,6 +323,8 @@ class CodingToolBackend(Protocol):
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to fork a session.
 
@@ -318,6 +332,8 @@ class CodingToolBackend(Protocol):
             session_id: Session to fork from.
             message: Initial message for forked session.
             skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.
@@ -328,12 +344,16 @@ class CodingToolBackend(Protocol):
         self,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to start a new session.
 
         Args:
             message: Initial message.
             skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.

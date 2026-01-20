@@ -13,6 +13,7 @@ import { initMessaging } from './messaging.js';
 import { initModal } from './modal.js';
 import { connect, initVisibilityHandler } from './connection.js';
 import { initSidebarContextMenu } from './sidebar-context-menu.js';
+import { initPermissions } from './permissions.js';
 
 // Initialize the application
 function init() {
@@ -44,6 +45,9 @@ function init() {
 
     // Initialize modal
     initModal();
+
+    // Initialize permissions modal
+    initPermissions();
 
     // Initialize global click handler for copy buttons (event delegation)
     document.addEventListener('click', function(e) {

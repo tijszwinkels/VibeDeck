@@ -144,6 +144,15 @@ class CodingToolBackend(Protocol):
         """Whether backend supports forking/branching sessions."""
         ...
 
+    def supports_permission_detection(self) -> bool:
+        """Whether backend supports permission denial detection.
+
+        Return True if the CLI supports --output-format stream-json and
+        outputs permission denial events that can be parsed for interactive
+        permission granting.
+        """
+        ...
+
     def is_cli_available(self) -> bool:
         """Check if CLI tool is installed (e.g., shutil.which())."""
         ...
@@ -157,8 +166,17 @@ class CodingToolBackend(Protocol):
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build CLI command to send a message to existing session.
+
+        Args:
+            session_id: Session to send to.
+            message: Message text.
+            skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list, e.g.:
@@ -171,16 +189,35 @@ class CodingToolBackend(Protocol):
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
-        """Build CLI command to fork a session with history."""
+        """Build CLI command to fork a session with history.
+
+        Args:
+            session_id: Session to fork from.
+            message: Initial message for forked session.
+            skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
+        """
         ...
 
     def build_new_session_command(
         self,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
-        """Build CLI command to start a new session."""
+        """Build CLI command to start a new session.
+
+        Args:
+            message: Initial message.
+            skip_permissions: Skip permission prompts if supported.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
+        """
         ...
 
     def ensure_session_indexed(self, session_id: str) -> None:
@@ -466,6 +503,9 @@ class OpenCodeBackend:
     def supports_fork_session(self) -> bool:
         return False  # If not supported
 
+    def supports_permission_detection(self) -> bool:
+        return False  # If CLI doesn't support --output-format stream-json
+
     def is_cli_available(self) -> bool:
         import shutil
         return shutil.which("opencode") is not None
@@ -474,15 +514,21 @@ class OpenCodeBackend:
         return "Install with: go install github.com/opencode-ai/opencode@latest"
 
     def build_send_command(self, session_id: str, message: str,
-                           skip_permissions: bool = False) -> list[str]:
+                           skip_permissions: bool = False,
+                           output_format: str | None = None,
+                           add_dirs: list[str] | None = None) -> list[str]:
         return ["opencode", "--session", session_id, "-m", message]
 
     def build_fork_command(self, session_id: str, message: str,
-                           skip_permissions: bool = False) -> list[str]:
+                           skip_permissions: bool = False,
+                           output_format: str | None = None,
+                           add_dirs: list[str] | None = None) -> list[str]:
         raise NotImplementedError("OpenCode doesn't support forking")
 
     def build_new_session_command(self, message: str,
-                                  skip_permissions: bool = False) -> list[str]:
+                                  skip_permissions: bool = False,
+                                  output_format: str | None = None,
+                                  add_dirs: list[str] | None = None) -> list[str]:
         return ["opencode", "-m", message]
 
     def ensure_session_indexed(self, session_id: str) -> None:

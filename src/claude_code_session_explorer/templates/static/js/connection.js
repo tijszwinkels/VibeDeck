@@ -8,6 +8,7 @@ import {
     createSession, removeSession, reorderSidebar, switchToSession,
     appendMessage, updateSessionWaitingState, updateSidebarItemStatusClass
 } from './sessions.js';
+import { showPermissionModal } from './permissions.js';
 
 // Connect to SSE endpoint
 export function connect() {
@@ -205,6 +206,16 @@ export function connect() {
         }
         // Update waiting state on sidebar
         updateSessionWaitingState(data.session_id);
+    });
+
+    state.eventSource.addEventListener('permission_denied', function(e) {
+        const data = JSON.parse(e.data);
+        // Only show modal if this is for the active session
+        if (data.session_id === state.activeSessionId) {
+            showPermissionModal(data);
+        } else {
+            console.log('Permission denied for inactive session:', data.session_id);
+        }
     });
 
     state.eventSource.addEventListener('reinitialize', function(e) {

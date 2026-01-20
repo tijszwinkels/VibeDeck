@@ -210,6 +210,10 @@ class ClaudeCodeBackend:
         """Whether this backend supports forking sessions."""
         return True
 
+    def supports_permission_detection(self) -> bool:
+        """Whether this backend supports permission denial detection."""
+        return True
+
     def is_cli_available(self) -> bool:
         """Check if the CLI tool is installed and available."""
         return is_cli_available()
@@ -223,6 +227,8 @@ class ClaudeCodeBackend:
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to send a message.
 
@@ -230,17 +236,21 @@ class ClaudeCodeBackend:
             session_id: Session to send to.
             message: Message text.
             skip_permissions: Skip permission prompts.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.
         """
-        return build_send_command(session_id, message, skip_permissions)
+        return build_send_command(session_id, message, skip_permissions, output_format, add_dirs)
 
     def build_fork_command(
         self,
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to fork a session.
 
@@ -248,17 +258,21 @@ class ClaudeCodeBackend:
             session_id: Session to fork from.
             message: Initial message for forked session.
             skip_permissions: Skip permission prompts.
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.
         """
-        return build_fork_command(session_id, message, skip_permissions)
+        return build_fork_command(session_id, message, skip_permissions, output_format, add_dirs)
 
     def build_new_session_command(
         self,
         message: str,
         skip_permissions: bool = False,
         model: str | None = None,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> list[str]:
         """Build the CLI command to start a new session.
 
@@ -266,11 +280,13 @@ class ClaudeCodeBackend:
             message: Initial message.
             skip_permissions: Skip permission prompts.
             model: Model to use (e.g., "opus", "sonnet", "haiku").
+            output_format: Output format (e.g., "stream-json" for permission detection).
+            add_dirs: Additional directories to allow access to.
 
         Returns:
             Command arguments list.
         """
-        return build_new_session_command(message, skip_permissions, model=model)
+        return build_new_session_command(message, skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
 
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.

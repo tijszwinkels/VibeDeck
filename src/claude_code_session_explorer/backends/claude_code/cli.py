@@ -40,6 +40,8 @@ def build_send_command(
     session_id: str,
     message: str,
     skip_permissions: bool = False,
+    output_format: str | None = None,
+    add_dirs: list[str] | None = None,
 ) -> list[str]:
     """Build the CLI command to send a message to an existing session.
 
@@ -47,11 +49,19 @@ def build_send_command(
         session_id: Session to send to.
         message: Message text.
         skip_permissions: Skip permission prompts.
+        output_format: Output format (e.g., "stream-json" for permission detection).
+        add_dirs: Additional directories to allow access to.
 
     Returns:
         Command arguments list.
     """
     cmd = [CLI_COMMAND, "-p", message, "--resume", session_id]
+    if add_dirs:
+        for d in add_dirs:
+            cmd.extend(["--add-dir", d])
+    if output_format:
+        # --verbose is required when using --output-format with -p
+        cmd.extend(["--output-format", output_format, "--verbose"])
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     return cmd
@@ -61,6 +71,8 @@ def build_fork_command(
     session_id: str,
     message: str,
     skip_permissions: bool = False,
+    output_format: str | None = None,
+    add_dirs: list[str] | None = None,
 ) -> list[str]:
     """Build the CLI command to fork a session with conversation history.
 
@@ -68,11 +80,19 @@ def build_fork_command(
         session_id: Session to fork from.
         message: Initial message for forked session.
         skip_permissions: Skip permission prompts.
+        output_format: Output format (e.g., "stream-json" for permission detection).
+        add_dirs: Additional directories to allow access to.
 
     Returns:
         Command arguments list.
     """
     cmd = [CLI_COMMAND, "-p", message, "--resume", session_id, "--fork-session"]
+    if add_dirs:
+        for d in add_dirs:
+            cmd.extend(["--add-dir", d])
+    if output_format:
+        # --verbose is required when using --output-format with -p
+        cmd.extend(["--output-format", output_format, "--verbose"])
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     return cmd
@@ -82,6 +102,8 @@ def build_new_session_command(
     message: str,
     skip_permissions: bool = False,
     model: str | None = None,
+    output_format: str | None = None,
+    add_dirs: list[str] | None = None,
 ) -> list[str]:
     """Build the CLI command to start a new session.
 
@@ -89,13 +111,21 @@ def build_new_session_command(
         message: Initial message.
         skip_permissions: Skip permission prompts.
         model: Model to use (e.g., "opus", "sonnet", "haiku").
+        output_format: Output format (e.g., "stream-json" for permission detection).
+        add_dirs: Additional directories to allow access to.
 
     Returns:
         Command arguments list.
     """
     cmd = [CLI_COMMAND, "-p", message]
+    if add_dirs:
+        for d in add_dirs:
+            cmd.extend(["--add-dir", d])
     if model:
         cmd.extend(["--model", model])
+    if output_format:
+        # --verbose is required when using --output-format with -p
+        cmd.extend(["--output-format", output_format, "--verbose"])
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     return cmd
