@@ -127,7 +127,7 @@ export function initAutoSwitch() {
     updateAutoSwitchUI();
 }
 
-// Status colors UI (only when ?title-colors param is present)
+// Status colors UI
 export function updateStatusColorsUI() {
     state.statusColors = dom.statusColorsCheckbox.checked;
     if (state.statusColors) {

@@ -180,8 +180,8 @@ export const state = {
     // Session mode date sections (created lazily)
     dateSections: null,
 
-    // Status colors feature (hidden behind ?title-colors URL param)
-    titleColorsEnabled: new URLSearchParams(window.location.search).has('title-colors'),
+    // Status colors feature (always enabled)
+    titleColorsEnabled: true,
     statusColors: false, // initialized in init based on titleColorsEnabled
 
     // Runtime state
