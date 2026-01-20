@@ -76,14 +76,14 @@ async function populateModelSelect(backendName) {
     }
 
     dom.modalModelField.style.display = 'block';
-    dom.modalModel.innerHTML = '<option value="">(Default)</option>';
+    dom.modalModel.innerHTML = '';
     dom.modalModelSearch.value = '';
 
     const models = await loadModelsForBackend(backendName);
     state.allModelsForFilter = models;
 
-    // Get saved model preference for this backend
-    const savedModel = localStorage.getItem('newSessionModel_' + backendName) || '';
+    // Get saved model preference for this backend (default to first model if none saved)
+    const savedModel = localStorage.getItem('newSessionModel_' + backendName) || (models.length > 0 ? models[0] : '');
 
     models.forEach(function(model) {
         const option = document.createElement('option');
@@ -99,10 +99,11 @@ async function populateModelSelect(backendName) {
 // Filter models based on search text
 function filterModels(searchText) {
     const search = searchText.toLowerCase();
-    dom.modalModel.innerHTML = '<option value="">(Default)</option>';
+    dom.modalModel.innerHTML = '';
 
     const savedBackend = dom.modalBackend.value;
-    const savedModel = localStorage.getItem('newSessionModel_' + savedBackend) || '';
+    // Default to first model if none saved
+    const savedModel = localStorage.getItem('newSessionModel_' + savedBackend) || (state.allModelsForFilter.length > 0 ? state.allModelsForFilter[0] : '');
 
     state.allModelsForFilter.forEach(function(model) {
         if (!search || model.toLowerCase().includes(search)) {
@@ -165,7 +166,8 @@ function handleNewSessionSubmit(e) {
 
     const backend = dom.modalBackend.value;
     const modelSelect = dom.modalModel;
-    const modelIndex = modelSelect.selectedIndex > 0 ? modelSelect.selectedIndex - 1 : null;  // -1 for "(Default)" option
+    // Model index is direct now (no "(Default)" option)
+    const modelIndex = modelSelect.selectedIndex >= 0 ? modelSelect.selectedIndex : null;
     const modelName = modelIndex !== null ? modelSelect.value : null;
 
     // Save preferences to localStorage

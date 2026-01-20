@@ -187,6 +187,19 @@ class ClaudeCodeBackend:
         """
         return get_session_model(session_path)
 
+    # ===== Model Selection =====
+
+    def get_models(self) -> list[str]:
+        """Get available models for Claude Code.
+
+        Returns a list of model aliases that can be passed to the --model flag.
+        Opus is listed first as the default/recommended option.
+
+        Returns:
+            List of model identifier strings.
+        """
+        return ["opus", "sonnet", "haiku"]
+
     # ===== CLI Interaction =====
 
     def supports_send_message(self) -> bool:
@@ -245,17 +258,19 @@ class ClaudeCodeBackend:
         self,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
     ) -> list[str]:
         """Build the CLI command to start a new session.
 
         Args:
             message: Initial message.
             skip_permissions: Skip permission prompts.
+            model: Model to use (e.g., "opus", "sonnet", "haiku").
 
         Returns:
             Command arguments list.
         """
-        return build_new_session_command(message, skip_permissions)
+        return build_new_session_command(message, skip_permissions, model=model)
 
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.

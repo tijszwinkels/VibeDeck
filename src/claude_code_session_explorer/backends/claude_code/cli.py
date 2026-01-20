@@ -81,17 +81,21 @@ def build_fork_command(
 def build_new_session_command(
     message: str,
     skip_permissions: bool = False,
+    model: str | None = None,
 ) -> list[str]:
     """Build the CLI command to start a new session.
 
     Args:
         message: Initial message.
         skip_permissions: Skip permission prompts.
+        model: Model to use (e.g., "opus", "sonnet", "haiku").
 
     Returns:
         Command arguments list.
     """
     cmd = [CLI_COMMAND, "-p", message]
+    if model:
+        cmd.extend(["--model", model])
     if skip_permissions:
         cmd.append("--dangerously-skip-permissions")
     return cmd

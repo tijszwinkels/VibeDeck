@@ -1371,10 +1371,14 @@ async def create_new_session(request: NewSessionRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Determine working directory - create if it doesn't exist
+    # Determine working directory - must be an absolute path (~ is expanded)
     cwd: Path | None = None
     if request.cwd:
-        potential_cwd = Path(request.cwd)
+        potential_cwd = Path(request.cwd).expanduser()
+        if not potential_cwd.is_absolute():
+            raise HTTPException(
+                status_code=400, detail="Directory path must be absolute (e.g., /home/user/project or ~/project)"
+            )
         if not potential_cwd.exists():
             try:
                 potential_cwd.mkdir(parents=True, exist_ok=True)
