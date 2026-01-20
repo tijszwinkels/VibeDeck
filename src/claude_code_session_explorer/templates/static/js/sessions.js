@@ -15,7 +15,7 @@ import { closePreviewPane, openPreviewPane } from './preview.js';
 import { loadFileTree, setProjectRoot } from './filetree.js';
 import { showProjectContextMenu, showSessionContextMenu } from './sidebar-context-menu.js';
 
-// Forward declaration for circular dependency - will be set by messaging.js
+// Forward declarations for circular dependency - will be set by other modules
 let updateInputBarUI = () => {};
 export function setUpdateInputBarUI(fn) {
     updateInputBarUI = fn;
@@ -179,11 +179,15 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     sidebarItem.className = 'session-item';
     sidebarItem.dataset.session = sessionId;
     if (backend) sidebarItem.dataset.backend = backend;
+    if (projectPath) sidebarItem.dataset.cwd = projectPath;
 
     sidebarItem.innerHTML = `
         <span class="unread-dot"></span>
         <span class="session-title">${escapeHtml(displayTitle)}</span>
-        <span class="session-project">${escapeHtml(projectName || 'Unknown')}</span>
+        <span class="session-project-row">
+            <button class="new-in-folder-btn" title="New session in same folder">+</button>
+            <span class="session-project">${escapeHtml(projectName || 'Unknown')}</span>
+        </span>
         <span class="close-btn" title="Close">&times;</span>
     `;
 
@@ -193,6 +197,10 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     sidebarItem.addEventListener('click', function(e) {
         if (e.target.classList.contains('close-btn')) {
             removeSession(sessionId);
+        } else if (e.target.classList.contains('new-in-folder-btn')) {
+            // Create new session in same folder (same as project header "+" button)
+            const cwd = sidebarItem.dataset.cwd;
+            createPendingSession(cwd || null, projectName);
         } else {
             switchToSession(sessionId, true);  // Scroll to bottom when opening
             // Close sidebar on mobile

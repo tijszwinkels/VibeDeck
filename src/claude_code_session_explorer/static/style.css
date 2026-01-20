@@ -209,10 +209,16 @@ pre code { background: none; padding: 0; }
 .session-item .close-btn:hover { opacity: 1; background: rgba(0,0,0,0.1); }
 
 /* Session item in session-mode: block with two lines */
-.session-item .session-project { display: none; font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+.session-item .session-project-row { display: none; }
+.session-item .session-project { font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item .new-in-folder-btn { display: none; }
 .session-item.session-mode { flex-direction: column; align-items: flex-start; padding: 8px 12px 8px 20px; gap: 2px; position: relative; border-radius: 6px; margin: 3px 6px; background: rgba(0,0,0,0.03); }
 .session-item.session-mode .session-title { font-weight: 500; }
-.session-item.session-mode .session-project { display: block; }
+.session-item.session-mode .session-project-row { display: flex; align-items: center; gap: 4px; }
+.session-item.session-mode .session-project { flex-shrink: 1; min-width: 0; }
+.session-item.session-mode .new-in-folder-btn { display: none; padding: 0 4px; font-size: 0.7rem; font-weight: 600; color: var(--text-muted); background: transparent; border: 1px solid var(--border-color); border-radius: 3px; cursor: pointer; line-height: 1.1; flex-shrink: 0; }
+.session-item.session-mode:hover .new-in-folder-btn { display: inline-flex; }
+.session-item.session-mode .new-in-folder-btn:hover { color: var(--user-border); border-color: var(--user-border); background: rgba(25, 118, 210, 0.08); }
 .session-item.session-mode .unread-dot { position: absolute; left: 8px; top: 50%; margin-top: -4px; margin-right: 0; }
 .session-item.session-mode.running .unread-dot { margin-top: -5px; }
 .session-item.session-mode .close-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); margin-left: 0; }
