@@ -133,14 +133,71 @@ def is_send_enabled() -> bool:
     return _send_enabled
 
 
+def _get_allowed_dirs_path() -> Path:
+    """Get the path to the allowed directories config file."""
+    config_dir = Path.home() / ".config" / "claude-code-session-explorer"
+    return config_dir / "allowed-dirs.json"
+
+
+def _load_allowed_directories() -> set[str]:
+    """Load allowed directories from config file."""
+    config_path = _get_allowed_dirs_path()
+    if not config_path.exists():
+        return set()
+    try:
+        with open(config_path, "r") as f:
+            data = json.load(f)
+            return set(data.get("directories", []))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"Failed to load allowed directories: {e}")
+        return set()
+
+
+def _save_allowed_directories(directories: set[str]) -> bool:
+    """Save allowed directories to config file."""
+    config_path = _get_allowed_dirs_path()
+    try:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w") as f:
+            json.dump({"directories": sorted(directories)}, f, indent=2)
+        return True
+    except OSError as e:
+        logger.error(f"Failed to save allowed directories: {e}")
+        return False
+
+
 def add_allowed_directory(directory: str) -> None:
-    """Add a directory to the allowed directories for sandbox access."""
+    """Add a directory to the allowed directories for sandbox access.
+
+    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    """
     _allowed_directories.add(directory)
+    _save_allowed_directories(_allowed_directories)
+
+
+def remove_allowed_directory(directory: str) -> None:
+    """Remove a directory from the allowed directories.
+
+    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    """
+    _allowed_directories.discard(directory)
+    _save_allowed_directories(_allowed_directories)
 
 
 def get_allowed_directories() -> list[str]:
     """Get the list of allowed directories for sandbox access."""
     return list(_allowed_directories)
+
+
+def load_allowed_directories_from_config() -> None:
+    """Load allowed directories from config file into memory.
+
+    Should be called on server startup.
+    """
+    global _allowed_directories
+    _allowed_directories = _load_allowed_directories()
+    if _allowed_directories:
+        logger.info(f"Loaded {len(_allowed_directories)} allowed directories from config")
 
 
 def configure_summarization(
@@ -958,6 +1015,9 @@ async def lifespan(app: FastAPI):
 
     backend = get_server_backend()
 
+    # Load allowed directories from config file
+    load_allowed_directories_from_config()
+
     # Startup: find recent sessions
     recent = backend.find_recent_sessions(
         limit=MAX_SESSIONS, include_subagents=get_include_subagents()
@@ -1364,35 +1424,33 @@ async def grant_permission(
             detail="This backend does not support permission management.",
         )
 
-    if not request.permissions:
-        raise HTTPException(status_code=400, detail="No permissions specified")
-
     if not request.original_message.strip():
         raise HTTPException(status_code=400, detail="Original message cannot be empty")
 
-    # Write permissions to project's .claude/settings.json
-    if not info.project_path:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot grant permissions: session has no project path",
-        )
+    # Write permissions to project's .claude/settings.json (if any)
+    if request.permissions:
+        if not info.project_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot grant permissions: session has no project path",
+            )
 
-    settings_path = Path(info.project_path) / ".claude" / "settings.json"
+        settings_path = Path(info.project_path) / ".claude" / "settings.json"
 
-    try:
-        update_permissions_file(settings_path, request.permissions)
-        logger.info(
-            f"Granted permissions for {session_id}: {request.permissions} "
-            f"(wrote to {settings_path})"
-        )
-    except Exception as e:
-        logger.error(f"Failed to write permissions for {session_id}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to write permissions file: {e}",
-        )
+        try:
+            update_permissions_file(settings_path, request.permissions)
+            logger.info(
+                f"Granted permissions for {session_id}: {request.permissions} "
+                f"(wrote to {settings_path})"
+            )
+        except Exception as e:
+            logger.error(f"Failed to write permissions for {session_id}: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to write permissions file: {e}",
+            )
 
-    # Re-send the original message
+    # Re-send the original message (with any newly allowed directories via --add-dir)
     asyncio.create_task(run_cli_for_session(session_id, request.original_message.strip()))
 
     return {
@@ -1428,9 +1486,6 @@ async def grant_permission_new_session(request: GrantPermissionNewSessionRequest
             detail="Send feature is disabled. Start server with --enable-send to enable.",
         )
 
-    if not request.permissions:
-        raise HTTPException(status_code=400, detail="No permissions specified")
-
     if not request.original_message.strip():
         raise HTTPException(status_code=400, detail="Original message cannot be empty")
 
@@ -1447,18 +1502,21 @@ async def grant_permission_new_session(request: GrantPermissionNewSessionRequest
             detail="Cannot grant permissions: no working directory specified",
         )
 
-    # Write permissions to project's .claude/settings.json
-    settings_path = cwd / ".claude" / "settings.json"
+    # Write permissions to project's .claude/settings.json (if any)
+    # For sandbox-only denials, permissions may be empty - that's OK,
+    # we just retry with the newly allowed directories via --add-dir
+    if request.permissions:
+        settings_path = cwd / ".claude" / "settings.json"
 
-    try:
-        update_permissions_file(settings_path, request.permissions)
-        logger.info(f"Granted permissions for new session: {request.permissions} (wrote to {settings_path})")
-    except Exception as e:
-        logger.error(f"Failed to write permissions for new session: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to write permissions file: {e}",
-        )
+        try:
+            update_permissions_file(settings_path, request.permissions)
+            logger.info(f"Granted permissions for new session: {request.permissions} (wrote to {settings_path})")
+        except Exception as e:
+            logger.error(f"Failed to write permissions for new session: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to write permissions file: {e}",
+            )
 
     # Find the session that was just created for this cwd
     # The initial create_new_session call already started a session that hit permission denial
