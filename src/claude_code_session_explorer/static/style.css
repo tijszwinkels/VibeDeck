@@ -210,10 +210,11 @@ pre code { background: none; padding: 0; }
 
 /* Session item in session-mode: block with two lines */
 .session-item .session-project { display: none; font-size: 0.75rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
-.session-item.session-mode { flex-direction: column; align-items: flex-start; padding: 8px 12px 8px 20px; gap: 2px; position: relative; }
+.session-item.session-mode { flex-direction: column; align-items: flex-start; padding: 8px 12px 8px 20px; gap: 2px; position: relative; border-radius: 6px; margin: 3px 6px; background: rgba(0,0,0,0.03); }
 .session-item.session-mode .session-title { font-weight: 500; }
 .session-item.session-mode .session-project { display: block; }
-.session-item.session-mode .unread-dot { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); margin-right: 0; }
+.session-item.session-mode .unread-dot { position: absolute; left: 8px; top: 50%; margin-top: -4px; margin-right: 0; }
+.session-item.session-mode.running .unread-dot { margin-top: -5px; }
 .session-item.session-mode .close-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); margin-left: 0; }
 
 /* Top-level date sections in session mode */
@@ -401,6 +402,8 @@ body { padding-top: 56px; padding-bottom: 100px; }
 [data-theme="dark"] .modal-btn-cancel:hover { background: #3d3d3d; }
 [data-theme="dark"] .project-header:hover { background: rgba(255,255,255,0.04); }
 [data-theme="dark"] .session-item:hover { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .session-item.session-mode { background: rgba(255,255,255,0.04); }
+[data-theme="dark"] .session-item.session-mode:hover { background: rgba(255,255,255,0.08); }
 [data-theme="dark"] .status-colors-enabled .session-item.status-done { background: rgba(76, 175, 80, 0.15); }
 [data-theme="dark"] .status-colors-enabled .session-item.status-done:hover { background: rgba(76, 175, 80, 0.25); }
 [data-theme="dark"] .status-colors-enabled .session-item.status-waiting { background: rgba(255, 193, 7, 0.18); }
