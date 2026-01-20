@@ -322,6 +322,16 @@ async function handleGrantNewSession() {
             } else {
                 const msg = directories.length > 0 ? 'Directory allowed' : 'Permission granted';
                 showFlash(msg + ', starting session...', 'success');
+
+                // Mark the pending session as starting so session_added event can merge it
+                // Find the pending session by cwd
+                for (const [sessionId, session] of state.sessions) {
+                    if (session.pending && session.cwd === cwd) {
+                        session.starting = true;
+                        session.startedAt = Date.now();
+                        break;
+                    }
+                }
             }
         } else {
             showFlash('Failed to grant permission: ' + (data.detail || 'Unknown error'), 'error');

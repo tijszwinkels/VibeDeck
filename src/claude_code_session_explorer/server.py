@@ -1726,29 +1726,37 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         cwd_key = str(cwd.resolve()) if cwd else ""
 
         if use_permission_detection:
-            # Wait for completion to check for permission denials
+            # For new sessions with permission detection, we wait for CLI completion
+            # to check for permission denials. This can take a while if the LLM takes
+            # time to respond, but we need to catch denials to show the permission modal.
+            #
+            # Note: The frontend sets pendingSession.starting = true BEFORE this fetch,
+            # so session_added SSE events will be properly merged even if this takes time.
+            from .permissions import parse_permission_denials
+
+            # Store process so we can attach it to the session when it appears
+            _pending_new_session_processes[cwd_key] = proc
+            logger.debug(f"Stored pending process for cwd: {cwd_key}")
+
+            # Wait for completion and capture output
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                logger.error(f"CLI failed: {stderr.decode()}")
-                raise HTTPException(status_code=500, detail="Failed to start session")
+                logger.warning(f"CLI process exited with code {proc.returncode}")
 
             # Check for permission denials
-            if stdout:
-                from .permissions import parse_permission_denials
-                denials = parse_permission_denials(stdout.decode())
-                if denials:
-                    logger.info(f"Permission denials in new session: {[d['tool_name'] for d in denials]}")
-                    # For new sessions, we need to return the denial info to the client
-                    # The client will need to handle this differently since there's no session_id yet
-                    return {
-                        "status": "permission_denied",
-                        "cwd": str(cwd) if cwd else None,
-                        "denials": denials,
-                        "original_message": message,
-                        "backend": target_backend.name,
-                        "model_index": request.model_index,
-                    }
+            denials = parse_permission_denials(stdout.decode()) if stdout else []
+
+            if denials:
+                logger.info(f"Permission denials in new session: {[d['tool_name'] for d in denials]}")
+                return {
+                    "status": "permission_denied",
+                    "cwd": str(cwd) if cwd else None,
+                    "denials": denials,
+                    "original_message": message,
+                    "backend": target_backend.name,
+                    "model_index": request.model_index,
+                }
 
             return {"status": "started", "cwd": str(cwd) if cwd else None}
         else:
