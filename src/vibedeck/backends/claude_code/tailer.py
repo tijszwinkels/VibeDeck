@@ -102,7 +102,7 @@ class ClaudeCodeTailer(JsonlTailer):
     def get_last_message_timestamp(self) -> float | None:
         """Get the timestamp of the last user/assistant message.
 
-        Reads the file backwards to find the last actual message,
+        Efficiently reads from the end of the file to find the last actual message,
         ignoring summary entries added by Claude Code's summarization feature.
 
         Returns:
@@ -110,30 +110,63 @@ class ClaudeCodeTailer(JsonlTailer):
             or None if no messages found.
         """
         try:
-            # Read all lines and find the last user/assistant message
-            with open(self.path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-
-            # Iterate backwards to find last actual message
-            for line in reversed(lines):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                    # Only consider user/assistant messages, skip summary entries
-                    if obj.get("type") in ("user", "assistant"):
-                        timestamp_str = obj.get("timestamp")
-                        if timestamp_str:
-                            # Parse ISO timestamp to Unix timestamp
-                            dt = datetime.fromisoformat(
-                                timestamp_str.replace("Z", "+00:00")
-                            )
-                            return dt.timestamp()
-                except json.JSONDecodeError:
-                    continue
+            return self._find_last_message_timestamp_from_tail()
         except (FileNotFoundError, IOError):
-            pass
+            return None
+
+    def _find_last_message_timestamp_from_tail(
+        self, initial_chunk_size: int = 65536
+    ) -> float | None:
+        """Read from end of file to find last message timestamp.
+
+        Starts with initial_chunk_size bytes, doubles if needed until found
+        or entire file is read.
+        """
+        with open(self.path, "rb") as f:
+            f.seek(0, 2)  # Seek to end
+            file_size = f.tell()
+
+            if file_size == 0:
+                return None
+
+            chunk_size = initial_chunk_size
+            bytes_read = 0
+
+            while bytes_read < file_size:
+                read_size = min(chunk_size, file_size)
+                f.seek(file_size - read_size)
+                chunk = f.read(read_size).decode("utf-8", errors="ignore")
+                bytes_read = read_size
+
+                result = self._parse_last_timestamp_from_chunk(chunk)
+                if result is not None:
+                    return result
+
+                # Double chunk size and retry
+                chunk_size *= 2
+
+            return None
+
+    def _parse_last_timestamp_from_chunk(self, chunk: str) -> float | None:
+        """Parse the last user/assistant message timestamp from a text chunk."""
+        lines = chunk.split("\n")
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                # Only consider user/assistant messages, skip summary entries
+                if obj.get("type") in ("user", "assistant"):
+                    timestamp_str = obj.get("timestamp")
+                    if timestamp_str:
+                        dt = datetime.fromisoformat(
+                            timestamp_str.replace("Z", "+00:00")
+                        )
+                        return dt.timestamp()
+            except json.JSONDecodeError:
+                # Could be partial line at start of chunk, continue
+                continue
         return None
 
 
