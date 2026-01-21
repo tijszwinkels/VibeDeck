@@ -44,6 +44,7 @@ DEFAULT_OUTPUT_KEYS = [
     "session_id",
     "path",
     "summary_file",
+    "branch",
 ]
 
 
