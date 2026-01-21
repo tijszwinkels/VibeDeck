@@ -15,7 +15,7 @@ import markdown
 
 # Shared Jinja2 environment
 jinja_env = Environment(
-    loader=PackageLoader("claude_code_session_explorer", "templates"),
+    loader=PackageLoader("vibedeck", "templates"),
     autoescape=True,
 )
 

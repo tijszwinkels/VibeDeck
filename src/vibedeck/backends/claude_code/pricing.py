@@ -39,7 +39,7 @@ def _get_pricing_data() -> dict:
     if _pricing_data is None:
         try:
             # Use importlib.resources for robust package resource access
-            pricing_file = files("claude_code_session_explorer").joinpath("pricing.yaml")
+            pricing_file = files("vibedeck").joinpath("pricing.yaml")
             _pricing_data = yaml.safe_load(pricing_file.read_text())
         except Exception as e:
             logger.warning(f"Failed to load pricing.yaml, using defaults: {e}")

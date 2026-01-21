@@ -4,7 +4,7 @@ import json
 import pytest
 from pathlib import Path
 
-from claude_code_session_explorer.permissions import (
+from vibedeck.permissions import (
     parse_permission_denials,
     update_permissions_file,
     generate_permission_options,

@@ -23,7 +23,7 @@ from .backends.claude_code.pricing import calculate_message_cost
 
 # Set up Jinja2 environment (shared across backends)
 _jinja_env = Environment(
-    loader=PackageLoader("claude_code_session_explorer", "templates"),
+    loader=PackageLoader("vibedeck", "templates"),
     autoescape=True,
 )
 
@@ -35,7 +35,7 @@ def get_template(name: str):
 
 def _load_static_file(filename: str) -> str:
     """Load a static file from the package."""
-    return files("claude_code_session_explorer").joinpath("static", filename).read_text()
+    return files("vibedeck").joinpath("static", filename).read_text()
 
 
 # Load CSS and JS from static files

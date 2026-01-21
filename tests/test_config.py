@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_code_session_explorer.config import (
+from vibedeck.config import (
     Config,
     load_config,
     DEFAULT_CONFIG,

@@ -160,7 +160,7 @@ def is_skip_permissions() -> bool:
 
 def _get_allowed_dirs_path() -> Path:
     """Get the path to the allowed directories config file."""
-    config_dir = Path.home() / ".config" / "claude-code-session-explorer"
+    config_dir = Path.home() / ".config" / "vibedeck"
     return config_dir / "allowed-dirs.json"
 
 
@@ -194,7 +194,7 @@ def _save_allowed_directories(directories: set[str]) -> bool:
 def add_allowed_directory(directory: str) -> None:
     """Add a directory to the allowed directories for sandbox access.
 
-    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    Persists to ~/.config/vibedeck/allowed-dirs.json
     """
     _allowed_directories.add(directory)
     _save_allowed_directories(_allowed_directories)
@@ -203,7 +203,7 @@ def add_allowed_directory(directory: str) -> None:
 def remove_allowed_directory(directory: str) -> None:
     """Remove a directory from the allowed directories.
 
-    Persists to ~/.config/claude-code-session-explorer/allowed-dirs.json
+    Persists to ~/.config/vibedeck/allowed-dirs.json
     """
     _allowed_directories.discard(directory)
     _save_allowed_directories(_allowed_directories)
@@ -931,7 +931,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
+app = FastAPI(title="VibeDeck", lifespan=lifespan)
 
 # Include routers
 app.include_router(sessions_router)
@@ -963,7 +963,7 @@ async def serve_js(filename: str) -> Response:
 
     try:
         content = (
-            files("claude_code_session_explorer")
+            files("vibedeck")
             .joinpath("templates", "static", "js", filename)
             .read_text()
         )

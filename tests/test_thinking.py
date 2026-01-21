@@ -2,7 +2,7 @@
 
 import pytest
 
-from claude_code_session_explorer.backends.thinking import (
+from vibedeck.backends.thinking import (
     LEVELS,
     detect_thinking_level,
     get_thinking_env,

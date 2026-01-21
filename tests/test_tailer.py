@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_code_session_explorer.tailer import (
+from vibedeck.tailer import (
     SessionTailer,
     find_most_recent_session,
     find_recent_sessions,

@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Live-updating transcript viewer and static exporter for Claude Code and OpenCode sessions. Optionally functions as a **web-based frontend** (like Conductor) for sending messages and forking sessions. Enable with `--enable-send` and `--fork` flags.
+**VibeDeck** is a live-updating transcript viewer and static exporter for Claude Code and OpenCode sessions. Optionally functions as a **web-based frontend** (like Conductor) for sending messages and forking sessions. Enable with `--enable-send` and `--fork` flags.
 
 ## Commands
 
 ```bash
-uv sync                                    # Install dependencies
-uv run pytest                              # Run all tests
-uv run pytest tests/test_export.py -v      # Run specific test
-uv run claude-code-session-explorer --debug # Run dev server
+uv sync                    # Install dependencies
+uv run pytest              # Run all tests
+uv run pytest tests/test_export.py -v  # Run specific test
+uv run vibedeck --debug    # Run dev server
 ```
 
 ## Architecture
 
-See `src/claude_code_session_explorer/`:
+See `src/vibedeck/`:
 - **`backends/`** - Pluggable backend system (`protocol.py` defines interfaces, `claude_code/` and `opencode/` implement them)
 - **`server.py`** - FastAPI app with SSE streaming, session management, file tree API
 - **`export.py`** - Static HTML/Markdown generation with gist upload
@@ -58,7 +58,7 @@ On every commit, publish a gist of the conversation transcript and add the previ
 ls ~/.claude/projects/ | grep $(basename $PWD)
 
 # List recent sessions (most recent first)
-ls -t ~/.claude/projects/-home-claude-projects-claude-code-session-explorer/*.jsonl | head -5
+ls -t ~/.claude/projects/-home-claude-projects-vibedeck/*.jsonl | head -5
 ```
 
 **For OpenCode sessions:**
@@ -72,19 +72,19 @@ ls -lt ~/.local/share/opencode/storage/message/ | head -10
 **For Claude Code sessions:**
 ```bash
 # Using this project's built-in export (recommended)
-uv run claude-code-session-explorer html "$(ls -t ~/.claude/projects/-home-claude-projects-claude-code-session-explorer/*.jsonl | head -1)" --gist
+uv run vibedeck html "$(ls -t ~/.claude/projects/-home-claude-projects-vibedeck/*.jsonl | head -1)" --gist
 
 # Or with explicit session file
-uv run claude-code-session-explorer html ~/.claude/projects/-home-claude-projects-claude-code-session-explorer/SESSION_ID.jsonl --gist
+uv run vibedeck html ~/.claude/projects/-home-claude-projects-vibedeck/SESSION_ID.jsonl --gist
 ```
 
 **For OpenCode sessions:**
 ```bash
 # Using session ID directly (e.g., ses_xxx)
-uv run claude-code-session-explorer html ses_461e502a0ffez5ZvcUYkCT4iaj --gist
+uv run vibedeck html ses_461e502a0ffez5ZvcUYkCT4iaj --gist
 
 # Or find the most recent session and export it
-uv run claude-code-session-explorer html "$(ls -t ~/.local/share/opencode/storage/message/ | head -1)" --gist
+uv run vibedeck html "$(ls -t ~/.local/share/opencode/storage/message/ | head -1)" --gist
 ```
 
 The command outputs:

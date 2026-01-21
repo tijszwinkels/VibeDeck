@@ -53,7 +53,7 @@ GITHUB_REPO_PATTERN = re.compile(
 
 # Load export-specific templates
 _export_env = Environment(
-    loader=PackageLoader("claude_code_session_explorer", "templates/export"),
+    loader=PackageLoader("vibedeck", "templates/export"),
     autoescape=True,
 )
 

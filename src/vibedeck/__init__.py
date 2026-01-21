@@ -1,4 +1,4 @@
-"""Claude Code Session Explorer - Live-updating transcript viewer for Claude Code sessions."""
+"""VibeDeck - Live-updating transcript viewer and web frontend for Claude Code and OpenCode sessions."""
 
 import logging
 import webbrowser
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 @click.group(cls=DefaultGroup, default="serve", default_if_no_args=True)
 @click.version_option(__version__, "-v", "--version")
 def main() -> None:
-    """Claude Code Session Explorer - Live transcript viewer and exporter.
+    """VibeDeck - Live transcript viewer and exporter for Claude Code and OpenCode.
 
     When run without a subcommand, starts the live-updating transcript viewer server.
     Use 'html' or 'md' subcommands to export transcripts to static files.
@@ -406,8 +406,8 @@ def html(
     SESSION_FILE can be a Claude Code .jsonl file path or an OpenCode session ID.
 
     Example:
-        claude-code-session-explorer html session.jsonl -o ./output
-        claude-code-session-explorer html ses_xxx -o ./output
+        vibedeck html session.jsonl -o ./output
+        vibedeck html ses_xxx -o ./output
     """
     from .export import (
         generate_html,
@@ -485,9 +485,9 @@ def md(
     SESSION_FILE can be a Claude Code .jsonl file path or an OpenCode session ID.
 
     Example:
-        claude-code-session-explorer md session.jsonl > transcript.md
-        claude-code-session-explorer md session.jsonl -o transcript.md
-        claude-code-session-explorer md ses_xxx -o transcript.md
+        vibedeck md session.jsonl > transcript.md
+        vibedeck md session.jsonl -o transcript.md
+        vibedeck md ses_xxx -o transcript.md
     """
     from .export import export_markdown
 
