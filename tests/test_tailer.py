@@ -249,40 +249,32 @@ class TestFindMostRecentSession:
 
     def test_finds_most_recent(self):
         """Test that most recently modified file is returned."""
-        import time
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            # Create older file
+            # Create older file with older timestamp
             older = tmppath / "older.jsonl"
-            older.write_text('{"type": "user"}\n')
+            older.write_text('{"type": "user", "timestamp": "2024-01-01T10:00:00Z"}\n')
 
-            time.sleep(0.01)  # Ensure different mtime
-
-            # Create newer file
+            # Create newer file with newer timestamp
             newer = tmppath / "newer.jsonl"
-            newer.write_text('{"type": "user"}\n')
+            newer.write_text('{"type": "user", "timestamp": "2024-01-01T11:00:00Z"}\n')
 
             result = find_most_recent_session(tmppath)
             assert result == newer
 
     def test_includes_agent_files_by_default(self):
         """Test that agent-* files are included by default."""
-        import time
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            # Create regular file first
+            # Create regular file with older timestamp
             regular = tmppath / "session.jsonl"
-            regular.write_text('{"type": "user"}\n')
+            regular.write_text('{"type": "user", "timestamp": "2024-01-01T10:00:00Z"}\n')
 
-            time.sleep(0.01)  # Ensure different mtime
-
-            # Create agent file (newer, should be returned as it's now included)
+            # Create agent file with newer timestamp (should be returned as it's now included)
             agent = tmppath / "agent-123.jsonl"
-            agent.write_text('{"type": "user"}\n')
+            agent.write_text('{"type": "user", "timestamp": "2024-01-01T11:00:00Z"}\n')
 
             result = find_most_recent_session(tmppath)
             # Agent file is newer and should be returned (subagents included by default)
@@ -305,35 +297,28 @@ class TestFindRecentSessions:
 
     def test_respects_limit(self):
         """Test that limit parameter is respected."""
-        import time
-
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            # Create multiple files
+            # Create multiple files with different timestamps
             for i in range(5):
                 f = tmppath / f"session_{i}.jsonl"
-                f.write_text('{"type": "user"}\n')
-                time.sleep(0.01)  # Ensure different mtime
+                f.write_text(f'{{"type": "user", "timestamp": "2024-01-01T1{i}:00:00Z"}}\n')
 
             result = find_recent_sessions(tmppath, limit=3)
             assert len(result) == 3
 
-    def test_sorted_by_mtime(self):
-        """Test that results are sorted by modification time, newest first."""
-        import time
-
+    def test_sorted_by_timestamp(self):
+        """Test that results are sorted by message timestamp, newest first."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
 
-            # Create files with known order
+            # Create files with known timestamp order
             older = tmppath / "older.jsonl"
-            older.write_text('{"type": "user"}\n')
-
-            time.sleep(0.01)
+            older.write_text('{"type": "user", "timestamp": "2024-01-01T10:00:00Z"}\n')
 
             newer = tmppath / "newer.jsonl"
-            newer.write_text('{"type": "user"}\n')
+            newer.write_text('{"type": "user", "timestamp": "2024-01-01T11:00:00Z"}\n')
 
             result = find_recent_sessions(tmppath)
             assert result[0] == newer

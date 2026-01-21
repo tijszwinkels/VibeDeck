@@ -10,7 +10,7 @@ import logging
 import urllib.parse
 from pathlib import Path
 
-from .tailer import has_messages, is_warmup_session
+from .tailer import ClaudeCodeTailer, has_messages, is_warmup_session
 
 logger = logging.getLogger(__name__)
 
@@ -215,12 +215,26 @@ def get_session_id(session_path: Path) -> str:
     return session_path.stem
 
 
+def get_last_message_timestamp(path: Path) -> float | None:
+    """Get the timestamp of the last user/assistant message in a session file.
+
+    Args:
+        path: Path to the session JSONL file.
+
+    Returns:
+        Unix timestamp (seconds since epoch) of the last message,
+        or None if no messages found.
+    """
+    tailer = ClaudeCodeTailer(path)
+    return tailer.get_last_message_timestamp()
+
+
 def find_recent_sessions(
     projects_dir: Path | None = None,
     limit: int = 10,
     include_subagents: bool = True,
 ) -> list[Path]:
-    """Find the most recently modified session files that have messages.
+    """Find the most recently active session files that have messages.
 
     Args:
         projects_dir: Base directory to search (defaults to ~/.claude/projects)
@@ -228,7 +242,7 @@ def find_recent_sessions(
         include_subagents: Whether to include subagent sessions (default True)
 
     Returns:
-        List of paths to recent .jsonl files with messages, sorted by modification time (newest first)
+        List of paths to recent .jsonl files with messages, sorted by last message timestamp (newest first)
     """
     if projects_dir is None:
         projects_dir = DEFAULT_PROJECTS_DIR
@@ -237,8 +251,8 @@ def find_recent_sessions(
         logger.warning(f"Projects directory not found: {projects_dir}")
         return []
 
-    # Find all .jsonl files
-    sessions = []
+    # Find all .jsonl files, use mtime for initial rough ordering
+    candidates = []
     for f in projects_dir.glob("**/*.jsonl"):
         # Filter out subagents if requested
         if not include_subagents and is_subagent_session(f):
@@ -248,26 +262,35 @@ def find_recent_sessions(
             if f.stat().st_size == 0:
                 continue
             mtime = f.stat().st_mtime
-            sessions.append((f, mtime))
+            candidates.append((f, mtime))
         except OSError:
             continue
 
-    if not sessions:
+    if not candidates:
         logger.warning("No session files found")
         return []
 
-    # Sort by modification time (newest first)
-    sessions.sort(key=lambda x: x[1], reverse=True)
+    # Sort by mtime first (rough order, fast) to prioritize likely-recent files
+    candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Filter to sessions with messages (excluding warmup sessions), up to the limit
-    result = []
-    for f, _ in sessions:
-        if has_messages(f) and not is_warmup_session(f):
-            result.append(f)
-            if len(result) >= limit:
-                break
+    # Get actual message timestamps for valid sessions
+    # We check more candidates than needed in case some have no messages
+    sessions_with_timestamps: list[tuple[Path, float]] = []
+    for f, _ in candidates:
+        if not has_messages(f) or is_warmup_session(f):
+            continue
+        msg_timestamp = get_last_message_timestamp(f)
+        if msg_timestamp is not None:
+            sessions_with_timestamps.append((f, msg_timestamp))
+        # Stop early if we have enough candidates with recent timestamps
+        # Check 3x limit to handle files with touched mtimes but old messages
+        if len(sessions_with_timestamps) >= limit * 3:
+            break
 
-    return result
+    # Sort by actual message timestamp (accurate order)
+    sessions_with_timestamps.sort(key=lambda x: x[1], reverse=True)
+
+    return [f for f, _ in sessions_with_timestamps[:limit]]
 
 
 def find_most_recent_session(projects_dir: Path | None = None) -> Path | None:

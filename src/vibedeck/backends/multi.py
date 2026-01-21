@@ -118,14 +118,14 @@ class MultiBackend:
     def find_recent_sessions(
         self, limit: int = 10, include_subagents: bool = True
     ) -> list[Path]:
-        """Find recently modified sessions from all backends.
+        """Find recently active sessions from all backends.
 
         Args:
             limit: Maximum number of sessions to return per backend.
             include_subagents: Whether to include subagent sessions.
 
         Returns:
-            List of paths to session files, sorted by modification time.
+            List of paths to session files, sorted by last message timestamp.
         """
         all_sessions: list[tuple[Path, float]] = []
 
@@ -136,15 +136,19 @@ class MultiBackend:
                 )
                 for path in sessions:
                     self._session_backend[path] = backend
+                    # Get actual message timestamp from tailer
                     try:
-                        mtime = path.stat().st_mtime
-                    except OSError:
-                        mtime = 0
-                    all_sessions.append((path, mtime))
+                        tailer = backend.create_tailer(path)
+                        timestamp = tailer.get_last_message_timestamp()
+                        if timestamp is None:
+                            timestamp = 0
+                    except (OSError, AttributeError):
+                        timestamp = 0
+                    all_sessions.append((path, timestamp))
             except Exception as e:
                 logger.warning(f"Failed to get sessions from {backend.name}: {e}")
 
-        # Sort by modification time, newest first
+        # Sort by message timestamp, newest first
         all_sessions.sort(key=lambda x: x[1], reverse=True)
 
         # Return limited list

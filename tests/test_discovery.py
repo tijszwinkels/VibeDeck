@@ -205,6 +205,7 @@ class TestFindRecentSessionsExcludesWarmup:
             warmup = project_dir / "agent-warmup.jsonl"
             warmup.write_text(json.dumps({
                 "type": "user",
+                "timestamp": "2024-01-01T10:00:00Z",
                 "message": {"content": "Warmup"}
             }) + "\n")
 
@@ -212,6 +213,7 @@ class TestFindRecentSessionsExcludesWarmup:
             regular = project_dir / "session.jsonl"
             regular.write_text(json.dumps({
                 "type": "user",
+                "timestamp": "2024-01-01T10:00:00Z",
                 "message": {"content": "Help me code"}
             }) + "\n")
 

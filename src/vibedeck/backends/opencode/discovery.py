@@ -61,6 +61,41 @@ def get_session_id(session_path: Path) -> str:
     return session_path.stem
 
 
+def get_last_message_timestamp(session_path: Path, storage_dir: Path) -> float | None:
+    """Get the timestamp of the last message in a session.
+
+    Args:
+        session_path: Path to the session JSON file.
+        storage_dir: Base storage directory.
+
+    Returns:
+        Unix timestamp (seconds since epoch) of the last message,
+        or None if no messages found.
+    """
+    session_id = get_session_id(session_path)
+    msg_dir = storage_dir / "message" / session_id
+    if not msg_dir.exists():
+        return None
+
+    # Get the last message by ID (messages are sorted by ID)
+    msg_files = sorted(msg_dir.glob("*.json"), reverse=True)
+    if not msg_files:
+        return None
+
+    try:
+        msg_data = json.loads(msg_files[0].read_text())
+        time_data = msg_data.get("time", {})
+        # Use 'updated' if available, fall back to 'created'
+        timestamp_ms = time_data.get("updated") or time_data.get("created")
+        if timestamp_ms:
+            # OpenCode uses Unix milliseconds, convert to seconds
+            return timestamp_ms / 1000
+    except (json.JSONDecodeError, IOError, KeyError):
+        pass
+
+    return None
+
+
 def has_messages(session_path: Path, storage_dir: Path) -> bool:
     """Check if a session has any messages.
 
@@ -140,7 +175,7 @@ def get_first_user_message(
 def find_recent_sessions(
     storage_dir: Path | None = None, limit: int = 10
 ) -> list[Path]:
-    """Find the most recently modified session files that have messages.
+    """Find the most recently active session files that have messages.
 
     Args:
         storage_dir: Base storage directory (defaults to ~/.local/share/opencode/storage)
@@ -148,7 +183,7 @@ def find_recent_sessions(
 
     Returns:
         List of paths to recent session JSON files with messages, sorted by
-        modification time (newest first).
+        last message timestamp (newest first).
     """
     if storage_dir is None:
         storage_dir = DEFAULT_STORAGE_DIR
@@ -158,34 +193,41 @@ def find_recent_sessions(
         logger.warning(f"Session directory not found: {session_base}")
         return []
 
-    # Find all session JSON files
-    sessions = []
+    # Find all session JSON files, use mtime for initial rough ordering
+    candidates = []
     for f in session_base.glob("*/*.json"):
         try:
             # Skip empty files
             if f.stat().st_size == 0:
                 continue
             mtime = f.stat().st_mtime
-            sessions.append((f, mtime))
+            candidates.append((f, mtime))
         except OSError:
             continue
 
-    if not sessions:
+    if not candidates:
         logger.warning("No session files found")
         return []
 
-    # Sort by modification time (newest first)
-    sessions.sort(key=lambda x: x[1], reverse=True)
+    # Sort by mtime first (rough order, fast) to prioritize likely-recent files
+    candidates.sort(key=lambda x: x[1], reverse=True)
 
-    # Filter to sessions with messages, up to the limit
-    result = []
-    for f, _ in sessions:
-        if has_messages(f, storage_dir):
-            result.append(f)
-            if len(result) >= limit:
-                break
+    # Get actual message timestamps for valid sessions
+    sessions_with_timestamps: list[tuple[Path, float]] = []
+    for f, _ in candidates:
+        if not has_messages(f, storage_dir):
+            continue
+        msg_timestamp = get_last_message_timestamp(f, storage_dir)
+        if msg_timestamp is not None:
+            sessions_with_timestamps.append((f, msg_timestamp))
+        # Stop early if we have enough candidates
+        if len(sessions_with_timestamps) >= limit * 3:
+            break
 
-    return result
+    # Sort by actual message timestamp (accurate order)
+    sessions_with_timestamps.sort(key=lambda x: x[1], reverse=True)
+
+    return [f for f, _ in sessions_with_timestamps[:limit]]
 
 
 def find_most_recent_session(storage_dir: Path | None = None) -> Path | None:
