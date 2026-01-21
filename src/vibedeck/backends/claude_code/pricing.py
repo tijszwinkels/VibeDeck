@@ -13,6 +13,44 @@ from ..protocol import TokenUsage
 
 logger = logging.getLogger(__name__)
 
+# Characters per token estimate for output (English text averages ~3.5 chars/token)
+CHARS_PER_TOKEN = 3.5
+
+
+def estimate_output_tokens_from_content(content: list | str) -> int:
+    """Estimate output tokens from message content.
+
+    Claude Code's JSONL files contain incorrect output_tokens values (small
+    streaming counters like 1-5 instead of actual token counts). This function
+    estimates tokens from the actual content.
+
+    Args:
+        content: Message content - either a string or list of content blocks
+
+    Returns:
+        Estimated token count
+    """
+    if isinstance(content, str):
+        return max(1, int(len(content) / CHARS_PER_TOKEN))
+
+    if not isinstance(content, list):
+        return 0
+
+    total_chars = 0
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type", "")
+        if block_type == "text":
+            total_chars += len(block.get("text", ""))
+        elif block_type == "thinking":
+            total_chars += len(block.get("thinking", ""))
+        elif block_type == "tool_use":
+            # Serialize tool call to JSON to estimate its token count
+            total_chars += len(json.dumps(block, ensure_ascii=False))
+
+    return max(1, int(total_chars / CHARS_PER_TOKEN)) if total_chars > 0 else 0
+
 # Cache for pricing data
 _pricing_data: dict | None = None
 
@@ -138,8 +176,9 @@ def get_session_token_usage(session_path: Path) -> TokenUsage:
     """Calculate total token usage and cost from a session file.
 
     Reads all assistant messages and sums up their usage fields.
-    Deduplicates streaming messages by keeping only the final version
-    of each API request (identified by message_id:request_id).
+    Claude Code's JSONL files have unreliable output_tokens values (they appear
+    to be internal streaming counters, not actual token counts). We estimate
+    output tokens from the actual message content instead.
 
     Args:
         session_path: Path to the session JSONL file
@@ -150,9 +189,9 @@ def get_session_token_usage(session_path: Path) -> TokenUsage:
     totals = TokenUsage()
     models_seen: set[str] = set()
 
-    # Store deduplicated messages: dedup_hash -> (usage, model, output_tokens)
-    # Keep the entry with highest output_tokens (the complete response)
-    dedup_messages: dict[str, tuple[dict, str | None, int]] = {}
+    # Group entries by message.id to combine content and get accurate estimates
+    # Structure: msg_id -> {usage, model, content_list}
+    message_data: dict[str, dict] = {}
 
     try:
         with open(session_path, "r", encoding="utf-8") as f:
@@ -167,41 +206,62 @@ def get_session_token_usage(session_path: Path) -> TokenUsage:
                         usage = message.get("usage", {})
                         model = message.get("model")
                         msg_id = message.get("id")
-                        request_id = entry.get("requestId")
+                        content = message.get("content", [])
 
                         if not usage:
                             continue
 
-                        output_tokens = usage.get("output_tokens", 0)
-
-                        # Deduplicate by message_id:request_id
-                        if msg_id and request_id:
-                            dedup_hash = f"{msg_id}:{request_id}"
-                            existing = dedup_messages.get(dedup_hash)
-                            # Keep the entry with highest output_tokens (complete response)
-                            if existing is None or output_tokens > existing[2]:
-                                dedup_messages[dedup_hash] = (usage, model, output_tokens)
+                        if msg_id:
+                            if msg_id not in message_data:
+                                # First entry for this message
+                                message_data[msg_id] = {
+                                    "usage": dict(usage),
+                                    "model": model,
+                                    "all_content": list(content) if content else [],
+                                }
+                            else:
+                                # Additional chunk - merge content, update usage
+                                if content:
+                                    message_data[msg_id]["all_content"].extend(content)
+                                message_data[msg_id]["usage"] = dict(usage)
+                                if model:
+                                    message_data[msg_id]["model"] = model
                         else:
-                            # No dedup info available, use a unique key
-                            unique_key = f"no_dedup_{len(dedup_messages)}"
-                            dedup_messages[unique_key] = (usage, model, output_tokens)
+                            # No message ID - treat as unique message
+                            unique_key = f"no_id_{len(message_data)}"
+                            message_data[unique_key] = {
+                                "usage": dict(usage),
+                                "model": model,
+                                "all_content": list(content) if content else [],
+                            }
 
                 except json.JSONDecodeError:
                     continue
     except (FileNotFoundError, IOError):
         pass
 
-    # Sum up deduplicated messages
-    for usage, model, _ in dedup_messages.values():
+    # Sum up all messages with estimated output tokens
+    for data in message_data.values():
+        usage = data["usage"]
+        model = data["model"]
+        all_content = data["all_content"]
+
+        # Estimate output tokens from content
+        estimated_output = estimate_output_tokens_from_content(all_content)
+
         if model and model not in models_seen:
             models_seen.add(model)
             totals.models.append(model)
 
         totals.input_tokens += usage.get("input_tokens", 0)
-        totals.output_tokens += usage.get("output_tokens", 0)
+        totals.output_tokens += estimated_output
         totals.cache_creation_tokens += usage.get("cache_creation_input_tokens", 0)
         totals.cache_read_tokens += usage.get("cache_read_input_tokens", 0)
         totals.message_count += 1
-        totals.cost += calculate_message_cost(usage, model)
+
+        # Calculate cost with estimated output tokens
+        usage_for_cost = dict(usage)
+        usage_for_cost["output_tokens"] = estimated_output
+        totals.cost += calculate_message_cost(usage_for_cost, model)
 
     return totals

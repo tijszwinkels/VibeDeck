@@ -372,7 +372,7 @@ export function showTooltip(sessionId, e) {
                 <div class="tooltip-label">Token Usage</div>
                 <div class="tooltip-value tooltip-usage">
                     <span class="usage-item">In: ${formatTokenCount(u.input_tokens)}</span>
-                    <span class="usage-item">Out: ${formatTokenCount(u.output_tokens)}</span>
+                    <span class="usage-item">Out (est): ${formatTokenCount(u.output_tokens)}</span>
                     <span class="usage-item">Cache&uarr;: ${formatTokenCount(u.cache_creation_tokens)}</span>
                     <span class="usage-item">Cache&darr;: ${formatTokenCount(u.cache_read_tokens)}</span>
                 </div>
@@ -437,7 +437,7 @@ export function showDateCategoryTooltip(projectName, category, e) {
             <div class="tooltip-label">Token Usage</div>
             <div class="tooltip-value tooltip-usage">
                 <span class="usage-item">In: ${formatTokenCount(totalInput)}</span>
-                <span class="usage-item">Out: ${formatTokenCount(totalOutput)}</span>
+                <span class="usage-item">Out (est): ${formatTokenCount(totalOutput)}</span>
                 <span class="usage-item">Cache&uarr;: ${formatTokenCount(totalCacheCreate)}</span>
                 <span class="usage-item">Cache&darr;: ${formatTokenCount(totalCacheRead)}</span>
             </div>
@@ -498,10 +498,10 @@ export function showMessageTooltip(msgEl, e) {
             ${modelHtml}
             <div class="usage-row">
                 <span class="usage-item"><span class="usage-label">In:</span>${formatTokenCount(input)}</span>
-                <span class="usage-item"><span class="usage-label">Out:</span>${formatTokenCount(output)}</span>
+                <span class="usage-item"><span class="usage-label">Out (est):</span>${formatTokenCount(output)}</span>
                 <span class="usage-item"><span class="usage-label">Cache&uarr;:</span>${formatTokenCount(cacheCreate)}</span>
                 <span class="usage-item"><span class="usage-label">Cache&darr;:</span>${formatTokenCount(cacheRead)}</span>
-                <span class="usage-item"><span class="usage-label">Cost:</span>${formatCost(cost)}</span>
+                <span class="usage-item"><span class="usage-label">Cost (est):</span>${formatCost(cost)}</span>
             </div>
         `;
         // Position first with visibility hidden to measure, then show

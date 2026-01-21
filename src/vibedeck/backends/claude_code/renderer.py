@@ -17,7 +17,7 @@ from ..shared.rendering import (
     make_msg_id,
     render_git_commits,
 )
-from .pricing import calculate_message_cost
+from .pricing import calculate_message_cost, estimate_output_tokens_from_content
 
 # Re-export set_github_repo for backward compatibility
 from ..shared.rendering import set_github_repo  # noqa: F401
@@ -208,10 +208,23 @@ def render_message(entry: dict) -> str:
 
 
 class ClaudeCodeRenderer:
-    """Message renderer for Claude Code sessions."""
+    """Message renderer for Claude Code sessions.
+
+    Tracks content accumulation per message.id since Claude Code writes
+    streaming chunks as separate JSONL entries. Estimates output tokens
+    from content since the recorded output_tokens values are unreliable.
+    """
+
+    def __init__(self) -> None:
+        # Track accumulated content per message.id for token estimation
+        # Structure: msg_id -> list of content blocks
+        self._content_by_msg: dict[str, list] = {}
 
     def render_message(self, entry: dict) -> str:
         """Render a single message entry to HTML.
+
+        For assistant messages, tracks content across all entries with the same
+        message.id and estimates output tokens from the accumulated content.
 
         Args:
             entry: A parsed JSONL entry with type, timestamp, and message keys
@@ -219,5 +232,34 @@ class ClaudeCodeRenderer:
         Returns:
             HTML string for the message, or empty string if invalid
         """
-        # Delegate to the standalone function
+        log_type = entry.get("type")
+
+        # For assistant messages, accumulate content and estimate tokens
+        if log_type == "assistant":
+            message_data = entry.get("message", {})
+            msg_id = message_data.get("id")
+            usage = message_data.get("usage", {})
+            content = message_data.get("content", [])
+
+            if msg_id and usage:
+                # Accumulate content for this message
+                if msg_id not in self._content_by_msg:
+                    self._content_by_msg[msg_id] = []
+                if content:
+                    self._content_by_msg[msg_id].extend(content)
+
+                # Estimate output tokens from accumulated content
+                estimated_output = estimate_output_tokens_from_content(
+                    self._content_by_msg[msg_id]
+                )
+
+                # Create modified entry with estimated output_tokens
+                modified_entry = dict(entry)
+                modified_message = dict(message_data)
+                modified_usage = dict(usage)
+                modified_usage["output_tokens"] = estimated_output
+                modified_message["usage"] = modified_usage
+                modified_entry["message"] = modified_message
+                return render_message(modified_entry)
+
         return render_message(entry)
