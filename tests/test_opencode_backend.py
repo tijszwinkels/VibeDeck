@@ -138,7 +138,7 @@ class TestOpenCodeDiscovery:
 
     def test_find_recent_sessions(self, opencode_session):
         """Test finding recent sessions."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             find_recent_sessions,
         )
 
@@ -150,7 +150,7 @@ class TestOpenCodeDiscovery:
 
     def test_find_sessions_empty_storage(self, opencode_storage_dir):
         """Test finding sessions when storage is empty."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             find_recent_sessions,
         )
 
@@ -159,7 +159,7 @@ class TestOpenCodeDiscovery:
 
     def test_get_session_id(self, opencode_session):
         """Test extracting session ID from path."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             get_session_id,
         )
 
@@ -170,7 +170,7 @@ class TestOpenCodeDiscovery:
 
     def test_has_messages_true(self, opencode_session):
         """Test has_messages returns True when messages exist."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             has_messages,
         )
 
@@ -181,7 +181,7 @@ class TestOpenCodeDiscovery:
 
     def test_has_messages_false(self, opencode_storage_dir):
         """Test has_messages returns False when no messages."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             has_messages,
         )
 
@@ -195,7 +195,7 @@ class TestOpenCodeDiscovery:
 
     def test_get_first_user_message(self, opencode_session):
         """Test extracting first user message."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             get_first_user_message,
         )
 
@@ -207,7 +207,7 @@ class TestOpenCodeDiscovery:
 
     def test_should_watch_file_message(self, opencode_storage_dir):
         """Test should_watch_file for message files."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             should_watch_file,
         )
 
@@ -216,7 +216,7 @@ class TestOpenCodeDiscovery:
 
     def test_should_watch_file_part(self, opencode_storage_dir):
         """Test should_watch_file for part files."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             should_watch_file,
         )
 
@@ -225,7 +225,7 @@ class TestOpenCodeDiscovery:
 
     def test_should_watch_file_session(self, opencode_storage_dir):
         """Test should_watch_file returns False for session metadata files."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             should_watch_file,
         )
 
@@ -234,7 +234,7 @@ class TestOpenCodeDiscovery:
 
     def test_get_session_id_from_part_file(self, opencode_session):
         """Test extracting session ID from a part file by reading its contents."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             get_session_id_from_file_path,
         )
 
@@ -252,7 +252,7 @@ class TestOpenCodeDiscovery:
 
     def test_get_session_id_from_message_file(self, opencode_session):
         """Test extracting session ID from a message file path."""
-        from claude_code_session_explorer.backends.opencode.discovery import (
+        from vibedeck.backends.opencode.discovery import (
             get_session_id_from_file_path,
         )
 
@@ -274,7 +274,7 @@ class TestOpenCodeTailer:
 
     def test_read_all(self, opencode_session):
         """Test reading all messages."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -288,7 +288,7 @@ class TestOpenCodeTailer:
 
     def test_read_all_with_parts(self, opencode_session):
         """Test that parts are included with messages."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -305,7 +305,7 @@ class TestOpenCodeTailer:
 
     def test_read_all_empty_session(self, opencode_storage_dir):
         """Test reading from session with no messages."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         tailer = OpenCodeTailer(opencode_storage_dir, "nonexistent")
         messages = tailer.read_all()
@@ -314,7 +314,7 @@ class TestOpenCodeTailer:
 
     def test_read_new_lines_first_call(self, opencode_session):
         """Test first call to read_new_lines returns all messages."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -326,7 +326,7 @@ class TestOpenCodeTailer:
 
     def test_read_new_lines_incremental(self, opencode_session):
         """Test subsequent calls only return new messages."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -343,7 +343,7 @@ class TestOpenCodeTailer:
 
     def test_get_first_timestamp(self, opencode_session):
         """Test getting first message timestamp."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -356,7 +356,7 @@ class TestOpenCodeTailer:
 
     def test_waiting_for_input_after_assistant_text(self, opencode_session):
         """Test waiting_for_input is True after assistant text message."""
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -375,10 +375,10 @@ class TestOpenCodeRenderer:
 
     def test_render_user_message(self, opencode_session):
         """Test rendering user message."""
-        from claude_code_session_explorer.backends.opencode.renderer import (
+        from vibedeck.backends.opencode.renderer import (
             OpenCodeRenderer,
         )
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -394,7 +394,7 @@ class TestOpenCodeRenderer:
 
     def test_render_user_message_strips_quotes_and_newlines(self):
         """Test that user messages with surrounding quotes and trailing newlines are cleaned."""
-        from claude_code_session_explorer.backends.opencode.renderer import (
+        from vibedeck.backends.opencode.renderer import (
             OpenCodeRenderer,
         )
 
@@ -427,7 +427,7 @@ class TestOpenCodeRenderer:
 
     def test_render_user_message_escapes_html(self):
         """Test that user messages with HTML-like content are escaped."""
-        from claude_code_session_explorer.backends.opencode.renderer import (
+        from vibedeck.backends.opencode.renderer import (
             OpenCodeRenderer,
         )
 
@@ -459,10 +459,10 @@ class TestOpenCodeRenderer:
 
     def test_render_assistant_message(self, opencode_session):
         """Test rendering assistant message with text and tool."""
-        from claude_code_session_explorer.backends.opencode.renderer import (
+        from vibedeck.backends.opencode.renderer import (
             OpenCodeRenderer,
         )
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -480,10 +480,10 @@ class TestOpenCodeRenderer:
 
     def test_render_tool_completed(self, opencode_session):
         """Test rendering completed tool with output."""
-        from claude_code_session_explorer.backends.opencode.renderer import (
+        from vibedeck.backends.opencode.renderer import (
             OpenCodeRenderer,
         )
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_id = opencode_session["session_id"]
@@ -504,35 +504,35 @@ class TestOpenCodeBackend:
 
     def test_backend_name(self, opencode_storage_dir):
         """Test backend name property."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         assert backend.name == "OpenCode"
 
     def test_cli_command(self, opencode_storage_dir):
         """Test CLI command property."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         assert backend.cli_command == "opencode"
 
     def test_supports_send_message(self, opencode_storage_dir):
         """Test that send message is supported."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         assert backend.supports_send_message() is True
 
     def test_supports_fork_session(self, opencode_storage_dir):
         """Test that fork is not supported."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         assert backend.supports_fork_session() is False
 
     def test_build_send_command(self, opencode_storage_dir):
         """Test building send command."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         cmd = backend.build_send_command("ses_123", "hello world")
@@ -541,7 +541,7 @@ class TestOpenCodeBackend:
 
     def test_build_new_session_command(self, opencode_storage_dir):
         """Test building new session command."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         cmd = backend.build_new_session_command("start message")
@@ -550,7 +550,7 @@ class TestOpenCodeBackend:
 
     def test_build_new_session_command_with_model(self, opencode_storage_dir):
         """Test building new session command with model parameter."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         backend = OpenCodeBackend(storage_dir=opencode_storage_dir)
         cmd = backend.build_new_session_command(
@@ -567,7 +567,7 @@ class TestOpenCodeBackend:
 
     def test_get_session_metadata(self, opencode_session):
         """Test getting session metadata."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         storage_dir = opencode_session["storage_dir"]
         session_file = opencode_session["session_file"]
@@ -581,8 +581,8 @@ class TestOpenCodeBackend:
 
     def test_create_tailer(self, opencode_session):
         """Test creating a tailer."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
-        from claude_code_session_explorer.backends.opencode.tailer import OpenCodeTailer
+        from vibedeck.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
 
         storage_dir = opencode_session["storage_dir"]
         session_file = opencode_session["session_file"]
@@ -594,7 +594,7 @@ class TestOpenCodeBackend:
 
     def test_get_session_token_usage(self, opencode_session):
         """Test getting token usage."""
-        from claude_code_session_explorer.backends.opencode import OpenCodeBackend
+        from vibedeck.backends.opencode import OpenCodeBackend
 
         storage_dir = opencode_session["storage_dir"]
         session_file = opencode_session["session_file"]
@@ -614,7 +614,7 @@ class TestOpenCodeCLI:
 
     def test_build_send_command(self):
         """Test building send command."""
-        from claude_code_session_explorer.backends.opencode.cli import (
+        from vibedeck.backends.opencode.cli import (
             build_send_command,
         )
 
@@ -623,7 +623,7 @@ class TestOpenCodeCLI:
 
     def test_build_new_session_command(self):
         """Test building new session command."""
-        from claude_code_session_explorer.backends.opencode.cli import (
+        from vibedeck.backends.opencode.cli import (
             build_new_session_command,
         )
 
@@ -632,7 +632,7 @@ class TestOpenCodeCLI:
 
     def test_build_fork_command_raises(self):
         """Test that fork command raises NotImplementedError."""
-        from claude_code_session_explorer.backends.opencode.cli import (
+        from vibedeck.backends.opencode.cli import (
             build_fork_command,
         )
 

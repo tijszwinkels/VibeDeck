@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_code_session_explorer.backends.claude_code.discovery import (
+from vibedeck.backends.claude_code.discovery import (
     find_recent_sessions,
     should_watch_file,
     is_subagent_session,
@@ -16,8 +16,8 @@ from claude_code_session_explorer.backends.claude_code.discovery import (
     get_session_id_from_summary_file,
     _decode_path_greedy,
 )
-from claude_code_session_explorer.backends.claude_code.pricing import get_session_model
-from claude_code_session_explorer.backends.claude_code.tailer import is_warmup_session
+from vibedeck.backends.claude_code.pricing import get_session_model
+from vibedeck.backends.claude_code.tailer import is_warmup_session
 
 
 @pytest.fixture

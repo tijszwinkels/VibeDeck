@@ -1,21 +1,21 @@
-# Claude Code Session Explorer
+# VibeDeck
 
-Live-updating transcript viewer for Claude Code sessions.
+Live-updating transcript viewer and web frontend for Claude Code and OpenCode sessions.
 
 ## Overview
 
-This tool provides real-time updates as your Claude Code session progresses. New messages appear automatically within ~1 second.
+VibeDeck provides real-time updates as your coding session progresses. New messages appear automatically within ~1 second. It can also function as a web-based frontend (like Conductor) for sending messages and forking sessions.
 
 ## Installation
 
 ```bash
-uv tool install git+https://github.com/tijszwinkels/claude-code-session-explorer
+uv tool install git+https://github.com/tijszwinkels/vibedeck
 ```
 
 Or run directly:
 
 ```bash
-uvx git+https://github.com/tijszwinkels/claude-code-session-explorer
+uvx git+https://github.com/tijszwinkels/vibedeck
 ```
 
 ## Usage
@@ -24,19 +24,19 @@ uvx git+https://github.com/tijszwinkels/claude-code-session-explorer
 
 ```bash
 # Watch all recent sessions (auto-detected, up to 10)
-claude-code-session-explorer
+vibedeck
 
 # Watch a specific session file (in addition to auto-discovered ones)
-claude-code-session-explorer --session ~/.claude/projects/.../session.jsonl
+vibedeck --session ~/.claude/projects/.../session.jsonl
 
 # Limit number of sessions
-claude-code-session-explorer --max-sessions 5
+vibedeck --max-sessions 5
 
 # Custom port
-claude-code-session-explorer --port 8765
+vibedeck --port 8765
 
 # Don't auto-open browser
-claude-code-session-explorer --no-open
+vibedeck --no-open
 ```
 
 ### Export to HTML
@@ -45,29 +45,29 @@ Export session transcripts to static HTML files with pagination, search, and sta
 
 ```bash
 # Export Claude Code session to HTML
-claude-code-session-explorer html ~/.claude/projects/.../session.jsonl -o ./output
+vibedeck html ~/.claude/projects/.../session.jsonl -o ./output
 
 # Export OpenCode session by ID
-claude-code-session-explorer html ses_xxx -o ./output
+vibedeck html ses_xxx -o ./output
 
 # Upload to GitHub Gist with preview URL
-claude-code-session-explorer html session.jsonl --gist
+vibedeck html session.jsonl --gist
 
 # Open in browser after export
-claude-code-session-explorer html session.jsonl -o ./output --open
+vibedeck html session.jsonl -o ./output --open
 ```
 
 ### Export to Markdown
 
 ```bash
 # Export to stdout
-claude-code-session-explorer md session.jsonl
+vibedeck md session.jsonl
 
 # Export to file
-claude-code-session-explorer md session.jsonl -o transcript.md
+vibedeck md session.jsonl -o transcript.md
 
 # Export OpenCode session
-claude-code-session-explorer md ses_xxx -o transcript.md
+vibedeck md ses_xxx -o transcript.md
 ```
 
 ## Features
@@ -93,10 +93,10 @@ CLI options can be set in a TOML config file. Use `--config` to load a config fi
 
 ```bash
 # Load config and start server
-claude-code-session-explorer --config config.toml
+vibedeck --config config.toml
 
 # Show effective configuration
-claude-code-session-explorer --config config.toml config
+vibedeck --config config.toml config
 ```
 
 CLI arguments override config file values. See `config.example.toml` for all options.
@@ -125,7 +125,7 @@ uv sync
 uv run pytest
 
 # Run development server
-uv run claude-code-session-explorer --debug
+uv run vibedeck --debug
 ```
 
 ## Credits

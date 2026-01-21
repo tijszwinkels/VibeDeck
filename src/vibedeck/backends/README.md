@@ -1,6 +1,6 @@
 # Backend Protocol Documentation
 
-This document describes how to implement a new backend for the Claude Code Session Explorer. A backend provides the interface between the session explorer and a specific coding tool (e.g., Claude Code, OpenCode).
+This document describes how to implement a new backend for VibeDeck. A backend provides the interface between VibeDeck and a specific coding tool (e.g., Claude Code, OpenCode).
 
 ## Architecture Overview
 
@@ -28,7 +28,7 @@ To add a new backend:
 1. Create a directory: `backends/your_backend/`
 2. Implement `YourBackend` class implementing `CodingToolBackend` protocol
 3. Register in `backends/registry.py`
-4. Use with: `claude-code-session-explorer --backend your-backend`
+4. Use with: `vibedeck --backend your-backend`
 
 ## Protocol Reference
 
@@ -588,7 +588,7 @@ Example using macros:
 from jinja2 import Environment, PackageLoader
 
 _jinja_env = Environment(
-    loader=PackageLoader("claude_code_session_explorer", "templates"),
+    loader=PackageLoader("vibedeck", "templates"),
     autoescape=True,
 )
 _macros = _jinja_env.get_template("macros.html").module
@@ -611,7 +611,7 @@ class OpenCodeRenderer:
 
 ```python
 # Test backend implementation
-from claude_code_session_explorer.backends import get_backend
+from vibedeck.backends import get_backend
 
 backend = get_backend("your-backend")
 print(f"Name: {backend.name}")

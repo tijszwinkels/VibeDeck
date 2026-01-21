@@ -10,7 +10,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def initialize_backend():
     """Initialize the backend before each test."""
-    from claude_code_session_explorer import server, sessions
+    from vibedeck import server, sessions
 
     # Use the proper initialization function which also sets up CSS, etc.
     server.initialize_backend("claude-code")

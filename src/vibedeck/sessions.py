@@ -1,4 +1,4 @@
-"""Session management for Claude Code Session Explorer.
+"""Session management for VibeDeck.
 
 Handles tracking of coding sessions, including adding, removing,
 and querying session state. Works with any backend that implements

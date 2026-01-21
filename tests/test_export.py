@@ -104,19 +104,19 @@ class TestDetectSessionBackend:
 
     def test_detects_claude_code_jsonl(self, sample_claude_code_session):
         """Should detect Claude Code backend from .jsonl file."""
-        from claude_code_session_explorer.export import detect_session_backend
+        from vibedeck.export import detect_session_backend
 
         backend = detect_session_backend(sample_claude_code_session)
         assert backend == "claude_code"
 
     def test_detects_opencode_session_id(self, sample_opencode_session, monkeypatch):
         """Should detect OpenCode backend from session ID."""
-        from claude_code_session_explorer.export import detect_session_backend
+        from vibedeck.export import detect_session_backend
 
         storage_dir, session_id = sample_opencode_session
         # Patch the opencode storage path
         monkeypatch.setattr(
-            "claude_code_session_explorer.export.get_opencode_storage_dir",
+            "vibedeck.export.get_opencode_storage_dir",
             lambda: storage_dir,
         )
 
@@ -125,7 +125,7 @@ class TestDetectSessionBackend:
 
     def test_raises_on_invalid_session(self, tmp_path):
         """Should raise ValueError for invalid session path."""
-        from claude_code_session_explorer.export import detect_session_backend
+        from vibedeck.export import detect_session_backend
 
         with pytest.raises(ValueError, match="Cannot determine session type"):
             detect_session_backend(tmp_path / "nonexistent.txt")
@@ -139,14 +139,14 @@ class TestResolveSessionPath:
 
     def test_resolves_existing_file(self, sample_claude_code_session):
         """Should return Path for existing file."""
-        from claude_code_session_explorer import resolve_session_path
+        from vibedeck import resolve_session_path
 
         result = resolve_session_path(str(sample_claude_code_session))
         assert result == sample_claude_code_session
 
     def test_resolves_opencode_session_id(self, sample_opencode_session, monkeypatch):
         """Should resolve OpenCode session ID to Path."""
-        from claude_code_session_explorer import resolve_session_path
+        from vibedeck import resolve_session_path
 
         storage_dir, session_id = sample_opencode_session
         # Patch Path.home() to use our temp dir
@@ -171,7 +171,7 @@ class TestResolveSessionPath:
     def test_raises_on_nonexistent_session(self):
         """Should raise BadParameter for nonexistent session."""
         import click
-        from claude_code_session_explorer import resolve_session_path
+        from vibedeck import resolve_session_path
 
         with pytest.raises(click.BadParameter, match="Session not found"):
             resolve_session_path("nonexistent_session_xyz")
@@ -185,7 +185,7 @@ class TestGenerateHtml:
 
     def test_generates_html_files(self, sample_claude_code_session, tmp_path):
         """Should generate index.html and page files."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         output_dir = tmp_path / "output"
         generate_html(sample_claude_code_session, output_dir)
@@ -195,7 +195,7 @@ class TestGenerateHtml:
 
     def test_html_contains_user_messages(self, sample_claude_code_session, tmp_path):
         """Should include user messages in HTML output."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         output_dir = tmp_path / "output"
         generate_html(sample_claude_code_session, output_dir)
@@ -207,7 +207,7 @@ class TestGenerateHtml:
         self, sample_claude_code_session, tmp_path
     ):
         """Should include assistant messages in HTML output."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         output_dir = tmp_path / "output"
         generate_html(sample_claude_code_session, output_dir)
@@ -217,7 +217,7 @@ class TestGenerateHtml:
 
     def test_html_index_contains_prompts(self, sample_claude_code_session, tmp_path):
         """Should list user prompts in index."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         output_dir = tmp_path / "output"
         generate_html(sample_claude_code_session, output_dir)
@@ -229,7 +229,7 @@ class TestGenerateHtml:
         self, sample_claude_code_session, tmp_path
     ):
         """Should show 'Claude Code' in title for Claude Code sessions."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         output_dir = tmp_path / "output"
         generate_html(sample_claude_code_session, output_dir)
@@ -245,11 +245,11 @@ class TestGenerateHtml:
         self, sample_opencode_session, tmp_path, monkeypatch
     ):
         """Should show 'OpenCode' in title for OpenCode sessions."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         storage_dir, session_id = sample_opencode_session
         monkeypatch.setattr(
-            "claude_code_session_explorer.export.get_opencode_storage_dir",
+            "vibedeck.export.get_opencode_storage_dir",
             lambda: storage_dir,
         )
 
@@ -265,7 +265,7 @@ class TestGenerateHtml:
 
     def test_html_pagination_with_many_prompts(self, tmp_path):
         """Should paginate when there are many prompts."""
-        from claude_code_session_explorer.export import generate_html
+        from vibedeck.export import generate_html
 
         # Create session with 12 prompts (should create 3 pages with 5 per page)
         session_file = tmp_path / "large_session.jsonl"
@@ -308,7 +308,7 @@ class TestExportMarkdown:
 
     def test_exports_markdown_to_file(self, sample_claude_code_session, tmp_path):
         """Should export markdown to file."""
-        from claude_code_session_explorer.export import export_markdown
+        from vibedeck.export import export_markdown
 
         output_file = tmp_path / "transcript.md"
         result = export_markdown(sample_claude_code_session, output_file)
@@ -318,7 +318,7 @@ class TestExportMarkdown:
 
     def test_exports_markdown_to_string(self, sample_claude_code_session):
         """Should return markdown string when no output path."""
-        from claude_code_session_explorer.export import export_markdown
+        from vibedeck.export import export_markdown
 
         result = export_markdown(sample_claude_code_session, None)
 
@@ -327,7 +327,7 @@ class TestExportMarkdown:
 
     def test_markdown_contains_prompts(self, sample_claude_code_session):
         """Should include user prompts in markdown."""
-        from claude_code_session_explorer.export import export_markdown
+        from vibedeck.export import export_markdown
 
         result = export_markdown(sample_claude_code_session, None)
 
@@ -336,7 +336,7 @@ class TestExportMarkdown:
 
     def test_markdown_contains_assistant_responses(self, sample_claude_code_session):
         """Should include assistant responses in markdown."""
-        from claude_code_session_explorer.export import export_markdown
+        from vibedeck.export import export_markdown
 
         result = export_markdown(sample_claude_code_session, None)
 
@@ -345,7 +345,7 @@ class TestExportMarkdown:
 
     def test_markdown_contains_tool_usage(self, sample_claude_code_session):
         """Should include tool usage in markdown."""
-        from claude_code_session_explorer.export import export_markdown
+        from vibedeck.export import export_markdown
 
         result = export_markdown(sample_claude_code_session, None)
 
@@ -361,7 +361,7 @@ class TestAnalyzeConversation:
 
     def test_counts_tool_usage(self, sample_claude_code_session):
         """Should count tool usage correctly."""
-        from claude_code_session_explorer.export import (
+        from vibedeck.export import (
             parse_session_entries,
             analyze_conversation,
         )
@@ -382,7 +382,7 @@ class TestGistPreviewJs:
 
     def test_injects_js_into_html(self, sample_claude_code_session, tmp_path):
         """Should inject gist preview JS into HTML files."""
-        from claude_code_session_explorer.export import (
+        from vibedeck.export import (
             generate_html,
             inject_gist_preview_js,
         )
@@ -397,7 +397,7 @@ class TestGistPreviewJs:
 
     def test_js_rewrites_relative_links(self, sample_claude_code_session, tmp_path):
         """Should include link rewriting logic in injected JS."""
-        from claude_code_session_explorer.export import (
+        from vibedeck.export import (
             generate_html,
             inject_gist_preview_js,
         )
@@ -418,14 +418,14 @@ class TestExtractTextFromContent:
 
     def test_extracts_from_string(self):
         """Should extract text from string content."""
-        from claude_code_session_explorer.export import extract_text_from_content
+        from vibedeck.export import extract_text_from_content
 
         result = extract_text_from_content("Hello, world!")
         assert result == "Hello, world!"
 
     def test_extracts_from_list_of_blocks(self):
         """Should extract text from list of content blocks."""
-        from claude_code_session_explorer.export import extract_text_from_content
+        from vibedeck.export import extract_text_from_content
 
         content = [
             {"type": "text", "text": "First part."},
@@ -438,7 +438,7 @@ class TestExtractTextFromContent:
 
     def test_returns_empty_for_none(self):
         """Should return empty string for None."""
-        from claude_code_session_explorer.export import extract_text_from_content
+        from vibedeck.export import extract_text_from_content
 
         result = extract_text_from_content(None)
         assert result == ""

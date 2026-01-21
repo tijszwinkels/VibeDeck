@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from claude_code_session_explorer.sessions import (
+from vibedeck.sessions import (
     SessionInfo,
     add_session,
     get_session,

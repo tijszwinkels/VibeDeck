@@ -1,11 +1,11 @@
-# Claude Code Session Explorer Configuration
+# VibeDeck Configuration
 #
 # Copy this file to one of these locations:
-#   ~/.config/claude-code-session-explorer/config.toml  (global)
-#   .claude-session-explorer.toml                       (project-local)
+#   ~/.config/vibedeck/config.toml  (global)
+#   .vibedeck.toml                  (project-local)
 #
 # CLI arguments override config file values.
-# Run `claude-code-session-explorer config` to see effective configuration.
+# Run `vibedeck config` to see effective configuration.
 
 [serve]
 # port = 8765                    # Server port
@@ -21,7 +21,7 @@
 # summarize_after_idle_for = 270  # Re-summarize after N seconds idle (optional)
 # idle_summary_model = "haiku"    # Model for idle summarization (default: haiku). Immediate summaries use the conversation's model.
 # summary_after_long_running = 180  # Summarize if CLI runs longer than N seconds (uses conversation's model for warm cache)
-# summary_prompt_file = "~/.config/claude-code-session-explorer/prompt.txt"  # Custom prompt template file
+# summary_prompt_file = "~/.config/vibedeck/prompt.txt"  # Custom prompt template file
 # summary_log_keys = ["title", "short_summary", "summary_generated_at", "session_id", "path"]  # Keys to include in log
 
 # Experimental features (use with caution)

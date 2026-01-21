@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 # User preferences config directory
-CONFIG_DIR = Path.home() / ".config" / "claude-code-session-explorer"
+CONFIG_DIR = Path.home() / ".config" / "vibedeck"
 
 
 def _get_archived_sessions_path() -> Path:

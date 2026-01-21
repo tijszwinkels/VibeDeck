@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from claude_code_session_explorer import server, sessions, broadcasting
-from claude_code_session_explorer.server import app
-from claude_code_session_explorer.sessions import add_session
-from claude_code_session_explorer.routes.sessions import configure_session_routes
+from vibedeck import server, sessions, broadcasting
+from vibedeck.server import app
+from vibedeck.sessions import add_session
+from vibedeck.routes.sessions import configure_session_routes
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ class TestServerEndpoints:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
-        assert "Claude Code Session Explorer" in response.text
+        assert "VibeDeck" in response.text
 
     def test_index_includes_css(self, temp_jsonl_file):
         """Test that index includes CSS."""
@@ -873,7 +873,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "test.txt"
         test_file.write_text("initial content")
@@ -905,7 +905,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         binary_file = home_tmp_path / "image.png"
         binary_file.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x00")
@@ -930,7 +930,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "append_test.txt"
         test_file.write_text("initial")
@@ -954,7 +954,7 @@ class TestFileWatchAPI:
             # Yield a fake change event (content doesn't matter, generator re-stats the file)
             yield {("modified", str(test_file))}
 
-        with patch("claude_code_session_explorer.server.watchfiles.awatch", mock_awatch):
+        with patch("vibedeck.server.watchfiles.awatch", mock_awatch):
             generator = _file_watch_generator(test_file, mock_request, follow=True)
 
             # Get initial event
@@ -979,7 +979,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "truncate_test.txt"
         test_file.write_text("long initial content here")
@@ -1000,7 +1000,7 @@ class TestFileWatchAPI:
             test_file.write_text("short")
             yield {("modified", str(test_file))}
 
-        with patch("claude_code_session_explorer.server.watchfiles.awatch", mock_awatch):
+        with patch("vibedeck.server.watchfiles.awatch", mock_awatch):
             generator = _file_watch_generator(test_file, mock_request, follow=True)
 
             # Get initial event
@@ -1023,7 +1023,7 @@ class TestFileWatchAPI:
         import os
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "inode_test.txt"
         test_file.write_text("original content")
@@ -1046,7 +1046,7 @@ class TestFileWatchAPI:
             os.replace(temp_file, test_file)
             yield {("modified", str(test_file))}
 
-        with patch("claude_code_session_explorer.server.watchfiles.awatch", mock_awatch):
+        with patch("vibedeck.server.watchfiles.awatch", mock_awatch):
             generator = _file_watch_generator(test_file, mock_request, follow=True)
 
             # Get initial event
@@ -1071,7 +1071,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "delete_test.txt"
         test_file.write_text("will be deleted")
@@ -1092,7 +1092,7 @@ class TestFileWatchAPI:
             test_file.unlink()
             yield {("deleted", str(test_file))}
 
-        with patch("claude_code_session_explorer.server.watchfiles.awatch", mock_awatch):
+        with patch("vibedeck.server.watchfiles.awatch", mock_awatch):
             generator = _file_watch_generator(test_file, mock_request, follow=True)
 
             # Get initial event
@@ -1114,7 +1114,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "disconnect_test.txt"
         test_file.write_text("test content")
@@ -1146,7 +1146,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.routes.files import _file_watch_generator
+        from vibedeck.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "follow_false_test.txt"
         test_file.write_text("initial")
@@ -1168,7 +1168,7 @@ class TestFileWatchAPI:
                 f.write(" more")
             yield {("modified", str(test_file))}
 
-        with patch("claude_code_session_explorer.server.watchfiles.awatch", mock_awatch):
+        with patch("vibedeck.server.watchfiles.awatch", mock_awatch):
             # Note: follow=False
             generator = _file_watch_generator(test_file, mock_request, follow=False)
 
@@ -1638,7 +1638,7 @@ class TestArchivedSessionsEndpoints:
     @pytest.fixture(autouse=True)
     def use_temp_config_dir(self, home_tmp_path, monkeypatch):
         """Use a temporary config directory to avoid deleting user's real config."""
-        from claude_code_session_explorer.routes import archives
+        from vibedeck.routes import archives
         temp_config_dir = home_tmp_path / "config"
         temp_config_dir.mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(archives, "CONFIG_DIR", temp_config_dir)
@@ -1725,7 +1725,7 @@ class TestArchivedSessionsEndpoints:
         )
 
         # Check the file exists and contains the session
-        from claude_code_session_explorer.routes.archives import _get_archived_sessions_path
+        from vibedeck.routes.archives import _get_archived_sessions_path
         config_path = _get_archived_sessions_path()
         assert config_path.exists()
 
