@@ -1,40 +1,50 @@
 """FastAPI server with SSE endpoint for live transcript updates."""
 
 import asyncio
-import inspect
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
 import watchfiles
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
-from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
-
-import os
 
 from .backends import CodingToolBackend, get_backend, get_multi_backend
 from .backends.thinking import detect_thinking_level
-from .summarizer import Summarizer, LogWriter, IdleTracker
+from .broadcasting import (
+    add_client,
+    broadcast_event,
+    broadcast_message,
+    broadcast_permission_denied,
+    broadcast_session_added,
+    broadcast_session_catchup,
+    broadcast_session_removed,
+    broadcast_session_status,
+    broadcast_session_summary_updated,
+    get_clients,
+    remove_client,
+)
+from .routes import archives_router, files_router, sessions_router
+from .routes.sessions import configure_session_routes
 from .sessions import (
     MAX_SESSIONS,
     SessionInfo,
     add_session,
-    get_current_backend,
     get_known_session_files,
     get_projects_dir,
     get_session,
     get_sessions,
     get_sessions_list,
     get_sessions_lock,
-    remove_session,
     session_count,
     set_backend,
 )
+from .summarizer import IdleTracker, LogWriter, Summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +61,6 @@ _enable_thinking = False  # Enable with --enable-thinking CLI flag
 _thinking_budget: int | None = None  # Fixed budget with --thinking-budget CLI flag
 
 # Global state for server (not session-related)
-_clients: set[asyncio.Queue] = set()
 _watch_task: asyncio.Task | None = None
 
 # Summarization state
@@ -76,6 +85,9 @@ _css: str | None = None
 _cached_models: dict[str, list[str]] = {}
 
 
+# Configuration setters/getters
+
+
 def set_send_enabled(enabled: bool) -> None:
     """Set whether sending messages to Claude is enabled."""
     global _send_enabled
@@ -94,7 +106,7 @@ def set_fork_enabled(enabled: bool) -> None:
     _fork_enabled = enabled
 
 
-def set_default_send_backend(backend: str) -> None:
+def set_default_send_backend(backend: str | None) -> None:
     """Set the default backend for new sessions."""
     global _default_send_backend
     _default_send_backend = backend
@@ -131,6 +143,19 @@ def set_thinking_budget(budget: int | None) -> None:
 def is_send_enabled() -> bool:
     """Check if sending messages is enabled."""
     return _send_enabled
+
+
+def is_fork_enabled() -> bool:
+    """Check if fork is enabled."""
+    return _fork_enabled
+
+
+def is_skip_permissions() -> bool:
+    """Check if skip permissions is enabled."""
+    return _skip_permissions
+
+
+# Allowed directories management
 
 
 def _get_allowed_dirs_path() -> Path:
@@ -200,6 +225,9 @@ def load_allowed_directories_from_config() -> None:
         logger.info(f"Loaded {len(_allowed_directories)} allowed directories from config")
 
 
+# Summarization configuration
+
+
 def configure_summarization(
     backend: CodingToolBackend,
     summary_log: "Path | None" = None,
@@ -253,6 +281,16 @@ def configure_summarization(
         )
 
 
+def get_summarizer() -> "Summarizer | None":
+    """Get the current summarizer instance."""
+    return _summarizer
+
+
+def get_idle_summary_model() -> str:
+    """Get the model used for idle summarization."""
+    return _idle_summary_model
+
+
 async def _summarize_session_async(session: SessionInfo, model: str | None = None) -> bool:
     """Async wrapper for summarization.
 
@@ -285,12 +323,15 @@ async def _summarize_session_async(session: SessionInfo, model: str | None = Non
 
     # If summary was successful, broadcast the update and notify idle tracker
     if result.success:
-        await broadcast_session_summary_updated(session.session_id)
+        await _broadcast_session_summary_updated(session.session_id)
         # Mark session as summarized in idle tracker to cancel pending timer
         if _idle_tracker is not None:
             _idle_tracker.mark_session_summarized(session.session_id)
 
     return result.success
+
+
+# Backend initialization
 
 
 def initialize_backend(backend_name: str | None = None, **config) -> CodingToolBackend:
@@ -397,204 +438,25 @@ def get_backend_for_session(session_path: Path) -> CodingToolBackend:
     return backend
 
 
-class SendMessageRequest(BaseModel):
-    """Request body for sending a message to a session."""
-
-    message: str
+# Broadcasting wrappers (use dependency injection pattern from broadcasting module)
 
 
-class GrantPermissionRequest(BaseModel):
-    """Request body for granting permissions and re-sending a message."""
-
-    permissions: list[str]  # e.g., ["Bash(npm test:*)", "Read"]
-    original_message: str  # Message to re-send after granting
+async def _broadcast_session_catchup(info: SessionInfo) -> None:
+    """Broadcast session catchup using the renderer for this session."""
+    await broadcast_session_catchup(info, get_renderer_for_session)
 
 
-class FileResponse(BaseModel):
-    """Response for file preview endpoint."""
-
-    content: str
-    path: str
-    filename: str
-    size: int
-    language: str | None
-    truncated: bool = False
-    rendered_html: str | None = None  # For markdown files: pre-rendered HTML
+async def _broadcast_session_summary_updated(session_id: str) -> None:
+    """Broadcast session summary update."""
+    await broadcast_session_summary_updated(session_id, get_session)
 
 
-# File extension to highlight.js language mapping
-EXTENSION_TO_LANGUAGE = {
-    ".py": "python",
-    ".js": "javascript",
-    ".ts": "typescript",
-    ".tsx": "typescript",
-    ".jsx": "javascript",
-    ".json": "json",
-    ".html": "html",
-    ".htm": "html",
-    ".css": "css",
-    ".scss": "scss",
-    ".less": "less",
-    ".md": "markdown",
-    ".markdown": "markdown",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".toml": "toml",
-    ".xml": "xml",
-    ".sql": "sql",
-    ".sh": "bash",
-    ".bash": "bash",
-    ".zsh": "bash",
-    ".rs": "rust",
-    ".go": "go",
-    ".java": "java",
-    ".c": "c",
-    ".cpp": "cpp",
-    ".h": "c",
-    ".hpp": "cpp",
-    ".rb": "ruby",
-    ".php": "php",
-    ".swift": "swift",
-    ".kt": "kotlin",
-    ".r": "r",
-    ".lua": "lua",
-    ".pl": "perl",
-    ".gitignore": "plaintext",
-    ".env": "plaintext",
-}
-
-MAX_FILE_SIZE = 1024 * 1024  # 1MB
-
-# Image file extensions and their MIME types
-IMAGE_EXTENSIONS = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".svg": "image/svg+xml",
-    ".ico": "image/x-icon",
-    ".bmp": "image/bmp",
-}
+async def _broadcast_session_status(session_id: str) -> None:
+    """Broadcast session status update."""
+    await broadcast_session_status(session_id, get_session)
 
 
-class NewSessionRequest(BaseModel):
-    """Request body for starting a new session."""
-
-    message: str  # Initial message to send (required)
-    cwd: str | None = None  # Working directory (optional)
-    backend: str | None = None  # Backend to use (optional, for multi-backend mode)
-    model_index: int | None = (
-        None  # Model index from /backends/{name}/models (optional)
-    )
-
-
-async def broadcast_event(event_type: str, data: dict) -> None:
-    """Broadcast an event to all connected clients."""
-    dead_clients = []
-
-    for queue in _clients:
-        try:
-            queue.put_nowait({"event": event_type, "data": data})
-        except asyncio.QueueFull:
-            dead_clients.append(queue)
-
-    for queue in dead_clients:
-        _clients.discard(queue)
-
-
-async def broadcast_message(session_id: str, html: str) -> None:
-    """Broadcast a message to all connected clients."""
-    await broadcast_event(
-        "message",
-        {
-            "type": "html",
-            "content": html,
-            "session_id": session_id,
-        },
-    )
-
-
-async def broadcast_session_added(info: SessionInfo) -> None:
-    """Broadcast that a new session was added."""
-    await broadcast_event("session_added", info.to_dict())
-
-
-async def broadcast_session_catchup(info: SessionInfo) -> None:
-    """Broadcast existing messages for a newly added session.
-
-    When a session is added while clients are already connected, those clients
-    need to receive the existing messages (catchup) for that session.
-    """
-    renderer = get_renderer_for_session(info.path)
-
-    existing = info.tailer.read_all()
-    for entry in existing:
-        html = renderer.render_message(entry)
-        if html:
-            await broadcast_message(info.session_id, html)
-
-
-async def broadcast_session_removed(session_id: str) -> None:
-    """Broadcast that a session was removed."""
-    await broadcast_event("session_removed", {"id": session_id})
-
-
-async def broadcast_session_summary_updated(session_id: str) -> None:
-    """Broadcast that a session's summary data has been updated."""
-    info = get_session(session_id)
-    if info is None:
-        logger.debug(f"Cannot broadcast summary update: session {session_id} not found")
-        return
-    logger.debug(
-        f"Broadcasting summary update for {session_id}: "
-        f"title={info.summary_title!r}, short={info.summary_short!r}"
-    )
-    await broadcast_event(
-        "session_summary_updated",
-        {
-            "session_id": session_id,
-            "summaryTitle": info.summary_title,
-            "summaryShort": info.summary_short,
-            "summaryExecutive": info.summary_executive,
-        },
-    )
-
-
-async def broadcast_session_status(session_id: str) -> None:
-    """Broadcast session status (running state, queue size, waiting state)."""
-    info = get_session(session_id)
-    if info is None:
-        return
-    await broadcast_event(
-        "session_status",
-        {
-            "session_id": session_id,
-            "running": info.process is not None,
-            "queued_messages": len(info.message_queue),
-            "waiting_for_input": info.tailer.waiting_for_input,
-        },
-    )
-
-
-async def broadcast_permission_denied(
-    session_id: str, denials: list[dict], original_message: str
-) -> None:
-    """Broadcast permission denial event to clients.
-
-    Args:
-        session_id: The session where permission was denied
-        denials: List of permission denial dicts from CLI output
-        original_message: The original message that triggered the denial
-    """
-    await broadcast_event(
-        "permission_denied",
-        {
-            "session_id": session_id,
-            "denials": denials,
-            "original_message": original_message,
-        },
-    )
+# Process management
 
 
 async def _monitor_attached_process(info: SessionInfo) -> None:
@@ -611,22 +473,18 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
     duration = 0.0
 
     try:
-        # Wait for process to complete
         await info.process.wait()
         duration = time.monotonic() - start_time
-        logger.debug(f"Attached process completed for session {info.session_id} ({duration:.1f}s)")
     except Exception as e:
-        logger.error(f"Error monitoring attached process for {info.session_id}: {e}")
+        logger.error(f"Error monitoring process for {info.session_id}: {e}")
     finally:
         info.process = None
 
-        # Determine if we should summarize:
-        # 1. New session (no summary yet) - always summarize immediately
-        # 2. Long-running session (duration > threshold) - summarize to use warm cache
-        should_summarize = False
-        summary_reason = ""
-
+        # Check if we should summarize
         if _summarizer is not None:
+            should_summarize = False
+            summary_reason = ""
+
             if not info.get_summary_path().exists():
                 should_summarize = True
                 summary_reason = "new session"
@@ -634,22 +492,22 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
                 should_summarize = True
                 summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
 
-        if should_summarize:
-            session_backend = get_backend_for_session(info.path)
-            session_model = session_backend.get_session_model(info.path)
-            logger.info(f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}")
-            asyncio.create_task(_summarize_session_async(info, model=session_model))
+            if should_summarize:
+                session_backend = get_backend_for_session(info.path)
+                session_model = session_backend.get_session_model(info.path)
+                logger.info(f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}")
+                asyncio.create_task(_summarize_session_async(info, model=session_model))
 
-        await broadcast_session_status(info.session_id)
+        await _broadcast_session_status(info.session_id)
 
 
 def _attach_pending_process(info: SessionInfo) -> bool:
-    """Attach a pending process to a newly discovered session.
+    """Try to attach a pending process to a newly discovered session.
 
-    When a new session is created via /sessions/new, we store the process
-    in _pending_new_session_processes keyed by cwd. When the session file
-    appears and we add it, we check if there's a matching pending process
-    and attach it so the stop button works.
+    When a new session is started via /sessions/new, the process is stored
+    in _pending_new_session_processes until the session file appears. This
+    function checks if there's a pending process for this session's project
+    path and attaches it.
 
     Returns:
         True if a process was attached, False otherwise.
@@ -657,18 +515,13 @@ def _attach_pending_process(info: SessionInfo) -> bool:
     if not info.project_path:
         return False
 
-    # Try to match by project path
-    project_path_key = str(Path(info.project_path).resolve())
-    proc = _pending_new_session_processes.pop(project_path_key, None)
+    cwd_key = str(Path(info.project_path).resolve())
+    proc = _pending_new_session_processes.pop(cwd_key, None)
 
     if proc is not None:
-        # Check if process is still running
-        if proc.returncode is None:
-            info.process = proc
-            logger.info(f"Attached pending process to session {info.session_id}")
-            return True
-        else:
-            logger.debug(f"Pending process already exited for {info.session_id}")
+        info.process = proc
+        logger.debug(f"Attached pending process to session {info.session_id}")
+        return True
 
     return False
 
@@ -767,7 +620,7 @@ async def run_cli_for_session(
         # (forked session will create its own session file and be picked up by file watcher)
         if not fork:
             info.process = proc
-            await broadcast_session_status(session_id)
+            await _broadcast_session_status(session_id)
 
         # Wait for completion
         stdout, stderr = await proc.communicate()
@@ -788,7 +641,7 @@ async def run_cli_for_session(
                 # Don't process queue or summarize - wait for user decision
                 if not fork:
                     info.process = None
-                    await broadcast_session_status(session_id)
+                    await _broadcast_session_status(session_id)
                 return
 
     except Exception as e:
@@ -824,7 +677,10 @@ async def run_cli_for_session(
                 next_message = info.message_queue.pop(0)
                 asyncio.create_task(run_cli_for_session(session_id, next_message))
 
-            await broadcast_session_status(session_id)
+            await _broadcast_session_status(session_id)
+
+
+# Session message processing
 
 
 async def process_session_messages(session_id: str) -> None:
@@ -845,7 +701,7 @@ async def process_session_messages(session_id: str) -> None:
 
     # Broadcast updated waiting state after processing messages
     if new_entries:
-        await broadcast_session_status(session_id)
+        await _broadcast_session_status(session_id)
 
 
 async def process_session_summary_update(session_id: str) -> None:
@@ -864,7 +720,7 @@ async def process_session_summary_update(session_id: str) -> None:
     logger.debug(f"Looking for summary at: {summary_path}")
     if info.load_summary():
         logger.info(f"Summary updated for session {session_id}: {info.summary_title}")
-        await broadcast_session_summary_updated(session_id)
+        await _broadcast_session_summary_updated(session_id)
     else:
         logger.debug(f"Failed to load summary for session {session_id}")
 
@@ -893,14 +749,17 @@ async def check_for_new_sessions() -> None:
                         # Check if there's a pending process for this session's project path
                         attached = _attach_pending_process(info)
                         await broadcast_session_added(info)
-                        await broadcast_session_catchup(info)
+                        await _broadcast_session_catchup(info)
                         # If we attached a process, broadcast status and start monitoring
                         if attached:
-                            await broadcast_session_status(info.session_id)
+                            await _broadcast_session_status(info.session_id)
                             # Monitor process completion in background
                             asyncio.create_task(_monitor_attached_process(info))
     except Exception as e:
         logger.warning(f"Failed to check for new sessions: {e}")
+
+
+# Watch loop
 
 
 def _get_watch_directories() -> list[Path]:
@@ -1008,6 +867,9 @@ async def watch_loop() -> None:
         logger.error(f"Watch loop error: {e}")
 
 
+# FastAPI app setup
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage server lifecycle - start/stop file watcher."""
@@ -1017,6 +879,24 @@ async def lifespan(app: FastAPI):
 
     # Load allowed directories from config file
     load_allowed_directories_from_config()
+
+    # Configure session routes with server dependencies
+    configure_session_routes(
+        get_server_backend=get_server_backend,
+        get_backend_for_session=get_backend_for_session,
+        is_send_enabled=is_send_enabled,
+        is_fork_enabled=is_fork_enabled,
+        is_skip_permissions=is_skip_permissions,
+        get_default_send_backend=get_default_send_backend,
+        get_allowed_directories=get_allowed_directories,
+        add_allowed_directory=add_allowed_directory,
+        run_cli_for_session=run_cli_for_session,
+        broadcast_session_status=_broadcast_session_status,
+        summarize_session_async=_summarize_session_async,
+        get_summarizer=get_summarizer,
+        get_idle_summary_model=get_idle_summary_model,
+        cached_models=_cached_models,
+    )
 
     # Startup: find recent sessions
     recent = backend.find_recent_sessions(
@@ -1053,6 +933,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Claude Code Session Explorer", lifespan=lifespan)
 
+# Include routers
+app.include_router(sessions_router)
+app.include_router(files_router)
+app.include_router(archives_router)
+
+
+# Core routes (index, static, SSE events, health)
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
@@ -1088,17 +976,10 @@ async def serve_js(filename: str) -> Response:
         raise HTTPException(status_code=404, detail="Not found")
 
 
-@app.get("/sessions")
-async def list_sessions() -> dict:
-    """List all tracked sessions."""
-    async with get_sessions_lock():
-        return {"sessions": get_sessions_list()}
-
-
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     """Generate SSE events for a client."""
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _clients.add(queue)
+    add_client(queue)
 
     try:
         # Send sessions list
@@ -1170,7 +1051,7 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
                 yield {"event": "ping", "data": "{}"}
 
     finally:
-        _clients.discard(queue)
+        remove_client(queue)
 
 
 @app.get("/events")
@@ -1185,1474 +1066,5 @@ async def health() -> dict:
     return {
         "status": "ok",
         "sessions": session_count(),
-        "clients": len(_clients),
+        "clients": len(get_clients()),
     }
-
-
-@app.get("/send-enabled")
-async def send_enabled() -> dict:
-    """Check if sending messages is enabled."""
-    return {"enabled": _send_enabled}
-
-
-@app.get("/fork-enabled")
-async def fork_enabled() -> dict:
-    """Check if fork button is enabled."""
-    return {"enabled": _fork_enabled}
-
-
-@app.get("/default-send-backend")
-async def default_send_backend() -> dict:
-    """Get the default backend for new sessions."""
-    return {"backend": _default_send_backend}
-
-
-@app.get("/backends")
-async def list_backends() -> dict:
-    """List available backends for creating new sessions.
-
-    Returns dict with:
-        backends: List of backend info dicts with name, cli_available, supports_models
-    """
-    backend = get_server_backend()
-    backends_info = []
-
-    # Check if multi-backend
-    get_backends = getattr(backend, "get_backends", None)
-    if get_backends is not None:
-        # Multi-backend mode - list all backends
-        for b in get_backends():
-            has_models = hasattr(b, "get_models") and callable(getattr(b, "get_models"))
-            backends_info.append(
-                {
-                    "name": b.name,
-                    "cli_available": b.is_cli_available(),
-                    "supports_models": has_models,
-                }
-            )
-    else:
-        # Single backend mode
-        has_models = hasattr(backend, "get_models") and callable(
-            getattr(backend, "get_models")
-        )
-        backends_info.append(
-            {
-                "name": backend.name,
-                "cli_available": backend.is_cli_available(),
-                "supports_models": has_models,
-            }
-        )
-
-    return {"backends": backends_info}
-
-
-def _normalize_backend_name(name: str) -> str:
-    """Normalize backend name for cache keys."""
-    return name.lower().replace(" ", "-")
-
-
-def _get_target_backend(backend_name: str):
-    """Get target backend by name, returns (backend, normalized_name) or raises 404."""
-    backend = get_server_backend()
-    normalized = _normalize_backend_name(backend_name)
-
-    # Check if multi-backend
-    get_by_name = getattr(backend, "get_backend_by_name", None)
-    if get_by_name is not None:
-        target_backend = get_by_name(backend_name)
-        if target_backend is not None:
-            return target_backend, _normalize_backend_name(target_backend.name)
-    elif _normalize_backend_name(backend.name) == normalized:
-        # Single backend mode, check name matches
-        return backend, normalized
-
-    raise HTTPException(status_code=404, detail=f"Backend not found: {backend_name}")
-
-
-@app.get("/backends/{backend_name}/models")
-async def list_backend_models(backend_name: str) -> dict:
-    """List available models for a specific backend.
-
-    Args:
-        backend_name: Name of the backend (case-insensitive)
-
-    Returns dict with:
-        models: List of model identifiers (indexed, use index for model_index param)
-    """
-    target_backend, normalized_name = _get_target_backend(backend_name)
-
-    # Check if backend supports models
-    get_models = getattr(target_backend, "get_models", None)
-    if get_models is None or not callable(get_models):
-        return {"models": []}
-
-    # Fetch and cache models
-    models = get_models()
-    _cached_models[normalized_name] = models
-
-    return {"models": models}
-
-
-@app.get("/sessions/{session_id}/status")
-async def session_status(session_id: str) -> dict:
-    """Get the status of a session (running state, queue size)."""
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {
-        "session_id": session_id,
-        "running": info.process is not None,
-        "queued_messages": len(info.message_queue),
-    }
-
-
-@app.post("/sessions/{session_id}/send")
-async def send_message(session_id: str, request: SendMessageRequest) -> dict:
-    """Send a message to a coding session."""
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    # Get the specific backend for this session
-    backend = get_backend_for_session(info.path)
-
-    # Check if CLI is available for this backend
-    if not backend.is_cli_available():
-        raise HTTPException(
-            status_code=503,
-            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
-        )
-
-    message = request.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    # If a process is already running, queue the message
-    if info.process is not None:
-        info.message_queue.append(message)
-        await broadcast_session_status(session_id)
-        return {
-            "status": "queued",
-            "session_id": session_id,
-            "queue_position": len(info.message_queue),
-        }
-
-    # Start the CLI process
-    asyncio.create_task(run_cli_for_session(session_id, message))
-
-    return {"status": "sent", "session_id": session_id}
-
-
-@app.post("/sessions/{session_id}/fork")
-async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
-    """Fork a session: create a new session with conversation history and send a message."""
-    if not _fork_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Fork feature is disabled. Start server with --fork to enable.",
-        )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    # Get the specific backend for this session
-    backend = get_backend_for_session(info.path)
-
-    # Check if CLI is available for this backend
-    if not backend.is_cli_available():
-        raise HTTPException(
-            status_code=503,
-            detail=f"CLI not found. {backend.get_cli_install_instructions()}",
-        )
-
-    # Check if backend supports forking
-    if not backend.supports_fork_session():
-        raise HTTPException(
-            status_code=501,
-            detail="This backend does not support session forking.",
-        )
-
-    message = request.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    # Start the CLI process with fork=True
-    asyncio.create_task(run_cli_for_session(session_id, message, fork=True))
-
-    return {"status": "forking", "session_id": session_id}
-
-
-@app.post("/sessions/{session_id}/grant-permission")
-async def grant_permission(
-    session_id: str, request: GrantPermissionRequest
-) -> dict:
-    """Grant permissions and re-send the original message.
-
-    This endpoint is called when the user grants permissions after a
-    permission denial. It writes the permissions to the project's
-    .claude/settings.json file and re-sends the original message.
-    """
-    from .permissions import update_permissions_file
-
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    # Get the specific backend for this session
-    backend = get_backend_for_session(info.path)
-
-    # Check if backend supports permission detection (and thus settings.json)
-    if not (
-        hasattr(backend, "supports_permission_detection")
-        and backend.supports_permission_detection()
-    ):
-        raise HTTPException(
-            status_code=501,
-            detail="This backend does not support permission management.",
-        )
-
-    if not request.original_message.strip():
-        raise HTTPException(status_code=400, detail="Original message cannot be empty")
-
-    # Write permissions to project's .claude/settings.json (if any)
-    if request.permissions:
-        if not info.project_path:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot grant permissions: session has no project path",
-            )
-
-        settings_path = Path(info.project_path) / ".claude" / "settings.json"
-
-        try:
-            update_permissions_file(settings_path, request.permissions)
-            logger.info(
-                f"Granted permissions for {session_id}: {request.permissions} "
-                f"(wrote to {settings_path})"
-            )
-        except Exception as e:
-            logger.error(f"Failed to write permissions for {session_id}: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to write permissions file: {e}",
-            )
-
-    # Re-send the original message (with any newly allowed directories via --add-dir)
-    asyncio.create_task(run_cli_for_session(session_id, request.original_message.strip()))
-
-    return {
-        "status": "granted",
-        "session_id": session_id,
-        "permissions": request.permissions,
-    }
-
-
-class GrantPermissionNewSessionRequest(BaseModel):
-    """Request body for granting permissions and retrying a new session."""
-
-    permissions: list[str]  # e.g., ["Bash(npm test:*)", "Read"]
-    original_message: str  # Message to re-send after granting
-    cwd: str | None = None  # Working directory for the new session
-    backend: str | None = None  # Backend to use
-    model_index: int | None = None  # Model index for backends that support it
-
-
-@app.post("/sessions/grant-permission-new")
-async def grant_permission_new_session(request: GrantPermissionNewSessionRequest) -> dict:
-    """Grant permissions and resume the session that was created.
-
-    This endpoint is called when permission is denied during new session creation.
-    It writes permissions to the project's .claude/settings.json and then sends
-    the message to the session that was already created (not creating a new one).
-    """
-    from .permissions import update_permissions_file
-
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    if not request.original_message.strip():
-        raise HTTPException(status_code=400, detail="Original message cannot be empty")
-
-    # Determine working directory
-    cwd: Path | None = None
-    if request.cwd:
-        cwd = Path(request.cwd).expanduser()
-        if not cwd.is_dir():
-            raise HTTPException(status_code=400, detail="Invalid working directory")
-
-    if not cwd:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot grant permissions: no working directory specified",
-        )
-
-    # Write permissions to project's .claude/settings.json (if any)
-    # For sandbox-only denials, permissions may be empty - that's OK,
-    # we just retry with the newly allowed directories via --add-dir
-    if request.permissions:
-        settings_path = cwd / ".claude" / "settings.json"
-
-        try:
-            update_permissions_file(settings_path, request.permissions)
-            logger.info(f"Granted permissions for new session: {request.permissions} (wrote to {settings_path})")
-        except Exception as e:
-            logger.error(f"Failed to write permissions for new session: {e}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to write permissions file: {e}",
-            )
-
-    # Find the session that was just created for this cwd
-    # The initial create_new_session call already started a session that hit permission denial
-    # We need to find that session and send the message to it instead of creating a new one
-    cwd_str = str(cwd.resolve())
-    matching_session = None
-
-    async with get_sessions_lock():
-        # Find most recently modified session matching this project path
-        sessions = get_sessions()
-        for session_id, info in sessions.items():
-            if info.project_path and str(Path(info.project_path).resolve()) == cwd_str:
-                if matching_session is None or (
-                    info.path.exists()
-                    and (not matching_session.path.exists()
-                         or info.path.stat().st_mtime > matching_session.path.stat().st_mtime)
-                ):
-                    matching_session = info
-
-    if matching_session:
-        logger.info(f"Found existing session {matching_session.session_id} for cwd {cwd_str}, sending message there")
-        # Send to the existing session instead of creating a new one
-        send_request = SendMessageRequest(message=request.original_message.strip())
-        return await send_message(matching_session.session_id, send_request)
-    else:
-        # No existing session found - this shouldn't happen normally, but fall back to creating new
-        logger.warning(f"No existing session found for cwd {cwd_str}, creating new session")
-        new_session_request = NewSessionRequest(
-            message=request.original_message.strip(),
-            cwd=str(cwd) if cwd else None,
-            backend=request.backend,
-            model_index=request.model_index,
-        )
-        return await create_new_session(new_session_request)
-
-
-class AllowDirectoryRequest(BaseModel):
-    """Request body for allowing a directory."""
-
-    directory: str  # Directory path to allow
-    session_id: str | None = None  # Optional session to retry after allowing
-    original_message: str | None = None  # Optional message to retry
-
-
-@app.post("/allow-directory")
-async def allow_directory(request: AllowDirectoryRequest) -> dict:
-    """Allow a directory for sandbox access and optionally retry a message.
-
-    This endpoint adds a directory to the allowed list for --add-dir flag.
-    If session_id and original_message are provided, it retries the message.
-    """
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    if not request.directory:
-        raise HTTPException(status_code=400, detail="Directory cannot be empty")
-
-    # Normalize and validate directory path
-    directory = str(Path(request.directory).expanduser().resolve())
-
-    # Add to allowed directories
-    add_allowed_directory(directory)
-    logger.info(f"Added allowed directory: {directory}")
-
-    # If session and message provided, retry the message
-    if request.session_id and request.original_message:
-        info = get_session(request.session_id)
-        if info is None:
-            raise HTTPException(status_code=404, detail="Session not found")
-
-        asyncio.create_task(
-            run_cli_for_session(request.session_id, request.original_message.strip())
-        )
-        return {
-            "status": "allowed_and_retrying",
-            "directory": directory,
-            "session_id": request.session_id,
-        }
-
-    return {"status": "allowed", "directory": directory}
-
-
-@app.post("/sessions/{session_id}/interrupt")
-async def interrupt_session(session_id: str) -> dict:
-    """Interrupt a running CLI process and clear the message queue."""
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if info.process is None:
-        raise HTTPException(
-            status_code=409, detail="No process running for this session"
-        )
-
-    # Clear the queue first
-    info.message_queue.clear()
-
-    # Terminate the process
-    try:
-        info.process.terminate()
-        # Give it a moment to terminate gracefully
-        try:
-            await asyncio.wait_for(info.process.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
-            # Force kill if it doesn't terminate
-            info.process.kill()
-    except ProcessLookupError:
-        # Process already terminated
-        pass
-
-    info.process = None
-    await broadcast_session_status(session_id)
-
-    return {"status": "interrupted", "session_id": session_id}
-
-
-@app.post("/sessions/{session_id}/summarize")
-async def trigger_summary(session_id: str, background_tasks: BackgroundTasks) -> dict:
-    """Manually trigger summarization for a session.
-
-    This endpoint allows users to request an on-demand summary of a session,
-    useful when automatic idle summarization is disabled or when a user wants
-    an immediate summary.
-    """
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if _summarizer is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Summarization is not configured. Start server with summarization options.",
-        )
-
-    # Run summarization in background task to not block the response
-    async def run_summary():
-        try:
-            success = await _summarize_session_async(info, model=_idle_summary_model)
-            if success:
-                logger.info(f"Manual summary triggered successfully for {session_id}")
-            else:
-                logger.warning(f"Manual summary failed for {session_id}")
-        except Exception as e:
-            logger.error(f"Error during manual summary for {session_id}: {e}")
-
-    background_tasks.add_task(run_summary)
-
-    return {"status": "summarizing", "session_id": session_id}
-
-
-@app.post("/sessions/new")
-async def create_new_session(request: NewSessionRequest) -> dict:
-    """Start a new session with an initial message."""
-    if not _send_enabled:
-        raise HTTPException(
-            status_code=403,
-            detail="Send feature is disabled. Start server with --enable-send to enable.",
-        )
-
-    backend = get_server_backend()
-
-    # For multi-backend mode, get the specific backend if requested
-    # Fallback order: request.backend -> _default_send_backend -> first available
-    target_backend = backend
-    requested_backend = request.backend or _default_send_backend
-    if requested_backend:
-        # Check if this is a MultiBackend with get_backend_by_name method
-        get_by_name = getattr(backend, "get_backend_by_name", None)
-        if get_by_name is not None:
-            specific_backend = get_by_name(requested_backend)
-            if specific_backend is not None:
-                target_backend = specific_backend
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unknown backend: {requested_backend}",
-                )
-
-    # Check if CLI is available
-    if not target_backend.is_cli_available():
-        raise HTTPException(
-            status_code=503,
-            detail=f"CLI not found. {target_backend.get_cli_install_instructions()}",
-        )
-
-    message = request.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-
-    # Determine working directory - must be an absolute path (~ is expanded)
-    cwd: Path | None = None
-    if request.cwd:
-        potential_cwd = Path(request.cwd).expanduser()
-        if not potential_cwd.is_absolute():
-            raise HTTPException(
-                status_code=400, detail="Directory path must be absolute (e.g., /home/user/project or ~/project)"
-            )
-        if not potential_cwd.exists():
-            try:
-                potential_cwd.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created directory: {potential_cwd}")
-            except OSError as e:
-                raise HTTPException(
-                    status_code=400, detail=f"Cannot create directory: {e}"
-                )
-        if potential_cwd.is_dir():
-            cwd = potential_cwd
-
-    # Build command using target backend
-    # Check if backend supports model parameter (OpenCode does, Claude Code doesn't)
-    build_cmd = target_backend.build_new_session_command
-    sig = inspect.signature(build_cmd)
-
-    model: str | None = None
-    if "model" in sig.parameters and request.model_index is not None:
-        # Look up model from cached list by index
-        normalized_backend = _normalize_backend_name(target_backend.name)
-        cached = _cached_models.get(normalized_backend, [])
-        if 0 <= request.model_index < len(cached):
-            model = cached[request.model_index]
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid model_index: {request.model_index}. "
-                f"Fetch models from /backends/{target_backend.name}/models first.",
-            )
-
-    # Determine if we should use permission detection
-    use_permission_detection = (
-        not _skip_permissions
-        and hasattr(target_backend, "supports_permission_detection")
-        and target_backend.supports_permission_detection()
-    )
-    output_format = "stream-json" if use_permission_detection else None
-    add_dirs = get_allowed_directories() or None
-
-    if model:
-        cmd_args = build_cmd(message, _skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
-    else:
-        cmd_args = build_cmd(message, _skip_permissions, output_format=output_format, add_dirs=add_dirs)
-
-    try:
-        # Capture stdout if using permission detection
-        stdout_pipe = asyncio.subprocess.PIPE if use_permission_detection else asyncio.subprocess.DEVNULL
-
-        # Start CLI in the working directory
-        proc = await asyncio.create_subprocess_exec(
-            *cmd_args,
-            cwd=cwd,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=stdout_pipe,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        # Store process reference and cwd for permission handling
-        cwd_key = str(cwd.resolve()) if cwd else ""
-
-        if use_permission_detection:
-            # For new sessions with permission detection, we wait for CLI completion
-            # to check for permission denials. This can take a while if the LLM takes
-            # time to respond, but we need to catch denials to show the permission modal.
-            #
-            # Note: The frontend sets pendingSession.starting = true BEFORE this fetch,
-            # so session_added SSE events will be properly merged even if this takes time.
-            from .permissions import parse_permission_denials
-
-            # Store process so we can attach it to the session when it appears
-            _pending_new_session_processes[cwd_key] = proc
-            logger.debug(f"Stored pending process for cwd: {cwd_key}")
-
-            # Wait for completion and capture output
-            stdout, stderr = await proc.communicate()
-
-            if proc.returncode != 0:
-                logger.warning(f"CLI process exited with code {proc.returncode}")
-
-            # Check for permission denials
-            denials = parse_permission_denials(stdout.decode()) if stdout else []
-
-            if denials:
-                logger.info(f"Permission denials in new session: {[d['tool_name'] for d in denials]}")
-                return {
-                    "status": "permission_denied",
-                    "cwd": str(cwd) if cwd else None,
-                    "denials": denials,
-                    "original_message": message,
-                    "backend": target_backend.name,
-                    "model_index": request.model_index,
-                }
-
-            return {"status": "started", "cwd": str(cwd) if cwd else None}
-        else:
-            # Original behavior: don't wait for completion
-            await asyncio.sleep(0.5)
-            if proc.returncode is not None and proc.returncode != 0:
-                stderr = await proc.stderr.read() if proc.stderr else b""
-                logger.error(f"CLI failed to start: {stderr.decode()}")
-                raise HTTPException(status_code=500, detail="Failed to start session")
-
-            # Store process so we can attach it to the session when it appears
-            _pending_new_session_processes[cwd_key] = proc
-            logger.debug(f"Stored pending process for cwd: {cwd_key}")
-
-            return {"status": "started", "cwd": str(cwd) if cwd else None}
-
-    except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="CLI not found")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting new session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _get_directory_structure(rootdir: Path, shallow: bool = False) -> dict:
-    """
-    Creates a nested dictionary that represents the folder structure of rootdir.
-    """
-    dir_name = rootdir.name
-
-    # Base structure
-    item = {
-        "name": dir_name,
-        "path": str(rootdir.resolve()),
-        "type": "directory",
-        "children": [],
-    }
-
-    try:
-        # Sort directories first, then files
-        # Use simple heuristics for sorting
-        entries = list(os.scandir(rootdir))
-        entries.sort(key=lambda e: (not e.is_dir(), e.name.lower()))
-
-        for entry in entries:
-            # Skip hidden files/dirs and common ignored dirs
-            if entry.name.startswith("."):
-                continue
-            if entry.name in [
-                "__pycache__",
-                "node_modules",
-                "venv",
-                "env",
-                "dist",
-                "build",
-                "coverage",
-                "target",
-                "egg-info",
-            ]:
-                continue
-
-            if entry.is_dir(follow_symlinks=False):
-                if shallow:
-                    # For shallow listing, we just indicate it's a directory
-                    # We don't recurse.
-                    item["children"].append(
-                        {
-                            "name": entry.name,
-                            "path": str(Path(entry.path).resolve()),
-                            "type": "directory",
-                            "has_children": True,
-                        }
-                    )
-                else:
-                    item["children"].append(
-                        _get_directory_structure(Path(entry.path), shallow=False)
-                    )
-            else:
-                item["children"].append(
-                    {
-                        "name": entry.name,
-                        "path": str(Path(entry.path).resolve()),
-                        "type": "file",
-                    }
-                )
-    except (PermissionError, OSError):
-        pass
-
-    return item
-
-
-@app.get("/sessions/{session_id}/tree")
-async def get_session_file_tree(session_id: str, path: str | None = None) -> dict:
-    """Get the file tree for a session's working directory or specific path.
-
-    Args:
-        session_id: The session ID
-        path: Optional absolute path to list. If None, uses session's project path.
-    """
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    target_path = None
-
-    if path:
-        # User requested specific path - expand ~ to home directory
-        if path.startswith("~"):
-            path = str(Path.home() / path[2:])
-        target_path = Path(path).resolve()
-
-        # Security: Ensure it's within home directory
-        # (Relaxed from project_path restriction to allow home navigation)
-        try:
-            target_path.relative_to(Path.home())
-        except ValueError:
-            # Just log for now, allow system access if local
-            pass
-    else:
-        # Default to project path
-        if not info.project_path:
-            return {"tree": None, "error": "No project path set for this session"}
-        target_path = Path(info.project_path)
-
-    if not target_path.exists() or not target_path.is_dir():
-        return {
-            "tree": None,
-            "error": f"Path does not exist: {target_path}",
-        }
-
-    try:
-        # Use shallow listing for navigation efficiency
-        tree = _get_directory_structure(target_path, shallow=True)
-        # Include project root for relative path calculations
-        project_root = info.project_path if info.project_path else None
-        return {"tree": tree, "home": str(Path.home()), "projectRoot": project_root}
-    except Exception as e:
-        logger.error(f"Error generating file tree for {session_id}: {e}")
-        return {"tree": None, "error": str(e)}
-
-
-@app.get("/api/file")
-async def get_file(path: str) -> FileResponse:
-    """Fetch file contents for preview.
-
-    Args:
-        path: Absolute path to the file to preview.
-
-    Returns:
-        FileResponse with content, metadata, and language detection.
-
-    Raises:
-        HTTPException: 404 if file not found, 400 if binary or not a file,
-                      403 if permission denied, 500 for other errors.
-    """
-    file_path = Path(path)
-
-    # Security: Restrict to user's home directory to prevent path traversal
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        # Check if resolved path is within home directory
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied: path must be within home directory ({home_dir})",
-        )
-
-    # Validate path exists
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-    # Ensure it's a file, not directory
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
-
-    # Check file size
-    try:
-        file_size = file_path.stat().st_size
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Cannot stat file: {e}")
-
-    truncated = file_size > MAX_FILE_SIZE
-
-    # Detect language from extension
-    extension = file_path.suffix.lower()
-    language = EXTENSION_TO_LANGUAGE.get(extension)
-
-    # Special case: Makefile, Dockerfile without extension
-    if file_path.name.lower() == "makefile":
-        language = "makefile"
-    elif file_path.name.lower() == "dockerfile":
-        language = "dockerfile"
-
-    try:
-        # Read file content - only read up to MAX_FILE_SIZE bytes to prevent
-        # memory exhaustion on large files
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read(MAX_FILE_SIZE + 1)  # Read one extra to detect truncation
-
-        # If we read more than MAX_FILE_SIZE, file is truncated
-        if len(content) > MAX_FILE_SIZE:
-            content = content[:MAX_FILE_SIZE]
-            truncated = True
-
-        # Check for binary content (null bytes indicate binary)
-        if "\x00" in content[:8192]:
-            raise HTTPException(
-                status_code=400, detail="Binary file cannot be displayed"
-            )
-
-        # Render markdown to HTML if it's a markdown file
-        # Use safe=True to escape raw HTML and prevent XSS attacks
-        rendered_html = None
-        if language == "markdown":
-            from .backends.shared.rendering import render_markdown_text
-
-            rendered_html = render_markdown_text(content, safe=True)
-
-        return FileResponse(
-            content=content,
-            path=str(file_path.absolute()),
-            filename=file_path.name,
-            size=file_size,
-            language=language,
-            truncated=truncated,
-            rendered_html=rendered_html,
-        )
-
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="Binary file cannot be displayed")
-    except PermissionError:
-        raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error reading file {path}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
-
-
-@app.get("/api/file/raw")
-async def get_file_raw(path: str) -> Response:
-    """Serve raw file bytes with appropriate Content-Type.
-
-    Primarily used for serving images in the file preview pane.
-
-    Args:
-        path: Absolute path to the file to serve.
-
-    Returns:
-        Raw file bytes with Content-Type header.
-
-    Raises:
-        HTTPException: 404 if file not found, 403 if permission denied.
-    """
-    file_path = Path(path)
-
-    # Security: Restrict to user's home directory to prevent path traversal
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied: path must be within home directory ({home_dir})",
-        )
-
-    # Validate path exists
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-    # Ensure it's a file, not directory
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
-
-    # Determine content type from extension
-    extension = file_path.suffix.lower()
-    content_type = IMAGE_EXTENSIONS.get(extension, "application/octet-stream")
-
-    try:
-        with open(file_path, "rb") as f:
-            content = f.read()
-
-        return Response(
-            content=content,
-            media_type=content_type,
-            headers={
-                "Cache-Control": "private, max-age=3600",  # Cache for 1 hour
-            },
-        )
-    except PermissionError:
-        raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
-    except Exception as e:
-        logger.error(f"Error reading file {path}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
-
-
-class DeleteFileRequest(BaseModel):
-    """Request body for file deletion."""
-
-    path: str
-
-
-class DeleteFileResponse(BaseModel):
-    """Response for file deletion."""
-
-    success: bool
-    error: str | None = None
-
-
-@app.post("/api/file/delete")
-async def delete_file(request: DeleteFileRequest) -> DeleteFileResponse:
-    """Delete a file or empty directory.
-
-    Args:
-        request: DeleteFileRequest containing the path to delete.
-
-    Returns:
-        DeleteFileResponse indicating success or failure.
-    """
-    file_path = Path(request.path)
-
-    # Security: Restrict to user's home directory to prevent path traversal
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        return DeleteFileResponse(
-            success=False,
-            error=f"Access denied: path must be within home directory ({home_dir})",
-        )
-
-    # Validate path exists
-    if not file_path.exists():
-        return DeleteFileResponse(success=False, error=f"File not found: {request.path}")
-
-    try:
-        if file_path.is_file():
-            file_path.unlink()
-            logger.info(f"Deleted file: {request.path}")
-        elif file_path.is_dir():
-            # Only delete empty directories for safety
-            if any(file_path.iterdir()):
-                return DeleteFileResponse(
-                    success=False, error="Directory is not empty"
-                )
-            file_path.rmdir()
-            logger.info(f"Deleted directory: {request.path}")
-        else:
-            return DeleteFileResponse(
-                success=False, error="Path is neither a file nor directory"
-            )
-
-        return DeleteFileResponse(success=True)
-    except PermissionError:
-        return DeleteFileResponse(
-            success=False, error=f"Permission denied: {request.path}"
-        )
-    except Exception as e:
-        logger.error(f"Error deleting {request.path}: {e}")
-        return DeleteFileResponse(success=False, error=str(e))
-
-
-@app.get("/api/file/download")
-async def download_file(path: str) -> Response:
-    """Download a file with proper Content-Disposition header.
-
-    Args:
-        path: Absolute path to the file to download.
-
-    Returns:
-        File bytes with Content-Disposition attachment header.
-
-    Raises:
-        HTTPException: 404 if file not found, 403 if permission denied.
-    """
-    file_path = Path(path)
-
-    # Security: Restrict to user's home directory to prevent path traversal
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied: path must be within home directory ({home_dir})",
-        )
-
-    # Validate path exists
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-
-    # Ensure it's a file, not directory
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
-
-    try:
-        with open(file_path, "rb") as f:
-            content = f.read()
-
-        # Determine content type from extension
-        extension = file_path.suffix.lower()
-        content_type = IMAGE_EXTENSIONS.get(extension, "application/octet-stream")
-
-        # Use filename for Content-Disposition
-        filename = file_path.name
-
-        return Response(
-            content=content,
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-            },
-        )
-    except PermissionError:
-        raise HTTPException(status_code=403, detail=f"Permission denied: {path}")
-    except Exception as e:
-        logger.error(f"Error downloading file {path}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error downloading file: {e}")
-
-
-class UploadFileResponse(BaseModel):
-    """Response for file upload."""
-
-    success: bool
-    path: str | None = None
-    error: str | None = None
-
-
-@app.post("/api/file/upload")
-async def upload_file(
-    request: Request, directory: str, filename: str
-) -> UploadFileResponse:
-    """Upload a file to a directory.
-
-    Args:
-        request: The request with file content in body.
-        directory: Target directory path.
-        filename: Name for the uploaded file.
-
-    Returns:
-        UploadFileResponse indicating success or failure.
-    """
-    dir_path = Path(directory)
-
-    # Security: Restrict to user's home directory
-    home_dir = Path.home()
-    try:
-        resolved_dir = dir_path.resolve()
-        resolved_dir.relative_to(home_dir)
-    except ValueError:
-        return UploadFileResponse(
-            success=False,
-            error=f"Access denied: directory must be within home directory ({home_dir})",
-        )
-
-    # Validate directory exists
-    if not dir_path.exists():
-        return UploadFileResponse(
-            success=False, error=f"Directory not found: {directory}"
-        )
-
-    if not dir_path.is_dir():
-        return UploadFileResponse(
-            success=False, error=f"Not a directory: {directory}"
-        )
-
-    # Sanitize filename (prevent path traversal in filename)
-    safe_filename = Path(filename).name
-    if not safe_filename or safe_filename in (".", ".."):
-        return UploadFileResponse(success=False, error="Invalid filename")
-
-    target_path = dir_path / safe_filename
-
-    try:
-        # Read file content from request body
-        content = await request.body()
-
-        # Write file
-        with open(target_path, "wb") as f:
-            f.write(content)
-
-        logger.info(f"Uploaded file: {target_path}")
-        return UploadFileResponse(success=True, path=str(target_path))
-
-    except PermissionError:
-        return UploadFileResponse(
-            success=False, error=f"Permission denied: {target_path}"
-        )
-    except Exception as e:
-        logger.error(f"Error uploading file to {target_path}: {e}")
-        return UploadFileResponse(success=False, error=str(e))
-
-
-class PathTypeResponse(BaseModel):
-    """Response for path type check."""
-
-    type: str  # "file" or "directory"
-
-
-# User preferences config directory
-CONFIG_DIR = Path.home() / ".config" / "claude-code-session-explorer"
-
-
-def _get_archived_sessions_path() -> Path:
-    """Get the path to the archived sessions config file."""
-    return CONFIG_DIR / "archived-sessions.json"
-
-
-def _load_archived_sessions() -> list[str]:
-    """Load archived session IDs from config file."""
-    config_path = _get_archived_sessions_path()
-    if not config_path.exists():
-        return []
-    try:
-        with open(config_path, "r") as f:
-            data = json.load(f)
-            return data.get("archived", [])
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"Failed to load archived sessions: {e}")
-        return []
-
-
-def _save_archived_sessions(session_ids: list[str]) -> bool:
-    """Save archived session IDs to config file."""
-    config_path = _get_archived_sessions_path()
-    try:
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(config_path, "w") as f:
-            json.dump({"archived": session_ids}, f, indent=2)
-        return True
-    except OSError as e:
-        logger.error(f"Failed to save archived sessions: {e}")
-        return False
-
-
-class ArchivedSessionsResponse(BaseModel):
-    """Response for archived sessions list."""
-
-    archived: list[str]
-
-
-class ArchiveSessionRequest(BaseModel):
-    """Request body for archiving/unarchiving a session."""
-
-    session_id: str
-
-
-@app.get("/api/path/type")
-async def check_path_type(path: str) -> PathTypeResponse:
-    """Check if a path exists and return its type (lightweight, no content fetching).
-
-    Args:
-        path: Absolute path to check. Supports ~ for home directory.
-
-    Returns:
-        PathTypeResponse with type "file" or "directory".
-
-    Raises:
-        HTTPException: 404 if path not found or outside home directory.
-    """
-    # Expand ~ to home directory
-    if path.startswith("~"):
-        path = str(Path.home() / path[2:])
-
-    file_path = Path(path)
-
-    # Security: Restrict to user's home directory
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        # Outside home directory - return not found
-        raise HTTPException(status_code=404)
-
-    try:
-        if file_path.exists():
-            if file_path.is_file():
-                return PathTypeResponse(type="file")
-            elif file_path.is_dir():
-                return PathTypeResponse(type="directory")
-        raise HTTPException(status_code=404)
-    except HTTPException:
-        raise
-    except (PermissionError, OSError):
-        raise HTTPException(status_code=404)
-
-
-@app.get("/api/archived-sessions")
-async def get_archived_sessions() -> ArchivedSessionsResponse:
-    """Get list of archived session IDs."""
-    return ArchivedSessionsResponse(archived=_load_archived_sessions())
-
-
-@app.post("/api/archived-sessions/archive")
-async def archive_session(request: ArchiveSessionRequest) -> dict:
-    """Archive a session (add to archived list)."""
-    session_id = request.session_id
-    archived = _load_archived_sessions()
-
-    if session_id not in archived:
-        archived.append(session_id)
-        if _save_archived_sessions(archived):
-            logger.info(f"Archived session: {session_id}")
-            return {"status": "archived", "session_id": session_id}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to save archived sessions")
-
-    return {"status": "already_archived", "session_id": session_id}
-
-
-@app.post("/api/archived-sessions/unarchive")
-async def unarchive_session(request: ArchiveSessionRequest) -> dict:
-    """Unarchive a session (remove from archived list)."""
-    session_id = request.session_id
-    archived = _load_archived_sessions()
-
-    if session_id in archived:
-        archived.remove(session_id)
-        if _save_archived_sessions(archived):
-            logger.info(f"Unarchived session: {session_id}")
-            return {"status": "unarchived", "session_id": session_id}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to save archived sessions")
-
-    return {"status": "not_archived", "session_id": session_id}
-
-
-# File watch SSE endpoint for live file updates
-async def _file_watch_generator(
-    file_path: Path, request: Request, follow: bool = True
-) -> AsyncGenerator[dict, None]:
-    """Generate SSE events for file changes using tail-style heuristic.
-
-    Args:
-        file_path: Path to the file to watch.
-        request: The request object to check for disconnection.
-        follow: If True, detect appends and send only new bytes (for tailing logs).
-                If False, always send full file content on any change.
-
-    Events:
-    - initial: Full file content on connect
-    - append: New content appended to file (size increased) - only when follow=True
-    - replace: Full file content (truncation, rewrite, or in-place edit)
-    - error: File deleted, permission denied, etc.
-    """
-    try:
-        # Get initial file state
-        stat = file_path.stat()
-        last_size = stat.st_size
-        last_inode = stat.st_ino
-
-        # Send initial content
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read(MAX_FILE_SIZE)
-
-        # Check for binary content
-        if "\x00" in content[:8192]:
-            yield {
-                "event": "error",
-                "data": json.dumps({"message": "Binary file cannot be displayed"}),
-            }
-            return
-
-        yield {
-            "event": "initial",
-            "data": json.dumps(
-                {
-                    "content": content,
-                    "size": last_size,
-                    "inode": last_inode,
-                    "truncated": last_size > MAX_FILE_SIZE,
-                }
-            ),
-        }
-
-        # Watch for changes with debouncing to batch rapid updates
-        # 100ms debounce prevents overwhelming the client with rapid file changes
-        async for changes in watchfiles.awatch(file_path, debounce=100):
-            # Check if client disconnected
-            if await request.is_disconnected():
-                logger.debug(f"Client disconnected, stopping file watch for {file_path}")
-                return
-
-            try:
-                stat = file_path.stat()
-                new_size = stat.st_size
-                new_inode = stat.st_ino
-
-                # When follow=false, just notify of change - frontend will refetch via /api/file
-                # This allows the existing endpoint to handle markdown rendering, etc.
-                if not follow:
-                    yield {
-                        "event": "changed",
-                        "data": json.dumps({"size": new_size, "inode": new_inode}),
-                    }
-                # When follow=true, use tail-style heuristic for efficient append detection
-                elif new_inode != last_inode:
-                    # File replaced (different inode) - send full content
-                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        content = f.read(MAX_FILE_SIZE)
-                    yield {
-                        "event": "replace",
-                        "data": json.dumps(
-                            {
-                                "content": content,
-                                "size": new_size,
-                                "inode": new_inode,
-                                "truncated": new_size > MAX_FILE_SIZE,
-                            }
-                        ),
-                    }
-                elif new_size > last_size:
-                    # File grew - likely append, read only new bytes
-                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        f.seek(last_size)
-                        new_content = f.read(MAX_FILE_SIZE)
-                    yield {
-                        "event": "append",
-                        "data": json.dumps(
-                            {
-                                "content": new_content,
-                                "offset": last_size,
-                            }
-                        ),
-                    }
-                elif new_size < last_size:
-                    # File truncated - send full content
-                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        content = f.read(MAX_FILE_SIZE)
-                    yield {
-                        "event": "replace",
-                        "data": json.dumps(
-                            {
-                                "content": content,
-                                "size": new_size,
-                                "inode": new_inode,
-                                "truncated": new_size > MAX_FILE_SIZE,
-                            }
-                        ),
-                    }
-                else:
-                    # Same size but modified - in-place edit, send full content
-                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        content = f.read(MAX_FILE_SIZE)
-                    yield {
-                        "event": "replace",
-                        "data": json.dumps(
-                            {
-                                "content": content,
-                                "size": new_size,
-                                "inode": new_inode,
-                                "truncated": new_size > MAX_FILE_SIZE,
-                            }
-                        ),
-                    }
-
-                last_size = new_size
-                last_inode = new_inode
-
-            except FileNotFoundError:
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"message": "File was deleted"}),
-                }
-                return
-            except PermissionError:
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"message": "Permission denied"}),
-                }
-                return
-
-    except FileNotFoundError:
-        yield {
-            "event": "error",
-            "data": json.dumps({"message": "File not found"}),
-        }
-    except PermissionError:
-        yield {
-            "event": "error",
-            "data": json.dumps({"message": "Permission denied"}),
-        }
-    except Exception as e:
-        logger.error(f"Error in file watch for {file_path}: {e}")
-        yield {
-            "event": "error",
-            "data": json.dumps({"message": f"Error: {e}"}),
-        }
-
-
-@app.get("/api/file/watch")
-async def watch_file(path: str, request: Request, follow: bool = True) -> EventSourceResponse:
-    """SSE endpoint for live file updates.
-
-    Uses tail-style heuristic to efficiently detect appends vs full rewrites:
-    - Tracks file size and inode
-    - If size increases and follow=True: assume append, send only new bytes
-    - If size decreases or inode changes: send full content
-    - If follow=False: always send full content on any change
-
-    Args:
-        path: Absolute path to the file to watch.
-        follow: If True (default), detect appends and send only new bytes.
-                If False, always send full file content on any change.
-
-    Returns:
-        EventSourceResponse streaming file changes.
-
-    Events:
-        - initial: {content, size, inode, truncated} - Full file on connect
-        - append: {content, offset} - New content (file grew, only when follow=True)
-        - replace: {content, size, inode, truncated} - Full content (truncation/rewrite)
-        - error: {message} - File deleted, permission denied, etc.
-    """
-    file_path = Path(path)
-
-    # Security: Restrict to user's home directory
-    home_dir = Path.home()
-    try:
-        resolved_path = file_path.resolve()
-        resolved_path.relative_to(home_dir)
-    except ValueError:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Access denied: path must be within home directory ({home_dir})",
-        )
-
-    # Validate path exists and is a file
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    if not file_path.is_file():
-        raise HTTPException(status_code=400, detail=f"Not a file: {path}")
-
-    return EventSourceResponse(_file_watch_generator(file_path, request, follow=follow))

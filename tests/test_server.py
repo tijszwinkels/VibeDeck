@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from claude_code_session_explorer import server, sessions
+from claude_code_session_explorer import server, sessions, broadcasting
 from claude_code_session_explorer.server import app
 from claude_code_session_explorer.sessions import add_session
+from claude_code_session_explorer.routes.sessions import configure_session_routes
 
 
 @pytest.fixture
@@ -29,16 +30,33 @@ def home_tmp_path():
 def reset_server_state():
     """Reset server state before each test."""
     sessions.get_sessions().clear()
-    server._clients.clear()
+    broadcasting.get_clients().clear()
     sessions.get_known_session_files().clear()
     server.set_send_enabled(False)  # Reset send feature state
-    server._default_send_backend = None  # Reset default backend
+    server.set_default_send_backend(None)  # Reset default backend
+    # Configure session routes with server dependencies
+    configure_session_routes(
+        get_server_backend=server.get_server_backend,
+        get_backend_for_session=server.get_backend_for_session,
+        is_send_enabled=server.is_send_enabled,
+        is_fork_enabled=server.is_fork_enabled,
+        is_skip_permissions=server.is_skip_permissions,
+        get_default_send_backend=server.get_default_send_backend,
+        get_allowed_directories=server.get_allowed_directories,
+        add_allowed_directory=server.add_allowed_directory,
+        run_cli_for_session=server.run_cli_for_session,
+        broadcast_session_status=server._broadcast_session_status,
+        summarize_session_async=server._summarize_session_async,
+        get_summarizer=server.get_summarizer,
+        get_idle_summary_model=server.get_idle_summary_model,
+        cached_models=server._cached_models,
+    )
     yield
     sessions.get_sessions().clear()
-    server._clients.clear()
+    broadcasting.get_clients().clear()
     sessions.get_known_session_files().clear()
     server.set_send_enabled(False)
-    server._default_send_backend = None
+    server.set_default_send_backend(None)
 
 
 class TestServerEndpoints:
@@ -855,7 +873,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "test.txt"
         test_file.write_text("initial content")
@@ -887,7 +905,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         binary_file = home_tmp_path / "image.png"
         binary_file.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x00")
@@ -912,7 +930,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "append_test.txt"
         test_file.write_text("initial")
@@ -961,7 +979,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "truncate_test.txt"
         test_file.write_text("long initial content here")
@@ -1005,7 +1023,7 @@ class TestFileWatchAPI:
         import os
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "inode_test.txt"
         test_file.write_text("original content")
@@ -1053,7 +1071,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "delete_test.txt"
         test_file.write_text("will be deleted")
@@ -1096,7 +1114,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "disconnect_test.txt"
         test_file.write_text("test content")
@@ -1128,7 +1146,7 @@ class TestFileWatchAPI:
         import json
         from unittest.mock import MagicMock, patch
 
-        from claude_code_session_explorer.server import _file_watch_generator
+        from claude_code_session_explorer.routes.files import _file_watch_generator
 
         test_file = home_tmp_path / "follow_false_test.txt"
         test_file.write_text("initial")
@@ -1620,9 +1638,10 @@ class TestArchivedSessionsEndpoints:
     @pytest.fixture(autouse=True)
     def use_temp_config_dir(self, home_tmp_path, monkeypatch):
         """Use a temporary config directory to avoid deleting user's real config."""
+        from claude_code_session_explorer.routes import archives
         temp_config_dir = home_tmp_path / "config"
         temp_config_dir.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(server, "CONFIG_DIR", temp_config_dir)
+        monkeypatch.setattr(archives, "CONFIG_DIR", temp_config_dir)
         yield
         # Cleanup happens automatically when home_tmp_path is removed
 
@@ -1706,7 +1725,8 @@ class TestArchivedSessionsEndpoints:
         )
 
         # Check the file exists and contains the session
-        config_path = server._get_archived_sessions_path()
+        from claude_code_session_explorer.routes.archives import _get_archived_sessions_path
+        config_path = _get_archived_sessions_path()
         assert config_path.exists()
 
         import json
