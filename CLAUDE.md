@@ -40,6 +40,7 @@ See `src/vibedeck/`:
 - **Gist upload** - `export.py` (`upload_to_gist`)
 - **Token usage/cost tracking** - `backends/*/pricing.py`
 - **Multi-backend support** - `backends/multi.py`, `backends/registry.py`
+- **GUI Commands** - `templates/static/js/commands.js`, see `@prompts/gui-commands.md`
 
 ## Adding a Backend
 

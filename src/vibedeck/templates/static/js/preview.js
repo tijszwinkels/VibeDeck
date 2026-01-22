@@ -186,6 +186,10 @@ export async function openPreviewPane(filePath) {
     // Stop any existing file watch
     stopFileWatch();
 
+    // Clear URL mode state (we're now viewing a file)
+    state.previewUrlMode = false;
+    state.previewUrl = null;
+
     // Check if this is a new file or just a restart (e.g., from toggling Follow)
     const isNewFile = state.previewFilePath !== filePath;
 
@@ -236,6 +240,15 @@ export async function openPreviewPane(filePath) {
     if (isAudioFile(filename)) {
         if (dom.previewFollowToggle) dom.previewFollowToggle.style.display = 'none';  // Hide Follow toggle for audio
         renderAudioPreview(filePath);
+        hidePreviewStatus();
+        return;
+    }
+
+    // Handle HTML files in sandboxed iframe for preview
+    if (isHtmlFile(filename)) {
+        if (dom.previewFollowToggle) dom.previewFollowToggle.style.display = 'none';  // Hide Follow toggle for HTML
+        if (dom.previewViewToggle) dom.previewViewToggle.style.display = 'none';  // Hide view toggle for HTML
+        renderHtmlPreview(filePath);
         hidePreviewStatus();
         return;
     }
@@ -809,4 +822,137 @@ async function getPathType(path) {
     } catch {
         return null;
     }
+}
+
+/**
+ * Programmatically set the follow mode.
+ * Used by GUI commands to enable follow mode before opening a file.
+ * @param {boolean} enabled - Whether to enable follow mode
+ */
+export function setFollowMode(enabled) {
+    state.previewFollow = enabled;
+    if (dom.previewFollowCheckbox) {
+        dom.previewFollowCheckbox.checked = enabled;
+    }
+    localStorage.setItem('previewFollow', enabled ? 'true' : 'false');
+}
+
+/**
+ * Scroll the preview pane to a specific line number.
+ * Highlights the line briefly to draw attention to it.
+ * @param {number} lineNumber - The line number to scroll to (1-indexed)
+ */
+export function scrollToLine(lineNumber) {
+    if (!dom.previewContent) return;
+
+    const pre = dom.previewContent.querySelector('pre');
+    const code = pre ? pre.querySelector('code') : null;
+    if (!code) return;
+
+    // Get line height from computed style
+    const computedStyle = getComputedStyle(code);
+    const lineHeight = parseFloat(computedStyle.lineHeight) || 20;
+
+    // Calculate scroll position (line numbers are 1-indexed)
+    const scrollTop = (lineNumber - 1) * lineHeight;
+
+    // Scroll to the line with some padding at the top
+    dom.previewContent.scrollTop = Math.max(0, scrollTop - 50);
+
+    // Add highlight effect to the line
+    // We'll use a CSS custom property to indicate the highlighted line
+    code.dataset.highlightLine = lineNumber;
+
+    // Remove highlight after 2 seconds
+    setTimeout(() => {
+        delete code.dataset.highlightLine;
+    }, 2000);
+}
+
+/**
+ * Open a URL in the preview pane using a sandboxed iframe.
+ * @param {string} url - The URL to display (must be http:// or https://)
+ */
+export function openUrlPane(url) {
+    // Stop any file watching
+    stopFileWatch();
+
+    // Clear file-related state
+    state.previewFilePath = null;
+    state.previewFileData = null;
+    state.previewUrlMode = true;
+    state.previewUrl = url;
+
+    // Extract hostname for display
+    let hostname = url;
+    try {
+        hostname = new URL(url).hostname;
+    } catch {
+        // Use full URL if parsing fails
+    }
+
+    // Update header
+    if (dom.previewFilename) dom.previewFilename.textContent = hostname;
+    if (dom.previewPath) dom.previewPath.textContent = url;
+
+    // Hide file-specific controls
+    if (dom.previewViewToggle) dom.previewViewToggle.style.display = 'none';
+    if (dom.previewFollowToggle) dom.previewFollowToggle.style.display = 'none';
+    if (dom.previewCopyBtn) dom.previewCopyBtn.style.display = 'none';
+
+    // Clear content and render iframe
+    dom.previewContent.innerHTML = '';
+
+    const iframe = document.createElement('iframe');
+    iframe.className = 'url-preview-iframe';
+    iframe.src = url;
+    // Restricted sandbox - no same-origin to prevent access to VibeDeck's storage
+    iframe.sandbox = 'allow-scripts';
+
+    // Handle load errors (note: iframe onerror doesn't fire for HTTP errors)
+    iframe.onerror = function() {
+        showPreviewStatus('error', 'Failed to load URL');
+    };
+
+    dom.previewContent.appendChild(iframe);
+
+    // Open pane
+    openRightPane();
+    hidePreviewStatus();
+}
+
+/**
+ * Check if a filename is an HTML file based on extension.
+ * @param {string} filename - The filename to check
+ * @returns {boolean}
+ */
+function isHtmlFile(filename) {
+    const ext = filename.includes('.') ? filename.split('.').pop().toLowerCase() : '';
+    return ext === 'html' || ext === 'htm';
+}
+
+/**
+ * Render an HTML file in a sandboxed iframe.
+ * @param {string} filePath - The path to the HTML file
+ */
+function renderHtmlPreview(filePath) {
+    if (!dom.previewContent) return;
+
+    dom.previewContent.innerHTML = '';
+
+    const iframe = document.createElement('iframe');
+    iframe.className = 'html-preview-iframe';
+    // Use /api/file/raw to serve the HTML file
+    iframe.src = `/api/file/raw?path=${encodeURIComponent(filePath)}`;
+    // More restricted sandbox for local files - no same-origin to prevent access to VibeDeck's storage
+    iframe.sandbox = 'allow-scripts';
+
+    iframe.onerror = function() {
+        showPreviewStatus('error', 'Failed to load HTML file');
+    };
+
+    dom.previewContent.appendChild(iframe);
+
+    // Open pane
+    openRightPane();
 }

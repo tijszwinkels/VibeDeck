@@ -84,6 +84,12 @@ class PathTypeResponse(BaseModel):
     type: str  # "file" or "directory"
 
 
+class PathResolveResponse(BaseModel):
+    """Response for path resolution."""
+
+    resolved: str  # Resolved absolute path
+
+
 class ArchivedSessionsResponse(BaseModel):
     """Response for archived sessions list."""
 

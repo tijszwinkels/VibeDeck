@@ -185,6 +185,8 @@ export const state = {
     previewFilePath: null,
     previewFileData: null,
     previewFollow: localStorage.getItem('previewFollow') !== 'false',  // Follow mode for file preview
+    previewUrlMode: false,  // true when displaying a URL in iframe
+    previewUrl: null,       // URL currently displayed (when previewUrlMode is true)
 
     // Settings (with localStorage persistence)
     autoSwitch: localStorage.getItem('autoSwitch') !== 'false',

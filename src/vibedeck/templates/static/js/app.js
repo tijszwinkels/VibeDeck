@@ -12,6 +12,7 @@ import { initGroupBySelect, initOrderBySelect, initCopyButtons, reorderSidebar, 
 import { initMessaging } from './messaging.js';
 import { initModal } from './modal.js';
 import { connect, initVisibilityHandler } from './connection.js';
+import { initCommandButtons } from './commands.js';
 import { initSidebarContextMenu } from './sidebar-context-menu.js';
 import { initPermissions } from './permissions.js';
 
@@ -92,6 +93,9 @@ function init() {
 
     // Initialize visibility change handler for reconnection
     initVisibilityHandler();
+
+    // Initialize VibeDeck command button handlers
+    initCommandButtons();
 }
 
 // Run initialization when DOM is ready

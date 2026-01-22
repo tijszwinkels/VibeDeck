@@ -18,6 +18,7 @@ from ..models import (
     FileResponse,
     IMAGE_EXTENSIONS,
     MAX_FILE_SIZE,
+    PathResolveResponse,
     PathTypeResponse,
     UploadFileResponse,
 )
@@ -406,6 +407,69 @@ async def check_path_type(path: str) -> PathTypeResponse:
         raise
     except (PermissionError, OSError):
         raise HTTPException(status_code=404)
+
+
+@router.get("/path/resolve")
+async def resolve_path(path: str, session_id: str | None = None) -> PathResolveResponse:
+    """Resolve a path, expanding ~ and relative paths.
+
+    Used by VibeDeck GUI commands to resolve paths from LLM output.
+
+    Args:
+        path: Path to resolve. Can be:
+            - Absolute: /home/user/file.txt
+            - Home-relative: ~/file.txt
+            - Relative: src/main.py (resolved against session's project dir)
+        session_id: Optional session ID for resolving relative paths.
+
+    Returns:
+        PathResolveResponse with the resolved absolute path.
+
+    Raises:
+        HTTPException: 404 if path not found or outside allowed directories.
+    """
+    from ..sessions import get_session
+
+    home_dir = Path.home()
+
+    # Expand ~ to home directory
+    if path.startswith("~"):
+        resolved = home_dir / path[2:].lstrip("/")
+    elif not path.startswith("/"):
+        # Relative path - resolve against session's project directory
+        if session_id:
+            session = get_session(session_id)
+            if session and session.project_path:
+                resolved = Path(session.project_path) / path
+            else:
+                # No session or project path, try current working directory
+                logger.warning(f"No project path for session {session_id}, cannot resolve relative path")
+                raise HTTPException(status_code=404, detail="Cannot resolve relative path without session context")
+        else:
+            logger.warning("Relative path without session_id")
+            raise HTTPException(status_code=404, detail="Cannot resolve relative path without session context")
+    else:
+        # Absolute path
+        resolved = Path(path)
+
+    # Resolve to absolute path and check it exists
+    try:
+        resolved = resolved.resolve()
+    except (OSError, RuntimeError) as e:
+        logger.debug(f"Path resolution failed for {path}: {e}")
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    # Security: Restrict to user's home directory
+    try:
+        resolved.relative_to(home_dir)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    # Check path exists
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+
+    return PathResolveResponse(resolved=str(resolved))
 
 
 # File watch SSE endpoint for live file updates

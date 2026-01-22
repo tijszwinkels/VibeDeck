@@ -9,6 +9,7 @@ import {
     appendMessage, updateSessionWaitingState, updateSidebarItemStatusClass
 } from './sessions.js';
 import { showPermissionModal } from './permissions.js';
+import { parseAndExecuteCommands, initCommandButtons } from './commands.js';
 
 // Connect to SSE endpoint
 export function connect() {
@@ -189,7 +190,14 @@ export function connect() {
             if (!state.sessions.has(data.session_id)) {
                 createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null, null);
             }
-            appendMessage(data.session_id, data.content);
+
+            // Parse VibeDeck commands and add execute buttons
+            // Only auto-execute if catchup is complete (live streaming)
+            const processedHtml = parseAndExecuteCommands(data.content, data.session_id, state.catchupComplete);
+
+            if (processedHtml.trim()) {
+                appendMessage(data.session_id, processedHtml);
+            }
         }
     });
 
