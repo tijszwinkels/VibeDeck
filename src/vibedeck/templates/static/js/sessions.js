@@ -165,7 +165,8 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     if (backend) container.dataset.backend = backend;
 
     // Use summary title if available, otherwise fall back to firstMessage or name
-    const displayTitle = truncateTitle(summaryTitle || firstMessage || name, MAX_TITLE_LENGTH);
+    const fullTitle = summaryTitle || firstMessage || name;
+    const displayTitle = truncateTitle(fullTitle, MAX_TITLE_LENGTH);
 
     // Add session header (title only - auto-scroll is in floating controls)
     const sessionHeader = document.createElement('div');
@@ -189,18 +190,17 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
 
     // Build branch row (only shown in session-mode): branch on left, time on right
     const branchDisplay = summaryBranch || '';
-    const separator = (branchDisplay && formattedTime) ? '<span class="session-meta-sep">–</span>' : '';
+    const separator = (branchDisplay && formattedTime) ? ' – ' : '';
     const branchRowHtml = (branchDisplay || formattedTime) ? `
         <span class="session-branch-row">
-            <span class="session-branch">${escapeHtml(branchDisplay)}</span>
-            ${separator}
+            <span class="session-branch">${escapeHtml(branchDisplay)}${separator}</span>
             <span class="session-meta-time">${escapeHtml(formattedTime)}</span>
         </span>
     ` : '';
 
     sidebarItem.innerHTML = `
         <span class="unread-dot"></span>
-        <span class="session-title">${escapeHtml(displayTitle)}</span>
+        <span class="session-title">${escapeHtml(fullTitle)}</span>
         <span class="session-project-row">
             <button class="new-in-folder-btn" title="New session in same folder">+</button>
             <span class="session-project">${escapeHtml(projectName || 'Unknown')}</span>
