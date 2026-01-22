@@ -15,6 +15,7 @@ import {
 import { closePreviewPane, openPreviewPane } from './preview.js';
 import { loadFileTree, setProjectRoot } from './filetree.js';
 import { showProjectContextMenu, showSessionContextMenu } from './sidebar-context-menu.js';
+import { extractArtifactsFromElement, onSessionChanged } from './artifacts.js';
 
 // Forward declarations for circular dependency - will be set by other modules
 let updateInputBarUI = () => {};
@@ -723,6 +724,9 @@ export function switchToSession(sessionId, scrollToBottom = false) {
     session.sidebarItem.classList.add('active');
     state.activeSessionId = sessionId;
 
+    // Notify artifacts panel of session change
+    onSessionChanged(sessionId);
+
     // Clear unread/waiting state
     session.sidebarItem.classList.remove('unread', 'waiting');
     updateProjectUnreadState(session.projectName);
@@ -857,6 +861,7 @@ export function appendMessage(sessionId, html) {
 
         session.container.appendChild(msg);
         processNewElement(msg);
+        extractArtifactsFromElement(sessionId, msg);
         session.messageCount++;
 
         if (state.catchupComplete) {

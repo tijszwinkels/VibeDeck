@@ -18,6 +18,22 @@
         </div>
         <div class="session-title-bar" id="session-title-bar"></div>
         <button class="right-sidebar-toggle" id="right-sidebar-toggle" title="Toggle file tree"><div class="folder-icon"></div></button>
+        <div class="artifacts-container" id="artifacts-container">
+            <button class="artifacts-toggle" id="artifacts-toggle" title="Show artifacts">
+                <span class="artifacts-icon">&#9733;</span>
+                <span class="artifacts-label">Artifacts</span>
+                <span class="artifacts-badge" id="artifacts-badge" style="display: none;">0</span>
+            </button>
+            <div class="artifacts-panel" id="artifacts-panel" style="display: none;">
+                <div class="artifacts-header">
+                    <span class="artifacts-title">Artifacts</span>
+                    <button class="artifacts-clear-btn" id="artifacts-clear-btn" title="Clear all">Clear</button>
+                </div>
+                <div class="artifacts-list" id="artifacts-list">
+                    <div class="artifacts-empty">No artifacts yet</div>
+                </div>
+            </div>
+        </div>
         <button class="theme-toggle" id="theme-toggle" title="Toggle dark mode">&#9790;</button>
     </div>
 

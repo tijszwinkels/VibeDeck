@@ -78,6 +78,14 @@ export function initCommandButtons() {
             setTimeout(() => btn.textContent = '▶', 1000);
         }
     });
+
+    // Listen for programmatic command execution (e.g., from artifacts panel)
+    window.addEventListener('vibedeck-command', (e) => {
+        const { command } = e.detail;
+        if (command) {
+            executeCommandBlock(command, state.activeSessionId);
+        }
+    });
 }
 
 /**

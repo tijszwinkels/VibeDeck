@@ -16,6 +16,7 @@ import { initCommandButtons } from './commands.js';
 import { initSidebarContextMenu } from './sidebar-context-menu.js';
 import { initPermissions } from './permissions.js';
 import { initDiffView } from './diff.js';
+import { initArtifacts } from './artifacts.js';
 
 // Initialize the application
 function init() {
@@ -54,6 +55,9 @@ function init() {
 
     // Initialize diff view
     initDiffView();
+
+    // Initialize artifacts panel
+    initArtifacts();
 
     // Initialize global click handler for copy buttons (event delegation)
     document.addEventListener('click', function(e) {

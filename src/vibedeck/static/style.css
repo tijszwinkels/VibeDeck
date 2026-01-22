@@ -1461,3 +1461,166 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 .edit-tool:active {
     transform: scale(0.995);
 }
+
+/* ===== Artifacts Panel ===== */
+
+.artifacts-container {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.artifacts-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 4px;
+    color: rgba(255,255,255,0.7);
+    transition: background 0.15s, color 0.15s;
+    font-size: 0.85rem;
+}
+.artifacts-toggle:hover {
+    background: rgba(255,255,255,0.2);
+    color: white;
+}
+.artifacts-container.open .artifacts-toggle {
+    background: rgba(255,255,255,0.25);
+    color: white;
+}
+
+.artifacts-icon {
+    font-size: 1rem;
+}
+
+.artifacts-label {
+    font-weight: 500;
+}
+
+.artifacts-badge {
+    background: #f44336;
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 8px;
+    min-width: 16px;
+    text-align: center;
+}
+
+.artifacts-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 320px;
+    max-height: 400px;
+    background: var(--bg-color, #fff);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+[data-theme="dark"] .artifacts-panel {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.artifacts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(0,0,0,0.02);
+}
+
+[data-theme="dark"] .artifacts-header {
+    background: rgba(255,255,255,0.02);
+}
+
+.artifacts-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-color);
+}
+
+.artifacts-clear-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+.artifacts-clear-btn:hover {
+    background: rgba(0,0,0,0.05);
+    color: var(--text-color);
+}
+[data-theme="dark"] .artifacts-clear-btn:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.artifacts-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.artifacts-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 24px 12px;
+    font-size: 0.85rem;
+}
+
+.artifacts-section {
+    margin-bottom: 4px;
+}
+
+.artifacts-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.artifacts-section-icon {
+    font-size: 0.85rem;
+}
+
+.artifact-item {
+    display: flex;
+    align-items: center;
+    padding: 6px 12px 6px 28px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    transition: background 0.1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.artifact-item:hover {
+    background: rgba(33, 150, 243, 0.1);
+}
+[data-theme="dark"] .artifact-item:hover {
+    background: rgba(33, 150, 243, 0.15);
+}
+
+.artifact-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
