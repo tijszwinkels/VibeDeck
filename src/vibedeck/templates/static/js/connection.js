@@ -63,7 +63,8 @@ export function connect() {
                 session.backend,
                 session.summaryTitle,
                 session.summaryShort,
-                session.summaryExecutive
+                session.summaryExecutive,
+                session.summaryBranch
             );
         });
         reorderSidebar();
@@ -111,7 +112,8 @@ export function connect() {
                 data.backend,
                 data.summaryTitle,
                 data.summaryShort,
-                data.summaryExecutive
+                data.summaryExecutive,
+                data.summaryBranch
             );
 
             if (wasPendingActive && session) {
@@ -130,7 +132,8 @@ export function connect() {
                 data.backend,
                 data.summaryTitle,
                 data.summaryShort,
-                data.summaryExecutive
+                data.summaryExecutive,
+                data.summaryBranch
             );
             if (state.autoSwitch && session) {
                 switchToSession(data.id, true);

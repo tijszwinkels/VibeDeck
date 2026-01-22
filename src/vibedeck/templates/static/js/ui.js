@@ -337,6 +337,21 @@ export function showTooltip(sessionId, e) {
         const updated = formatTimestamp(session.lastUpdatedAt);
         const fullMessage = session.firstMessage || 'No message';
 
+        // Title at the top (if available from summary)
+        let titleHtml = '';
+        if (session.summaryTitle) {
+            titleHtml = `<div class="tooltip-title">${escapeHtml(session.summaryTitle)}</div>`;
+        }
+
+        // Branch (if available from summary)
+        let branchHtml = '';
+        if (session.summaryBranch) {
+            branchHtml = `
+                <div class="tooltip-label">Branch</div>
+                <div class="tooltip-value">${escapeHtml(session.summaryBranch)}</div>
+            `;
+        }
+
         let backendHtml = '';
         if (session.backend) {
             backendHtml = `
@@ -382,6 +397,8 @@ export function showTooltip(sessionId, e) {
         }
 
         dom.sessionTooltip.innerHTML = `
+            ${titleHtml}
+            ${branchHtml}
             ${backendHtml}
             ${summaryHtml}
             <div class="tooltip-label">Created</div>

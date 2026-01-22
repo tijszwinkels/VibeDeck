@@ -101,6 +101,41 @@ export function formatTimestamp(ts) {
     return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ' ' + timeStr;
 }
 
+// Short timestamp formatting for sidebar cards
+// Shows: "9:35" if today, "Mon 9:35" if this week, "Jan 15" if older
+export function formatShortTimestamp(ts) {
+    if (!ts) return '';
+    const date = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+    if (isNaN(date.getTime())) return '';
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const sessionDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+    // Today: just time
+    if (sessionDate.getTime() === today.getTime()) {
+        return timeStr;
+    }
+
+    // Within the last 7 days: "Mon 9:35"
+    const oneWeekAgo = new Date(today);
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    if (sessionDate > oneWeekAgo) {
+        const dayName = date.toLocaleDateString(undefined, { weekday: 'short' });
+        return dayName + ' ' + timeStr;
+    }
+
+    // Different year: "2025 Jan 15"
+    if (date.getFullYear() !== now.getFullYear()) {
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    // Older but same year: "Jan 15"
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 // Token count formatting
 export function formatTokenCount(count) {
     if (!count || count === 0) return '0';

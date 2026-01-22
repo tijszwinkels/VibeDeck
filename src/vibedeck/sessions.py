@@ -50,6 +50,7 @@ class SessionInfo:
     summary_title: str | None = None
     summary_short: str | None = None
     summary_executive: str | None = None
+    summary_branch: str | None = None
 
     def __post_init__(self):
         backend = get_current_backend()
@@ -114,6 +115,7 @@ class SessionInfo:
             self.summary_title = data.get("title")
             self.summary_short = data.get("short_summary")
             self.summary_executive = data.get("executive_summary")
+            self.summary_branch = data.get("branch")
             logger.debug(f"Loaded summary for session {self.session_id}: {self.summary_title}")
             return True
         except (OSError, IOError, json.JSONDecodeError) as e:
@@ -169,6 +171,7 @@ class SessionInfo:
             "summaryTitle": self.summary_title,
             "summaryShort": self.summary_short,
             "summaryExecutive": self.summary_executive,
+            "summaryBranch": self.summary_branch,
         }
 
 

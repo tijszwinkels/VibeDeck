@@ -4,7 +4,8 @@ import { dom, state, MAX_MESSAGES, MAX_TITLE_LENGTH, dateCategoryLabels, dateCat
 import {
     escapeHtml, truncateTitle, isMobile, isNearBottom, copyToClipboard,
     getDateCategory, getSessionSortTimestamp, getSessionCategoryTimestamp,
-    parseStatusFromTitle, getStatusClass, formatTokenCount, formatCost, formatModelName
+    parseStatusFromTitle, getStatusClass, formatTokenCount, formatCost, formatModelName,
+    formatShortTimestamp
 } from './utils.js';
 import {
     showTooltip, hideTooltip, positionTooltip, showDateCategoryTooltip,
@@ -154,7 +155,7 @@ export function getOrCreateProject(projectName, projectPath) {
     return project;
 }
 
-export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive) {
+export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch) {
     if (state.sessions.has(sessionId)) return state.sessions.get(sessionId);
 
     // Create container with session header
@@ -181,6 +182,22 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     if (backend) sidebarItem.dataset.backend = backend;
     if (projectPath) sidebarItem.dataset.cwd = projectPath;
 
+    // Determine which timestamp to show (opposite of sort order)
+    // When sorting by created, show modified time; when by modified, show created time
+    const displayTimestamp = state.sortBy === 'created' ? lastUpdatedAt : startedAt;
+    const formattedTime = formatShortTimestamp(displayTimestamp);
+
+    // Build branch row (only shown in session-mode): branch on left, time on right
+    const branchDisplay = summaryBranch || '';
+    const separator = (branchDisplay && formattedTime) ? '<span class="session-meta-sep">–</span>' : '';
+    const branchRowHtml = (branchDisplay || formattedTime) ? `
+        <span class="session-branch-row">
+            <span class="session-branch">${escapeHtml(branchDisplay)}</span>
+            ${separator}
+            <span class="session-meta-time">${escapeHtml(formattedTime)}</span>
+        </span>
+    ` : '';
+
     sidebarItem.innerHTML = `
         <span class="unread-dot"></span>
         <span class="session-title">${escapeHtml(displayTitle)}</span>
@@ -188,6 +205,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
             <button class="new-in-folder-btn" title="New session in same folder">+</button>
             <span class="session-project">${escapeHtml(projectName || 'Unknown')}</span>
         </span>
+        ${branchRowHtml}
         <span class="close-btn" title="Close">&times;</span>
     `;
 
@@ -262,6 +280,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         summaryTitle: summaryTitle || null,
         summaryShort: summaryShort || null,
         summaryExecutive: summaryExecutive || null,
+        summaryBranch: summaryBranch || null,
         archived: isArchived
     };
     state.sessions.set(sessionId, session);
