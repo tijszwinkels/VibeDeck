@@ -29,7 +29,7 @@ from .broadcasting import (
     get_clients,
     remove_client,
 )
-from .routes import archives_router, files_router, sessions_router
+from .routes import archives_router, diff_router, files_router, sessions_router
 from .routes.sessions import configure_session_routes
 from .sessions import (
     MAX_SESSIONS,
@@ -937,6 +937,7 @@ app = FastAPI(title="VibeDeck", lifespan=lifespan)
 app.include_router(sessions_router)
 app.include_router(files_router)
 app.include_router(archives_router)
+app.include_router(diff_router)
 
 
 # Core routes (index, static, SSE events, health)
