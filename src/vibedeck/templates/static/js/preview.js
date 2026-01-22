@@ -4,6 +4,7 @@ import { isMobile, copyToClipboard } from './utils.js';
 import { openRightPane, syncTreeToFile, loadFileTree } from './filetree.js';
 import { showFlash } from './ui.js';
 import { startFileWatch, stopFileWatch } from './filewatch.js';
+import { openDiffView } from './diff.js';
 
 // Image file extensions that can be displayed in the preview pane
 const IMAGE_EXTENSIONS = new Set([
@@ -108,9 +109,31 @@ export function initPreviewPane() {
         // Skip if clicking links (let them navigate normally)
         if (e.target.closest('a')) return;
 
+        // Skip if clicking expand button
+        if (e.target.closest('.expand-btn')) return;
+
+        // Skip if clicking within diff view elements (let diff.js handle those)
+        if (e.target.closest('.diff-file-list') || e.target.closest('.diff-header') || e.target.closest('.diff-view')) return;
+
         // Skip if user has selected text (they're trying to copy)
         const selection = window.getSelection();
         if (selection && selection.toString().length > 0) return;
+
+        // Check if clicking on an edit-tool block - open diff view
+        const editTool = e.target.closest('.edit-tool');
+        if (editTool) {
+            e.preventDefault();
+            e.stopPropagation();
+            const fullpath = editTool.querySelector('.file-tool-fullpath[data-copy-path]');
+            if (fullpath) {
+                const path = fullpath.dataset.copyPath;
+                openDiffView(path);
+            } else {
+                // No path found, open diff view without pre-selecting
+                openDiffView();
+            }
+            return;
+        }
 
         // First, check for explicit file-tool-fullpath elements (highest priority)
         const fullpath = e.target.closest('.file-tool-fullpath[data-copy-path]');

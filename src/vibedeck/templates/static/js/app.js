@@ -15,6 +15,7 @@ import { connect, initVisibilityHandler } from './connection.js';
 import { initCommandButtons } from './commands.js';
 import { initSidebarContextMenu } from './sidebar-context-menu.js';
 import { initPermissions } from './permissions.js';
+import { initDiffView } from './diff.js';
 
 // Initialize the application
 function init() {
@@ -50,6 +51,9 @@ function init() {
 
     // Initialize permissions modal
     initPermissions();
+
+    // Initialize diff view
+    initDiffView();
 
     // Initialize global click handler for copy buttons (event delegation)
     document.addEventListener('click', function(e) {

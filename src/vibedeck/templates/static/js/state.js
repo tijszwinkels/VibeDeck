@@ -83,7 +83,9 @@ export const dom = {
     permissionModal: null,
     permissionDenialsList: null,
     permissionGrantBtn: null,
-    permissionRejectBtn: null
+    permissionRejectBtn: null,
+    // Diff view elements
+    diffModeToggle: null
 };
 
 // Initialize DOM elements
@@ -160,6 +162,8 @@ export function initDom() {
     dom.permissionDenialsList = document.getElementById('permission-denials-list');
     dom.permissionGrantBtn = document.getElementById('permission-grant-btn');
     dom.permissionRejectBtn = document.getElementById('permission-reject-btn');
+    // Diff view elements
+    dom.diffModeToggle = document.getElementById('diff-mode-toggle');
 }
 
 // Application state
@@ -234,7 +238,16 @@ export const state = {
     isTreeResizing: false,
     treeStartX: 0,
     treeStartWidth: 0,
-    treeSidebarWidth: parseInt(localStorage.getItem('treeSidebarWidth')) || 250
+    treeSidebarWidth: parseInt(localStorage.getItem('treeSidebarWidth')) || 250,
+
+    // Diff view state
+    diffModeActive: false,         // Whether we're showing diff view instead of file tree
+    diffFiles: [],                 // List of changed files
+    diffType: null,                // 'uncommitted' or 'vs_main'
+    diffMainBranch: null,          // Main branch name (when diff_type is 'vs_main')
+    diffCurrentBranch: null,       // Current branch name
+    diffSelectedFile: null,        // Currently selected file in diff view
+    diffCwd: null                  // Working directory for diff operations (for worktrees)
 };
 
 // Initialize status colors based on URL param
