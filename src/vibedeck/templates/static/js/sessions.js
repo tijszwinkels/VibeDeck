@@ -188,11 +188,11 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     const displayTimestamp = state.sortBy === 'created' ? lastUpdatedAt : startedAt;
     const formattedTime = formatShortTimestamp(displayTimestamp);
 
-    // Build branch row (only shown in session-mode): branch on left, time on right
+    // Build branch+time display (right side of project row in session-mode)
     const branchDisplay = summaryBranch || '';
-    const separator = (branchDisplay && formattedTime) ? ' – ' : '';
-    const branchRowHtml = (branchDisplay || formattedTime) ? `
-        <span class="session-branch-row">
+    const separator = '';
+    const branchTimeHtml = (branchDisplay || formattedTime) ? `
+        <span class="session-meta">
             <span class="session-branch">${escapeHtml(branchDisplay)}${separator}</span>
             <span class="session-meta-time">${escapeHtml(formattedTime)}</span>
         </span>
@@ -204,8 +204,8 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         <span class="session-project-row">
             <button class="new-in-folder-btn" title="New session in same folder">+</button>
             <span class="session-project">${escapeHtml(projectName || 'Unknown')}</span>
+            ${branchTimeHtml}
         </span>
-        ${branchRowHtml}
         <span class="close-btn" title="Close">&times;</span>
     `;
 
