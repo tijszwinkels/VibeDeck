@@ -71,9 +71,10 @@ export function showSessionContextMenu(e, sessionId) {
     const isArchived = state.archivedSessionIds.has(sessionId);
     let menuItems = '';
 
-    // View diff option (if session has a project path)
+    // View diff and file browser options (if session has a project path)
     if (session.cwd) {
         menuItems += `<button class="context-menu-item" data-action="view-diff">View diff</button>`;
+        menuItems += `<button class="context-menu-item" data-action="open-session-files">Open in file browser</button>`;
     }
 
     menuItems += `<button class="context-menu-item" data-action="trigger-summary">Trigger summary</button>`;
@@ -141,6 +142,8 @@ async function handleSessionAction(action) {
 
     if (action === 'view-diff') {
         viewSessionDiff(currentMenuData.sessionId, currentMenuData.session);
+    } else if (action === 'open-session-files') {
+        openSessionInFileBrowser(currentMenuData.sessionId, currentMenuData.session);
     } else if (action === 'trigger-summary') {
         await triggerSummary(currentMenuData.sessionId);
     } else if (action === 'archive') {
@@ -153,8 +156,27 @@ async function handleSessionAction(action) {
 }
 
 /**
- * Open diff view for a session, determining the correct working directory.
+ * Get the working directory for a session, detecting worktrees.
  * If the session has a branch that's not main/master, try to find the worktree.
+ * Returns the worktree path if applicable, otherwise the project root.
+ */
+function getSessionWorkingDir(session) {
+    if (!session.cwd) return null;
+
+    let workDir = session.cwd;
+
+    // If session has a branch and it's not main/master, try worktree path
+    const branch = session.summaryBranch;
+    if (branch && branch !== 'main' && branch !== 'master') {
+        // Convention: worktrees are at {projectPath}/worktrees/{branch}
+        workDir = `${session.cwd}/worktrees/${branch}`;
+    }
+
+    return workDir;
+}
+
+/**
+ * Open diff view for a session, determining the correct working directory.
  */
 function viewSessionDiff(sessionId, session) {
     if (!session.cwd) {
@@ -165,20 +187,30 @@ function viewSessionDiff(sessionId, session) {
     // Switch to the session first (diff view uses activeSessionId)
     switchToSession(sessionId, false);
 
-    let diffPath = session.cwd;
-
-    // If session has a branch and it's not main/master, try worktree path
-    const branch = session.summaryBranch;
-    if (branch && branch !== 'main' && branch !== 'master') {
-        // Convention: worktrees are at {projectPath}/worktrees/{branch}
-        const worktreePath = `${session.cwd}/worktrees/${branch}`;
-        // Pass the worktree path - the backend will verify if it exists
-        diffPath = worktreePath;
-    }
+    const diffPath = getSessionWorkingDir(session);
 
     // Open the diff view with the path to set the cwd
     // The backend's _resolve_cwd will find the git root from this path
     openDiffView(diffPath);
+}
+
+/**
+ * Open file browser for a session, using worktree path if applicable.
+ */
+function openSessionInFileBrowser(sessionId, session) {
+    if (!session.cwd) {
+        showFlashMessage('No project path for session', 'error');
+        return;
+    }
+
+    // Switch to the session first
+    switchToSession(sessionId, false);
+
+    const workDir = getSessionWorkingDir(session);
+
+    // Open the right pane and load the file tree
+    openRightPane();
+    loadFileTree(sessionId, workDir);
 }
 
 function showFlashMessage(message, type) {
