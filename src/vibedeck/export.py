@@ -1163,12 +1163,94 @@ def format_message_as_markdown(
             lines.append(text)
 
     elif role == "assistant":
+        assistant_lines = []
+
         if isinstance(content, list):
-            assistant_lines = _format_assistant_content_md(content, hide_tools)
-            if assistant_lines:
-                lines.append("**Assistant:**")
-                lines.append("")
-                lines.extend(assistant_lines)
+            if backend == "claude_code":
+                # Use shared helper for Claude Code
+                assistant_lines = _format_assistant_content_md(content, hide_tools)
+            else:
+                # OpenCode has additional block types (tool, step-finish)
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+
+                    block_type = block.get("type", "")
+
+                    if hide_tools and block_type in ("tool_use", "tool"):
+                        continue
+
+                    if block_type == "text":
+                        text = block.get("text", "")
+                        if text.strip():
+                            assistant_lines.append(text)
+                            assistant_lines.append("")
+
+                    elif block_type == "thinking":
+                        assistant_lines.append("*Thinking:*")
+                        assistant_lines.append("")
+                        assistant_lines.append(f"> {block.get('thinking', '')}")
+                        assistant_lines.append("")
+
+                    elif block_type == "reasoning":
+                        reasoning = block.get("reasoning", "")
+                        assistant_lines.append("*Reasoning:*")
+                        assistant_lines.append("")
+                        for line in reasoning.split("\n"):
+                            assistant_lines.append(f"> {line}")
+                        assistant_lines.append("")
+
+                    elif block_type == "tool_use":
+                        tool_name = block.get("name", "Unknown")
+                        tool_input = block.get("input", {})
+                        _format_tool_md(assistant_lines, tool_name, tool_input)
+
+                    elif block_type == "tool":
+                        # OpenCode tool part
+                        tool_field = block.get("tool", "")
+                        if isinstance(tool_field, str):
+                            tool_name = tool_field or block.get("name", "Unknown")
+                        elif isinstance(tool_field, dict):
+                            tool_name = tool_field.get("name", "Unknown")
+                        else:
+                            tool_name = block.get("name", "Unknown")
+
+                        tool_name = tool_name.capitalize() if tool_name else "Unknown"
+
+                        state = block.get("state", {})
+                        tool_input = state.get("input", {})
+                        tool_output = state.get("output", {})
+                        tool_error = state.get("error", "")
+
+                        _format_tool_md(assistant_lines, tool_name, tool_input)
+
+                        if tool_error:
+                            assistant_lines.append("**Error:**")
+                            assistant_lines.append("```")
+                            assistant_lines.append(tool_error)
+                            assistant_lines.append("```")
+                            assistant_lines.append("")
+                        elif tool_output:
+                            output_str = (
+                                tool_output
+                                if isinstance(tool_output, str)
+                                else json.dumps(tool_output, indent=2)
+                            )
+                            if len(output_str) > 2000:
+                                output_str = output_str[:2000] + "\n... (truncated)"
+                            assistant_lines.append("**Output:**")
+                            assistant_lines.append("```")
+                            assistant_lines.append(output_str)
+                            assistant_lines.append("```")
+                            assistant_lines.append("")
+
+                    elif block_type == "step-finish":
+                        pass  # Skip step-finish markers
+
+        if assistant_lines:
+            lines.append("**Assistant:**")
+            lines.append("")
+            lines.extend(assistant_lines)
 
     return "\n".join(lines)
 
