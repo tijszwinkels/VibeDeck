@@ -28,10 +28,10 @@ let commandIdCounter = 0;
  *
  * @param {string} html - HTML content that may contain vibedeck commands
  * @param {string} sessionId - Current session ID for path resolution
- * @param {boolean} autoExecute - If true, execute commands immediately (for live streaming)
+ * @param {boolean} isLiveStreaming - If true, we're in live streaming mode (catchup complete)
  * @returns {string} HTML with execute buttons added to vibedeck blocks
  */
-export function parseAndExecuteCommands(html, sessionId, autoExecute = true) {
+export function parseAndExecuteCommands(html, sessionId, isLiveStreaming = true) {
     // Match <pre><code class="language-vibedeck">...</code></pre> blocks
     const vibedeckPattern = /<pre><code([^>]*class="[^"]*language-vibedeck[^"]*"[^>]*)>([\s\S]*?)<\/code><\/pre>/gi;
 
@@ -43,8 +43,10 @@ export function parseAndExecuteCommands(html, sessionId, autoExecute = true) {
         // Store command data for later execution
         pendingCommands.set(commandId, { block: commandBlock, sessionId });
 
-        // Auto-execute if streaming (not catchup)
-        if (autoExecute) {
+        // Only auto-execute if:
+        // 1. We're in live streaming mode (catchup complete), AND
+        // 2. The command has follow="true" attribute
+        if (isLiveStreaming && commandHasFollow(commandBlock)) {
             executeCommandBlock(commandBlock, sessionId);
         }
 
@@ -55,6 +57,14 @@ export function parseAndExecuteCommands(html, sessionId, autoExecute = true) {
     });
 
     return modifiedHtml;
+}
+
+/**
+ * Check if a command block has follow="true" attribute.
+ */
+function commandHasFollow(block) {
+    // Match follow="true" in any command
+    return /follow="true"/i.test(block);
 }
 
 // Store pending commands for manual execution
