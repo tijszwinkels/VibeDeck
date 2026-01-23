@@ -406,44 +406,9 @@ export function initMessaging() {
         }
     });
 
-    // iOS-friendly touch handling for buttons
-    // On iOS, we need to handle touchend to prevent focus stealing by nearby inputs
-    function handleButtonTouch(btn, handler) {
-        let touchStarted = false;
-
-        btn.addEventListener('touchstart', function(e) {
-            touchStarted = true;
-            // Add visual feedback
-            btn.style.opacity = '0.7';
-        }, { passive: true });
-
-        btn.addEventListener('touchend', function(e) {
-            if (touchStarted && !btn.disabled && !btn.classList.contains('hidden')) {
-                e.preventDefault();  // Prevent focus from going to textarea
-                e.stopPropagation();
-                btn.style.opacity = '';
-                handler();
-            }
-            touchStarted = false;
-        });
-
-        btn.addEventListener('touchcancel', function(e) {
-            touchStarted = false;
-            btn.style.opacity = '';
-        }, { passive: true });
-
-        // Keep click for non-touch devices
-        btn.addEventListener('click', function(e) {
-            // Only handle click if it's not from a touch event
-            if (!touchStarted && !btn.disabled && !btn.classList.contains('hidden')) {
-                handler();
-            }
-        });
-    }
-
-    handleButtonTouch(dom.sendBtn, sendMessage);
-    handleButtonTouch(dom.forkBtn, forkMessage);
-    handleButtonTouch(dom.interruptBtn, interruptSession);
+    dom.sendBtn.addEventListener('click', sendMessage);
+    dom.forkBtn.addEventListener('click', forkMessage);
+    dom.interruptBtn.addEventListener('click', interruptSession);
 }
 
 function insertTextAtCursor(textarea, text) {
