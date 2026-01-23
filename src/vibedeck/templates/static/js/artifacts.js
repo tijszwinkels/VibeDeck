@@ -160,12 +160,12 @@ function renderArtifactsList() {
 
     let html = '';
     for (const artifact of sorted) {
-        const escapedValue = escapeHtml(artifact.value);
+        const attrValue = escapeAttr(artifact.value);
         const escapedLabel = escapeHtml(artifact.label);
         const typeLabel = TYPE_LABELS[artifact.type] || artifact.type;
         const timeStr = formatTime(artifact.timestamp);
 
-        html += `<div class="artifact-tag type-${artifact.type}" data-type="${artifact.type}" data-value="${escapedValue}" title="${escapedValue}">
+        html += `<div class="artifact-tag type-${artifact.type}" data-type="${artifact.type}" data-value="${attrValue}" title="${attrValue}">
             <span class="tag-type">${typeLabel}:</span>
             <span class="tag-value">${escapedLabel}</span>
             <span class="tag-timestamp">${timeStr}</span>
@@ -278,6 +278,13 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Escape text for use in HTML attributes (also escapes quotes).
+ */
+function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;');
 }
 
 /**
