@@ -1708,3 +1708,19 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     background: #3d1f47;
     color: #ce93d8;
 }
+
+/* Artifact scroll highlight effect */
+.message.artifact-highlight {
+    animation: artifact-highlight-pulse 1.5s ease-out;
+}
+@keyframes artifact-highlight-pulse {
+    0% { background-color: rgba(33, 150, 243, 0.3); }
+    100% { background-color: transparent; }
+}
+[data-theme="dark"] .message.artifact-highlight {
+    animation: artifact-highlight-pulse-dark 1.5s ease-out;
+}
+@keyframes artifact-highlight-pulse-dark {
+    0% { background-color: rgba(33, 150, 243, 0.2); }
+    100% { background-color: transparent; }
+}

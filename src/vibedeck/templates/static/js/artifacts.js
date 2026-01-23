@@ -25,7 +25,7 @@ const TYPE_LABELS = {
     gui: 'GUI'
 };
 
-// Per-session artifact storage: sessionId -> Map<key, {type, value, label, timestamp}>
+// Per-session artifact storage: sessionId -> Map<key, {type, value, label, timestamp, messageId}>
 // Key is type:value to ensure uniqueness
 const sessionArtifacts = new Map();
 
@@ -43,14 +43,15 @@ function getSessionStore(sessionId) {
 }
 
 /**
- * Add or update an artifact with its timestamp.
+ * Add or update an artifact with its timestamp and source message.
  * @param {string} sessionId
  * @param {string} type
  * @param {string} value
  * @param {string} label
  * @param {number} [timestamp] - Optional timestamp, defaults to Date.now()
+ * @param {string} [messageId] - Optional message element ID for scrolling
  */
-function addArtifact(sessionId, type, value, label, timestamp) {
+function addArtifact(sessionId, type, value, label, timestamp, messageId) {
     const store = getSessionStore(sessionId);
     const key = `${type}:${value}`;
 
@@ -58,7 +59,8 @@ function addArtifact(sessionId, type, value, label, timestamp) {
         type,
         value,
         label: label || value,
-        timestamp: timestamp || Date.now()
+        timestamp: timestamp || Date.now(),
+        messageId: messageId || null
     });
 
     onArtifactAdded(sessionId);
@@ -67,32 +69,32 @@ function addArtifact(sessionId, type, value, label, timestamp) {
 /**
  * Add a file artifact (from Read, Write tools).
  */
-function addFileArtifact(sessionId, filePath, timestamp) {
+function addFileArtifact(sessionId, filePath, timestamp, messageId) {
     const filename = filePath.split('/').pop() || filePath;
-    addArtifact(sessionId, 'file', filePath, filename, timestamp);
+    addArtifact(sessionId, 'file', filePath, filename, timestamp, messageId);
 }
 
 /**
  * Add a diff artifact (from Edit tool).
  */
-function addDiffArtifact(sessionId, filePath, timestamp) {
+function addDiffArtifact(sessionId, filePath, timestamp, messageId) {
     const filename = filePath.split('/').pop() || filePath;
-    addArtifact(sessionId, 'diff', filePath, filename, timestamp);
+    addArtifact(sessionId, 'diff', filePath, filename, timestamp, messageId);
 }
 
 /**
  * Add a URL artifact.
  */
-function addUrlArtifact(sessionId, url, timestamp) {
+function addUrlArtifact(sessionId, url, timestamp, messageId) {
     const label = truncateUrl(url);
-    addArtifact(sessionId, 'url', url, label, timestamp);
+    addArtifact(sessionId, 'url', url, label, timestamp, messageId);
 }
 
 /**
  * Add a GUI command artifact (vibedeck block).
  */
-function addGuiArtifact(sessionId, command, label, timestamp) {
-    addArtifact(sessionId, 'gui', command, label || 'Command', timestamp);
+function addGuiArtifact(sessionId, command, label, timestamp, messageId) {
+    addArtifact(sessionId, 'gui', command, label || 'Command', timestamp, messageId);
 }
 
 /**
@@ -164,8 +166,9 @@ function renderArtifactsList() {
         const escapedLabel = escapeHtml(artifact.label);
         const typeLabel = TYPE_LABELS[artifact.type] || artifact.type;
         const timeStr = formatTime(artifact.timestamp);
+        const msgIdAttr = artifact.messageId ? ` data-message-id="${escapeAttr(artifact.messageId)}"` : '';
 
-        html += `<div class="artifact-tag type-${artifact.type}" data-type="${artifact.type}" data-value="${attrValue}" title="${attrValue}">
+        html += `<div class="artifact-tag type-${artifact.type}" data-type="${artifact.type}" data-value="${attrValue}"${msgIdAttr} title="${attrValue}">
             <span class="tag-type">${typeLabel}:</span>
             <span class="tag-value">${escapedLabel}</span>
             <span class="tag-timestamp">${timeStr}</span>
@@ -181,12 +184,30 @@ function renderArtifactsList() {
 }
 
 /**
+ * Scroll to a message element by ID.
+ */
+function scrollToMessage(messageId) {
+    if (!messageId) return;
+    const messageEl = document.getElementById(messageId);
+    if (messageEl) {
+        messageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Brief highlight effect
+        messageEl.classList.add('artifact-highlight');
+        setTimeout(() => messageEl.classList.remove('artifact-highlight'), 1500);
+    }
+}
+
+/**
  * Handle click on an artifact tag.
  */
 function handleArtifactClick(e) {
     const tag = e.currentTarget;
     const type = tag.dataset.type;
     const value = tag.dataset.value;
+    const messageId = tag.dataset.messageId;
+
+    // Scroll to the source message
+    scrollToMessage(messageId);
 
     switch (type) {
         case 'file':
@@ -351,8 +372,10 @@ function getMessageTimestamp(element) {
 export function extractArtifactsFromElement(sessionId, element) {
     if (!sessionId) return;
 
-    // Get the message timestamp
+    // Get the message timestamp and ID
     const timestamp = getMessageTimestamp(element);
+    const messageEl = element.closest('.message') || element;
+    const messageId = messageEl.id || null;
 
     // Extract file paths from file-tool-fullpath elements (Read, Write tools)
     element.querySelectorAll('.file-tool-fullpath[data-copy-path]').forEach(el => {
@@ -361,9 +384,9 @@ export function extractArtifactsFromElement(sessionId, element) {
             // Check if this is inside an edit-tool (then it's a diff, not just a file)
             const isEdit = el.closest('.edit-tool');
             if (isEdit) {
-                addDiffArtifact(sessionId, path, timestamp);
+                addDiffArtifact(sessionId, path, timestamp, messageId);
             } else {
-                addFileArtifact(sessionId, path, timestamp);
+                addFileArtifact(sessionId, path, timestamp, messageId);
             }
         }
     });
@@ -375,7 +398,7 @@ export function extractArtifactsFromElement(sessionId, element) {
     urls.forEach(url => {
         // Clean up trailing punctuation
         url = url.replace(/[)\].,;:!]+$/, '');
-        addUrlArtifact(sessionId, url, timestamp);
+        addUrlArtifact(sessionId, url, timestamp, messageId);
     });
 
     // Extract vibedeck command blocks
@@ -392,7 +415,7 @@ export function extractArtifactsFromElement(sessionId, element) {
             } else if (openUrlMatch) {
                 label = truncateUrl(openUrlMatch[1]);
             }
-            addGuiArtifact(sessionId, command, label, timestamp);
+            addGuiArtifact(sessionId, command, label, timestamp, messageId);
         }
     });
 }
