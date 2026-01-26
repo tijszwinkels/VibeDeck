@@ -132,6 +132,83 @@ class TestSessionTailer:
         messages = tailer.read_new_lines()
         assert messages == []
 
+    def test_seek_to_end_sets_position(self):
+        """Test that seek_to_end() sets position to file size without reading."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({"type": "user", "timestamp": "1", "message": {"content": "Hello"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "timestamp": "2", "message": {"content": [{"type": "text", "text": "Hi"}]}}) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            assert tailer.position == 0
+
+            tailer.seek_to_end()
+
+            # Position should be at end of file
+            assert tailer.position == path.stat().st_size
+            # Message index should still be 0 (no messages read)
+            assert tailer.message_index == 0
+        finally:
+            path.unlink()
+
+    def test_read_new_lines_after_seek_to_end(self):
+        """Test that read_new_lines() only returns new content after seek_to_end()."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({"type": "user", "timestamp": "1", "message": {"content": "Initial"}}) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.seek_to_end()
+
+            # read_new_lines should return nothing (we're at end)
+            messages = tailer.read_new_lines()
+            assert len(messages) == 0
+
+            # Append new content
+            with open(path, "a") as f:
+                f.write(json.dumps({"type": "assistant", "timestamp": "2", "message": {"content": [{"type": "text", "text": "New"}]}}) + "\n")
+
+            # Now read_new_lines should return only the new message
+            messages = tailer.read_new_lines()
+            assert len(messages) == 1
+            assert messages[0]["type"] == "assistant"
+        finally:
+            path.unlink()
+
+    def test_read_all_independent_of_position(self):
+        """Test that read_all() returns all messages regardless of seek position."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({"type": "user", "timestamp": "1", "message": {"content": "First"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "timestamp": "2", "message": {"content": [{"type": "text", "text": "Second"}]}}) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        try:
+            tailer = SessionTailer(path)
+            tailer.seek_to_end()
+
+            # read_all should still return all messages
+            messages = tailer.read_all()
+            assert len(messages) == 2
+            assert messages[0]["message"]["content"] == "First"
+            assert messages[1]["type"] == "assistant"
+
+            # Position should be unchanged after read_all
+            assert tailer.position == path.stat().st_size
+        finally:
+            path.unlink()
+
+    def test_seek_to_end_handles_missing_file(self):
+        """Test that seek_to_end() handles missing file gracefully."""
+        tailer = SessionTailer(Path("/nonexistent/file.jsonl"))
+        # Should not raise, just set position to 0
+        tailer.seek_to_end()
+        assert tailer.position == 0
+
     def test_waiting_for_input_after_assistant_text(self):
         """Test that waiting_for_input is True after assistant text message."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:

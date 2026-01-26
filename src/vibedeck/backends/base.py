@@ -94,6 +94,21 @@ class BaseTailer(ABC):
         """
         ...
 
+    def seek_to_end(self) -> None:
+        """Set position to end of file without reading content.
+
+        Use this for fast initialization when you don't need the existing
+        messages, only future changes. File watching still works because
+        read_new_lines() will detect new content appended after this position.
+        """
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(0, 2)  # SEEK_END
+                self.position = f.tell()
+        except (FileNotFoundError, IOError) as e:
+            logger.warning(f"Failed to seek to end of {self.path}: {e}")
+            self.position = 0
+
     def read_new_lines(self) -> list[dict]:
         """Read and parse new complete lines from the file.
 

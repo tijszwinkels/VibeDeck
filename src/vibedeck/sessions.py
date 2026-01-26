@@ -282,9 +282,10 @@ def add_session(
             return None, None
 
     tailer = backend.create_tailer(path)
-    # Advance tailer position to end of file so process_session_messages
-    # only picks up truly new messages (catchup uses read_all with fresh tailer)
-    tailer.read_new_lines()
+    # Fast initialization: seek to end without parsing content.
+    # Messages are loaded on-demand via REST API when user views session.
+    # File watching still works - read_new_lines() detects new content.
+    tailer.seek_to_end()
     info = SessionInfo(path=path, tailer=tailer)
     _sessions[session_id] = info
     _known_session_files.add(path)

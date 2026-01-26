@@ -108,6 +108,21 @@ class OpenCodeTailer:
         new_parts.sort(key=lambda p: p.get("id", ""))
         return new_parts
 
+    def seek_to_end(self) -> None:
+        """Mark all existing messages as seen without reading their content.
+
+        Use this for fast initialization when you don't need existing messages,
+        only future changes. read_new_lines() will only return truly new messages.
+        """
+        msg_dir = self._get_msg_dir()
+        if not msg_dir.exists():
+            return
+
+        # Mark all existing message IDs as seen without reading content
+        for msg_file in msg_dir.glob("*.json"):
+            msg_id = msg_file.stem
+            self._seen_messages.add(msg_id)
+
     def read_all(self) -> list[dict]:
         """Read all messages with their parts, sorted by ID.
 
