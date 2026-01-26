@@ -753,7 +753,8 @@ export async function loadSessionMessages(sessionId) {
         errorDiv.className = 'load-error';
         errorDiv.innerHTML = `<p>Failed to load messages. <button class="retry-btn">Retry</button></p>`;
         errorDiv.querySelector('.retry-btn').addEventListener('click', function() {
-            errorDiv.remove();
+            // Clear container before retry to prevent duplicates
+            session.container.innerHTML = '';
             loadSessionMessages(sessionId);
         });
         session.container.appendChild(errorDiv);

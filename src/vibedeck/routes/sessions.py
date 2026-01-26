@@ -113,28 +113,30 @@ async def get_session_messages(session_id: str) -> dict:
     Returns rendered HTML for all messages in the session,
     used for on-demand loading when a session is selected.
     """
-    info = get_session(session_id)
-    if info is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    async with get_sessions_lock():
+        info = get_session(session_id)
+        if info is None:
+            raise HTTPException(status_code=404, detail="Session not found")
 
-    # Get the renderer for this specific session
-    backend = _server_state["get_backend_for_session"](info.path)
-    renderer = backend.get_message_renderer()
+        # Get the renderer for this specific session
+        backend = _server_state["get_backend_for_session"](info.path)
+        renderer = backend.get_message_renderer()
 
-    # Read all messages and render to HTML
-    entries = info.tailer.read_all()
-    html_parts = []
-    for entry in entries:
-        html = renderer.render_message(entry)
-        if html:
-            html_parts.append(html)
+        # Read all messages and render to HTML
+        entries = info.tailer.read_all()
+        html_parts = []
+        for entry in entries:
+            html = renderer.render_message(entry)
+            if html:
+                html_parts.append(html)
 
-    return {
-        "session_id": session_id,
-        "html": "\n".join(html_parts),
-        "message_count": len(html_parts),
-        "first_timestamp": info.tailer.get_first_timestamp(),
-    }
+        return {
+            "session_id": session_id,
+            "html": "\n".join(html_parts),
+            "message_count": len(html_parts),
+            "first_timestamp": info.tailer.get_first_timestamp(),
+            "last_timestamp": info.tailer.get_last_message_timestamp(),
+        }
 
 
 @router.post("/sessions/{session_id}/send")

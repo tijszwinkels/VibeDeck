@@ -369,6 +369,100 @@ class TestOpenCodeTailer:
         # Let's check the actual state
         assert isinstance(tailer.waiting_for_input, bool)
 
+    def test_seek_to_end_marks_messages_as_seen(self, opencode_session):
+        """Test seek_to_end marks existing messages as seen without reading."""
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
+
+        storage_dir = opencode_session["storage_dir"]
+        session_id = opencode_session["session_id"]
+
+        tailer = OpenCodeTailer(storage_dir, session_id)
+
+        # Initially no messages seen
+        assert len(tailer._seen_messages) == 0
+
+        tailer.seek_to_end()
+
+        # After seek_to_end, messages should be marked as seen
+        assert len(tailer._seen_messages) == 2  # user + assistant
+
+    def test_read_new_lines_after_seek_to_end(self, opencode_session):
+        """Test read_new_lines returns nothing after seek_to_end (existing messages skipped)."""
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
+
+        storage_dir = opencode_session["storage_dir"]
+        session_id = opencode_session["session_id"]
+
+        tailer = OpenCodeTailer(storage_dir, session_id)
+        tailer.seek_to_end()
+
+        # read_new_lines should return nothing since all messages are marked seen
+        messages = tailer.read_new_lines()
+        assert len(messages) == 0
+
+    def test_read_all_after_seek_to_end(self, opencode_session):
+        """Test read_all still returns all messages after seek_to_end."""
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
+
+        storage_dir = opencode_session["storage_dir"]
+        session_id = opencode_session["session_id"]
+
+        tailer = OpenCodeTailer(storage_dir, session_id)
+        tailer.seek_to_end()
+
+        # read_all should still return all messages (independent of seen state)
+        messages = tailer.read_all()
+        assert len(messages) == 2
+
+    def test_seek_to_end_empty_session(self, opencode_storage_dir):
+        """Test seek_to_end handles empty/nonexistent session gracefully."""
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
+
+        tailer = OpenCodeTailer(opencode_storage_dir, "nonexistent_session")
+
+        # Should not raise
+        tailer.seek_to_end()
+
+        # No messages should be seen
+        assert len(tailer._seen_messages) == 0
+
+    def test_new_message_detected_after_seek_to_end(self, opencode_session):
+        """Test that new messages added after seek_to_end are detected."""
+        from vibedeck.backends.opencode.tailer import OpenCodeTailer
+
+        storage_dir = opencode_session["storage_dir"]
+        session_id = opencode_session["session_id"]
+
+        tailer = OpenCodeTailer(storage_dir, session_id)
+        tailer.seek_to_end()
+
+        # Add a new message after seek_to_end
+        msg_dir = storage_dir / "message" / session_id
+        new_msg_id = "msg_2new1"
+        new_msg = {
+            "id": new_msg_id,
+            "role": "user",
+            "time": {"created": 1704067300000, "updated": 1704067300000},
+        }
+        (msg_dir / f"{new_msg_id}.json").write_text(json.dumps(new_msg))
+
+        # Add text part for the new message
+        new_part_dir = storage_dir / "part" / new_msg_id
+        new_part_dir.mkdir(parents=True)
+        new_part = {
+            "id": "prt_new1",
+            "sessionID": session_id,
+            "messageID": new_msg_id,
+            "type": "text",
+            "text": "This is a new message",
+        }
+        (new_part_dir / "prt_new1.json").write_text(json.dumps(new_part))
+
+        # read_new_lines should detect the new message
+        messages = tailer.read_new_lines()
+        assert len(messages) == 1
+        assert messages[0]["info"]["id"] == new_msg_id
+
 
 class TestOpenCodeRenderer:
     """Tests for OpenCode message renderer."""
