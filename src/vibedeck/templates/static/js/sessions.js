@@ -282,7 +282,11 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         summaryShort: summaryShort || null,
         summaryExecutive: summaryExecutive || null,
         summaryBranch: summaryBranch || null,
-        archived: isArchived
+        archived: isArchived,
+        // Lazy loading state
+        loaded: false,
+        loading: false,
+        unreadCount: 0
     };
     state.sessions.set(sessionId, session);
 
@@ -706,6 +710,59 @@ function reorderSidebarProjectMode() {
     });
 }
 
+// Load messages for a session on-demand (lazy loading)
+export async function loadSessionMessages(sessionId) {
+    const session = state.sessions.get(sessionId);
+    if (!session || session.loaded || session.loading || session.pending) return;
+
+    session.loading = true;
+    session.container.classList.add('loading');
+
+    try {
+        const response = await fetch(`/sessions/${sessionId}/messages`);
+        if (!response.ok) {
+            throw new Error(`Failed to load messages: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Insert messages after the session header
+        if (data.html) {
+            const temp = document.createElement('div');
+            temp.innerHTML = data.html;
+
+            // Process each message element
+            while (temp.firstElementChild) {
+                const msg = temp.firstElementChild;
+                session.container.appendChild(msg);
+                processNewElement(msg);
+                extractArtifactsFromElement(sessionId, msg);
+            }
+        }
+
+        session.loaded = true;
+        session.messageCount = data.message_count || 0;
+
+        // Clear unread count since we've loaded the messages
+        session.unreadCount = 0;
+
+    } catch (error) {
+        console.error('Failed to load session messages:', error);
+        // Show error in container
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'load-error';
+        errorDiv.innerHTML = `<p>Failed to load messages. <button class="retry-btn">Retry</button></p>`;
+        errorDiv.querySelector('.retry-btn').addEventListener('click', function() {
+            errorDiv.remove();
+            loadSessionMessages(sessionId);
+        });
+        session.container.appendChild(errorDiv);
+    } finally {
+        session.loading = false;
+        session.container.classList.remove('loading');
+    }
+}
+
 export function switchToSession(sessionId, scrollToBottom = false) {
     const session = state.sessions.get(sessionId);
     if (!session) return;
@@ -723,6 +780,21 @@ export function switchToSession(sessionId, scrollToBottom = false) {
     session.container.classList.add('active');
     session.sidebarItem.classList.add('active');
     state.activeSessionId = sessionId;
+
+    // Load messages if not already loaded (lazy loading)
+    if (!session.loaded && !session.loading && !session.pending) {
+        loadSessionMessages(sessionId).then(() => {
+            if (scrollToBottom) {
+                requestAnimationFrame(function() {
+                    window.scrollTo(0, document.body.scrollHeight);
+                });
+            }
+        });
+    } else if (scrollToBottom) {
+        requestAnimationFrame(function() {
+            window.scrollTo(0, document.body.scrollHeight);
+        });
+    }
 
     // Notify artifacts panel of session change
     onSessionChanged(sessionId);
@@ -779,12 +851,6 @@ export function switchToSession(sessionId, scrollToBottom = false) {
         }
     } else {
         loadFileTree(sessionId, session.cwd || null);
-    }
-
-    if (scrollToBottom) {
-        requestAnimationFrame(function() {
-            window.scrollTo(0, document.body.scrollHeight);
-        });
     }
 }
 
@@ -849,8 +915,43 @@ export function appendMessage(sessionId, html) {
     const session = state.sessions.get(sessionId);
     if (!session) return;
 
-    const wasNearBottom = isNearBottom();
     const isActiveSession = sessionId === state.activeSessionId;
+
+    // If session not loaded yet, just track unread and update sidebar
+    // (message will be fetched when session is viewed)
+    if (!session.loaded && !isActiveSession) {
+        session.unreadCount = (session.unreadCount || 0) + 1;
+        session.lastActivity = Date.now();
+        session.lastUpdatedAt = Date.now() / 1000;
+
+        // Update project's last activity
+        const project = state.projects.get(session.projectName);
+        if (project) {
+            project.lastActivity = Math.max(project.lastActivity, session.lastActivity);
+        }
+
+        // Mark as unread/waiting
+        const status = state.sessionStatus.get(sessionId);
+        if (status && status.waiting_for_input) {
+            session.sidebarItem.classList.add('waiting');
+        } else {
+            session.sidebarItem.classList.add('unread');
+        }
+        updateProjectUnreadState(session.projectName);
+
+        // Handle auto-switch
+        if (state.catchupComplete && state.autoSwitch) {
+            if (state.autoSwitchDebounce) clearTimeout(state.autoSwitchDebounce);
+            state.autoSwitchDebounce = setTimeout(function() {
+                switchToSession(sessionId, true);
+            }, 100);
+        }
+
+        reorderSidebar();
+        return;
+    }
+
+    const wasNearBottom = isNearBottom();
 
     const temp = document.createElement('div');
     temp.innerHTML = html;

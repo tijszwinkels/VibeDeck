@@ -992,7 +992,7 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     add_client(queue)
 
     try:
-        # Send sessions list
+        # Send sessions list (lazy loading: no messages sent here)
         async with get_sessions_lock():
             sessions_data = get_sessions_list()
         yield {
@@ -1000,45 +1000,7 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
             "data": json.dumps({"sessions": sessions_data}),
         }
 
-        # Send existing messages for each session (catchup)
-        # Hold lock to prevent sessions modification during iteration
-        catchup_start = time.monotonic()
-        catchup_timed_out = False
-
-        async with get_sessions_lock():
-            for session_id, info in get_sessions().items():
-                # Get the renderer for this specific session
-                renderer = get_renderer_for_session(info.path)
-                existing = info.tailer.read_all()
-                for entry in existing:
-                    # Check if catchup is taking too long (slow client)
-                    if time.monotonic() - catchup_start > CATCHUP_TIMEOUT:
-                        catchup_timed_out = True
-                        break
-                    html = renderer.render_message(entry)
-                    if html:
-                        yield {
-                            "event": "message",
-                            "data": json.dumps(
-                                {
-                                    "type": "html",
-                                    "content": html,
-                                    "session_id": session_id,
-                                }
-                            ),
-                        }
-                if catchup_timed_out:
-                    break
-
-        if catchup_timed_out:
-            logger.warning("Catchup timeout - client too slow, requesting reinitialize")
-            yield {
-                "event": "reinitialize",
-                "data": json.dumps({"reason": "catchup_timeout"}),
-            }
-            return
-
-        # Signal catchup complete
+        # Signal catchup complete immediately (messages loaded on-demand via REST API)
         yield {"event": "catchup_complete", "data": "{}"}
 
         # Stream new events
