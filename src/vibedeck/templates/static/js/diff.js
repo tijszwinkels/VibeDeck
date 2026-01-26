@@ -12,6 +12,7 @@ import { openRightPane } from './filetree.js';
 import { escapeHtml } from './utils.js';
 import { showFlash } from './ui.js';
 import { stopFileWatch } from './filewatch.js';
+import { openPreviewPane } from './preview.js';
 
 // Track if we're in diff mode
 let diffContextMenu = null;
@@ -167,6 +168,16 @@ export async function openDiffView(selectFilePath = null) {
         state.diffCurrentBranch = data.current_branch;
         state.diffCwd = data.cwd || null;
 
+        // Handle non-git directories: show friendly message on left, file contents on right
+        if (data.diff_type === 'no_git') {
+            renderNoGitMessage();
+            // Show file contents if we have a file path
+            if (data.requested_file) {
+                await openPreviewPane(data.requested_file);
+            }
+            return;
+        }
+
         renderDiffFileList();
 
         // If a file was specified, select it
@@ -182,8 +193,11 @@ export async function openDiffView(selectFilePath = null) {
             // Select first file by default
             await openFileDiff(state.diffFiles[0].path);
         } else {
-            // No changes - show message
+            // No changes - show message on left, but still show file contents on right
             renderNoChanges();
+            if (selectFilePath) {
+                await openPreviewPane(selectFilePath);
+            }
         }
 
     } catch (err) {
@@ -507,5 +521,38 @@ function renderNoChanges() {
             </div>
         `;
     }
+}
+
+/**
+ * Render "not a git repository" message in the sidebar.
+ * The file contents will be shown in the right pane via openPreviewPane.
+ */
+function renderNoGitMessage() {
+    if (!dom.fileTreeContent) return;
+
+    dom.fileTreeContent.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.className = 'diff-header';
+    header.innerHTML = `<span class="diff-header-label">Not a git repository</span>`;
+
+    // Add close button to return to file tree
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'diff-close-btn';
+    closeBtn.title = 'Close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.addEventListener('click', () => {
+        closeDiffView();
+        import('./filetree.js').then(m => m.loadFileTree(state.activeSessionId));
+    });
+    header.appendChild(closeBtn);
+
+    dom.fileTreeContent.appendChild(header);
+
+    // Show explanation
+    const info = document.createElement('div');
+    info.className = 'diff-no-git-info';
+    info.innerHTML = `<p>Git is not available for this directory. Showing file contents.</p>`;
+    dom.fileTreeContent.appendChild(info);
 }
 

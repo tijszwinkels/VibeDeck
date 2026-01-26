@@ -270,7 +270,16 @@ async def get_diff_files(session_id: str, cwd: str | None = None) -> dict:
     # Check if it's a git repository
     result = _run_git_command(work_dir, "rev-parse", "--is-inside-work-tree", check=False)
     if result.returncode != 0:
-        raise HTTPException(status_code=400, detail="Not a git repository")
+        # Not a git repository - return a response that lets the frontend
+        # show the file contents instead of an error
+        return {
+            "files": [],
+            "diff_type": "no_git",
+            "main_branch": None,
+            "current_branch": None,
+            "cwd": str(work_dir),
+            "requested_file": cwd,  # Original file path that was clicked
+        }
 
     # Get current branch
     branch_result = _run_git_command(
