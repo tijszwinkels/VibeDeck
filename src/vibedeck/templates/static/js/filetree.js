@@ -439,7 +439,13 @@ export async function loadFileTree(sessionId, path = null) {
 // Fetch git status for the current project
 async function fetchGitStatus(sessionId) {
     try {
-        const response = await fetch(`/api/diff/session/${sessionId}/files`);
+        // Pass current path as cwd so we get git status for the viewed directory
+        // (important for worktrees which may be in different locations)
+        let url = `/api/diff/session/${sessionId}/files`;
+        if (currentPath) {
+            url += `?cwd=${encodeURIComponent(currentPath)}`;
+        }
+        const response = await fetch(url);
         const data = await response.json();
 
         // Build git status with both uncommitted and branch changes
