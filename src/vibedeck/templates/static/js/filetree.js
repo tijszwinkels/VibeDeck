@@ -11,8 +11,8 @@ let homeDir = null;
 let projectRoot = null; // The project directory for the active session
 let currentSessionId = null; // The current session ID for file tree operations
 
-// Git status for the footer
-let gitStatus = null; // { diffType, fileCount, currentBranch, mainBranch }
+// Git status for the footer - now supports both uncommitted and branch changes
+let gitStatus = null; // { uncommitted: {count}, branch: {count, name, mainBranch} }
 
 // Tracking triple click
 let lastClickTime = 0;
@@ -442,26 +442,34 @@ async function fetchGitStatus(sessionId) {
         const response = await fetch(`/api/diff/session/${sessionId}/files`);
         const data = await response.json();
 
-        // Only show footer if there are changes to display
+        // Build git status with both uncommitted and branch changes
         if (data.diff_type === 'no_git') {
             gitStatus = null;
-        } else if (data.diff_type === 'uncommitted' && data.files && data.files.length > 0) {
-            gitStatus = {
-                diffType: 'uncommitted',
-                fileCount: data.files.length,
-                currentBranch: data.current_branch,
-                mainBranch: data.main_branch
-            };
-        } else if (data.diff_type === 'vs_main' && data.files && data.files.length > 0) {
-            gitStatus = {
-                diffType: 'vs_main',
-                fileCount: data.files.length,
-                currentBranch: data.current_branch,
-                mainBranch: data.main_branch
-            };
         } else {
-            // No changes (on main with no uncommitted, or no branch changes)
-            gitStatus = null;
+            gitStatus = {};
+
+            // Check for uncommitted changes
+            const uncommittedFiles = data.uncommitted_files || [];
+            if (uncommittedFiles.length > 0) {
+                gitStatus.uncommitted = {
+                    count: uncommittedFiles.length
+                };
+            }
+
+            // Check for branch changes vs main
+            const branchFiles = data.branch_files || [];
+            if (branchFiles.length > 0 && data.current_branch && data.main_branch) {
+                gitStatus.branch = {
+                    count: branchFiles.length,
+                    name: data.current_branch,
+                    mainBranch: data.main_branch
+                };
+            }
+
+            // If no changes at all, set to null
+            if (!gitStatus.uncommitted && !gitStatus.branch) {
+                gitStatus = null;
+            }
         }
 
         // Re-render to include the footer
@@ -707,22 +715,30 @@ function renderGitFooter() {
     const footer = document.createElement('div');
     footer.className = 'git-changes-footer';
 
-    const button = document.createElement('button');
-    button.className = 'git-changes-btn';
-
-    if (gitStatus.diffType === 'uncommitted') {
-        button.innerHTML = `<span class="git-icon">●</span> Uncommitted changes <span class="git-count">${gitStatus.fileCount}</span>`;
-        button.title = `${gitStatus.fileCount} file${gitStatus.fileCount !== 1 ? 's' : ''} with uncommitted changes`;
-    } else if (gitStatus.diffType === 'vs_main') {
-        const branchName = gitStatus.currentBranch || 'branch';
-        button.innerHTML = `<span class="git-icon">⎇</span> ${escapeHtml(branchName)} vs ${escapeHtml(gitStatus.mainBranch || 'main')} <span class="git-count">${gitStatus.fileCount}</span>`;
-        button.title = `${gitStatus.fileCount} file${gitStatus.fileCount !== 1 ? 's' : ''} changed vs ${gitStatus.mainBranch || 'main'}`;
+    // Show uncommitted changes button if present
+    if (gitStatus.uncommitted) {
+        const uncommittedBtn = document.createElement('button');
+        uncommittedBtn.className = 'git-changes-btn git-changes-uncommitted';
+        uncommittedBtn.innerHTML = `<span class="git-icon">●</span> Uncommitted changes <span class="git-count">${gitStatus.uncommitted.count}</span>`;
+        uncommittedBtn.title = `${gitStatus.uncommitted.count} file${gitStatus.uncommitted.count !== 1 ? 's' : ''} with uncommitted changes`;
+        uncommittedBtn.addEventListener('click', () => {
+            openDiffView();  // Opens with uncommitted as primary (default behavior)
+        });
+        footer.appendChild(uncommittedBtn);
     }
 
-    button.addEventListener('click', () => {
-        openDiffView();
-    });
+    // Show branch changes button if present
+    if (gitStatus.branch) {
+        const branchBtn = document.createElement('button');
+        branchBtn.className = 'git-changes-btn git-changes-branch';
+        branchBtn.innerHTML = `<span class="git-icon">⎇</span> ${escapeHtml(gitStatus.branch.name)} vs ${escapeHtml(gitStatus.branch.mainBranch)} <span class="git-count">${gitStatus.branch.count}</span>`;
+        branchBtn.title = `${gitStatus.branch.count} file${gitStatus.branch.count !== 1 ? 's' : ''} changed vs ${gitStatus.branch.mainBranch}`;
+        branchBtn.addEventListener('click', () => {
+            // Open diff view showing branch changes
+            openDiffView(null, 'vs_main');
+        });
+        footer.appendChild(branchBtn);
+    }
 
-    footer.appendChild(button);
     dom.fileTreeContent.appendChild(footer);
 }

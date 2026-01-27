@@ -242,8 +242,9 @@ def _resolve_cwd(cwd_param: str | None, info) -> Path:
 async def get_diff_files(session_id: str, cwd: str | None = None) -> dict:
     """Get list of changed files for a session's project.
 
-    Returns uncommitted changes if there are any, otherwise returns
-    diff between current branch and main branch.
+    Returns both uncommitted changes AND branch changes vs main when available.
+    The primary diff_type indicates which has priority for the main file list,
+    but both are always returned when present.
 
     Args:
         session_id: The session ID
@@ -253,10 +254,12 @@ async def get_diff_files(session_id: str, cwd: str | None = None) -> dict:
     Returns:
         dict with:
             - files: List of changed files with path, additions, deletions, status
-            - diff_type: "uncommitted" or "vs_main"
-            - main_branch: Name of main branch (if diff_type is "vs_main")
+            - diff_type: "uncommitted", "vs_main", or "no_git" (primary type)
+            - main_branch: Name of main branch
             - current_branch: Current branch name
             - cwd: The working directory used
+            - uncommitted_files: List of uncommitted changes (always present)
+            - branch_files: List of branch changes vs main (always present)
     """
     info = get_session(session_id)
     if info is None:
@@ -279,6 +282,8 @@ async def get_diff_files(session_id: str, cwd: str | None = None) -> dict:
             "current_branch": None,
             "cwd": str(work_dir),
             "requested_file": cwd,  # Original file path that was clicked
+            "uncommitted_files": [],
+            "branch_files": [],
         }
 
     # Get current branch
@@ -289,46 +294,35 @@ async def get_diff_files(session_id: str, cwd: str | None = None) -> dict:
         branch_result.stdout.strip() if branch_result.returncode == 0 else None
     )
 
-    # First, check for uncommitted changes
+    # Get uncommitted changes
     uncommitted = _get_changed_files_uncommitted(work_dir)
-    if uncommitted:
-        return {
-            "files": uncommitted,
-            "diff_type": "uncommitted",
-            "main_branch": None,
-            "current_branch": current_branch,
-            "cwd": str(work_dir),
-        }
 
-    # No uncommitted changes - show diff vs main
+    # Get main branch and branch changes
     main_branch = _get_main_branch(work_dir)
-    if not main_branch:
-        return {
-            "files": [],
-            "diff_type": "vs_main",
-            "main_branch": None,
-            "current_branch": current_branch,
-            "cwd": str(work_dir),
-            "error": "Could not determine main branch",
-        }
+    branch_files = []
 
-    # Check if we're on main branch
-    if current_branch == main_branch:
-        return {
-            "files": [],
-            "diff_type": "vs_main",
-            "main_branch": main_branch,
-            "current_branch": current_branch,
-            "cwd": str(work_dir),
-        }
+    if main_branch and current_branch and current_branch != main_branch:
+        branch_files = _get_changed_files_vs_main(work_dir, main_branch)
 
-    files = _get_changed_files_vs_main(work_dir, main_branch)
+    # Determine primary diff type (for backward compatibility with "files" field)
+    if uncommitted:
+        diff_type = "uncommitted"
+        files = uncommitted
+    elif branch_files:
+        diff_type = "vs_main"
+        files = branch_files
+    else:
+        diff_type = "vs_main"
+        files = []
+
     return {
         "files": files,
-        "diff_type": "vs_main",
+        "diff_type": diff_type,
         "main_branch": main_branch,
         "current_branch": current_branch,
         "cwd": str(work_dir),
+        "uncommitted_files": uncommitted,
+        "branch_files": branch_files,
     }
 
 

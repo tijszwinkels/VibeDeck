@@ -1107,6 +1107,9 @@ details[open] > summary .tree-icon-folder::before {
     border-top: 1px solid var(--border-color);
     background: rgba(0,0,0,0.02);
     margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .git-changes-btn {
@@ -1132,6 +1135,11 @@ details[open] > summary .tree-icon-folder::before {
 .git-icon {
     color: #f57c00;
     font-size: 0.9rem;
+}
+
+/* Branch icon uses a different color */
+.git-changes-branch .git-icon {
+    color: #7b1fa2;
 }
 
 .git-count {
