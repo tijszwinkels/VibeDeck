@@ -748,6 +748,7 @@ export async function unarchiveProjectButKeepOthersArchived(projectPath, clicked
     state.archivedProjectPaths.delete(projectPath);
 
     // Unarchive the clicked session
+    state.archivedSessionIds.delete(clickedSessionId);
     const clickedSession = state.sessions.get(clickedSessionId);
     if (clickedSession) {
         clickedSession.archived = false;
