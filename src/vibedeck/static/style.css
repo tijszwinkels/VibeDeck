@@ -703,8 +703,9 @@ button:hover .hamburger-icon span {
     flex: 1;
     overflow-y: auto;
     padding: 8px 0;
-    /* Always visible in split view */
-    display: block !important; 
+    /* Always visible in split view - use flex for footer positioning */
+    display: flex !important;
+    flex-direction: column;
 }
 
 /* File Content Area */
@@ -923,6 +924,9 @@ button:hover .hamburger-icon span {
 .tree-root {
     margin: 0;
     padding: 0;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 .tree-item {
     list-style: none;
@@ -1095,6 +1099,61 @@ details[open] > summary .tree-icon-folder::before {
 
 [data-theme="dark"] .file-tree-content.drag-over {
     background: rgba(66, 165, 245, 0.15);
+}
+
+/* Git changes footer in file tree */
+.git-changes-footer {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(0,0,0,0.02);
+    margin-top: auto;
+}
+
+.git-changes-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 0.8rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.git-changes-btn:hover {
+    border-color: var(--user-border);
+    background: rgba(25, 118, 210, 0.05);
+}
+
+.git-icon {
+    color: #f57c00;
+    font-size: 0.9rem;
+}
+
+.git-count {
+    margin-left: auto;
+    background: rgba(25, 118, 210, 0.1);
+    color: var(--user-border);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+[data-theme="dark"] .git-changes-footer {
+    background: rgba(255,255,255,0.02);
+}
+
+[data-theme="dark"] .git-changes-btn:hover {
+    background: rgba(66, 165, 245, 0.1);
+}
+
+[data-theme="dark"] .git-count {
+    background: rgba(66, 165, 245, 0.2);
 }
 
 /* Draggable file items */

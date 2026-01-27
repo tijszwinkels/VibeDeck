@@ -4,7 +4,6 @@ import { isMobile, copyToClipboard } from './utils.js';
 import { openRightPane, syncTreeToFile, loadFileTree } from './filetree.js';
 import { showFlash } from './ui.js';
 import { startFileWatch, stopFileWatch } from './filewatch.js';
-import { openDiffView } from './diff.js';
 
 // Image file extensions that can be displayed in the preview pane
 const IMAGE_EXTENSIONS = new Set([
@@ -119,7 +118,7 @@ export function initPreviewPane() {
         const selection = window.getSelection();
         if (selection && selection.toString().length > 0) return;
 
-        // Check if clicking on an edit-tool block - open diff view
+        // Check if clicking on an edit-tool block - open file in preview
         const editTool = e.target.closest('.edit-tool');
         if (editTool) {
             e.preventDefault();
@@ -127,10 +126,7 @@ export function initPreviewPane() {
             const fullpath = editTool.querySelector('.file-tool-fullpath[data-copy-path]');
             if (fullpath) {
                 const path = fullpath.dataset.copyPath;
-                openDiffView(path);
-            } else {
-                // No path found, open diff view without pre-selecting
-                openDiffView();
+                openPreviewPane(path);
             }
             return;
         }

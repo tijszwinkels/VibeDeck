@@ -2,13 +2,17 @@
 import { dom, state } from './state.js';
 import { openPreviewPane, closePreviewPane } from './preview.js';
 import { isMobile, escapeHtml } from './utils.js';
+import { openDiffView } from './diff.js';
 
 // We store the current directory contents here
 let currentTreeData = null;
 let currentPath = null;
 let homeDir = null;
 let projectRoot = null; // The project directory for the active session
-let currentSessionId = null; // The current session ID for file tree operations 
+let currentSessionId = null; // The current session ID for file tree operations
+
+// Git status for the footer
+let gitStatus = null; // { diffType, fileCount, currentBranch, mainBranch }
 
 // Tracking triple click
 let lastClickTime = 0;
@@ -420,12 +424,51 @@ export async function loadFileTree(sessionId, path = null) {
             projectRoot = currentTreeData.path;
         }
 
+        // Fetch git status in the background (don't block rendering)
+        fetchGitStatus(sessionId);
+
         renderCurrentPath();
 
     } catch (err) {
         if (dom.fileTreeContent) {
             dom.fileTreeContent.innerHTML = `<div class="preview-status visible error">Error loading tree: ${escapeHtml(err.message)}</div>`;
         }
+    }
+}
+
+// Fetch git status for the current project
+async function fetchGitStatus(sessionId) {
+    try {
+        const response = await fetch(`/api/diff/session/${sessionId}/files`);
+        const data = await response.json();
+
+        // Only show footer if there are changes to display
+        if (data.diff_type === 'no_git') {
+            gitStatus = null;
+        } else if (data.diff_type === 'uncommitted' && data.files && data.files.length > 0) {
+            gitStatus = {
+                diffType: 'uncommitted',
+                fileCount: data.files.length,
+                currentBranch: data.current_branch,
+                mainBranch: data.main_branch
+            };
+        } else if (data.diff_type === 'vs_main' && data.files && data.files.length > 0) {
+            gitStatus = {
+                diffType: 'vs_main',
+                fileCount: data.files.length,
+                currentBranch: data.current_branch,
+                mainBranch: data.main_branch
+            };
+        } else {
+            // No changes (on main with no uncommitted, or no branch changes)
+            gitStatus = null;
+        }
+
+        // Re-render to include the footer
+        renderGitFooter();
+    } catch (err) {
+        // Silently fail - git status is optional
+        gitStatus = null;
     }
 }
 
@@ -635,15 +678,51 @@ export function syncTreeToFile(filePath) {
     // We would need to "walk down" the tree fetching each level.
     // That's complex.
     // Simple approach: Just load the directory of the file directly!
-    
+
     // Get parent directory
     // Assuming forward slashes from server or normalized
     let parentPath = filePath.substring(0, filePath.lastIndexOf('/'));
-    
+
     // Load that directory
     if (parentPath) {
         loadFileTree(state.activeSessionId, parentPath);
         // Note: highlighting the specific file might happen after load
         // We can add a "then" to highlight
     }
+}
+
+// Render or update the git footer in the file tree
+function renderGitFooter() {
+    if (!dom.fileTreeContent) return;
+
+    // Remove existing footer if any
+    const existingFooter = dom.fileTreeContent.querySelector('.git-changes-footer');
+    if (existingFooter) {
+        existingFooter.remove();
+    }
+
+    // Don't show footer if no git status or no changes
+    if (!gitStatus) return;
+
+    const footer = document.createElement('div');
+    footer.className = 'git-changes-footer';
+
+    const button = document.createElement('button');
+    button.className = 'git-changes-btn';
+
+    if (gitStatus.diffType === 'uncommitted') {
+        button.innerHTML = `<span class="git-icon">●</span> Uncommitted changes <span class="git-count">${gitStatus.fileCount}</span>`;
+        button.title = `${gitStatus.fileCount} file${gitStatus.fileCount !== 1 ? 's' : ''} with uncommitted changes`;
+    } else if (gitStatus.diffType === 'vs_main') {
+        const branchName = gitStatus.currentBranch || 'branch';
+        button.innerHTML = `<span class="git-icon">⎇</span> ${escapeHtml(branchName)} vs ${escapeHtml(gitStatus.mainBranch || 'main')} <span class="git-count">${gitStatus.fileCount}</span>`;
+        button.title = `${gitStatus.fileCount} file${gitStatus.fileCount !== 1 ? 's' : ''} changed vs ${gitStatus.mainBranch || 'main'}`;
+    }
+
+    button.addEventListener('click', () => {
+        openDiffView();
+    });
+
+    footer.appendChild(button);
+    dom.fileTreeContent.appendChild(footer);
 }

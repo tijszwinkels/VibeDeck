@@ -3,7 +3,6 @@
 
 import { state } from './state.js';
 import { openPreviewPane } from './preview.js';
-import { openDiffView } from './diff.js';
 import { showFlash } from './ui.js';
 import { copyToClipboard } from './utils.js';
 
@@ -231,7 +230,7 @@ function handleArtifactClick(e) {
             openPreviewPane(value);
             break;
         case 'diff':
-            openDiffView(value);
+            openPreviewPane(value);
             break;
         case 'url':
             copyToClipboard(value, null);
