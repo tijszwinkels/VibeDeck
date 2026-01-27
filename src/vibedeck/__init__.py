@@ -360,6 +360,11 @@ def resolve_session_path(session_arg: str) -> Path:
     help="Upload to GitHub Gist and output a gisthost.github.io URL",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    help="Force gist upload even if secrets are detected (use with caution)",
+)
+@click.option(
     "--open",
     "open_browser",
     is_flag=True,
@@ -387,6 +392,7 @@ def html(
     output_auto: bool,
     repo: str | None,
     gist: bool,
+    force: bool,
     open_browser: bool,
     include_json: bool,
     hide_tools: bool,
@@ -461,6 +467,25 @@ def html(
 
     # Upload to gist if requested
     if gist:
+        # Scan for secrets before uploading
+        from .secrets import scan_session_for_secrets, format_secret_matches
+
+        secret_matches = scan_session_for_secrets(session_path)
+
+        if secret_matches and not force:
+            click.echo("", err=True)
+            click.echo("⚠️  Refusing to create gist: potential secrets detected!", err=True)
+            click.echo("", err=True)
+            click.echo(format_secret_matches(secret_matches), err=True)
+            click.echo("The HTML files have been generated locally but will NOT be uploaded.", err=True)
+            click.echo(f"Local output: {output.resolve()}", err=True)
+            raise SystemExit(1)
+
+        if secret_matches and force:
+            click.echo("", err=True)
+            click.echo("⚠️  Warning: secrets detected but --force was specified", err=True)
+            click.echo(format_secret_matches(secret_matches), err=True)
+
         try:
             inject_gist_preview_js(output)
             click.echo("Creating GitHub gist...")
