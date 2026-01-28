@@ -11,6 +11,7 @@ VibeDeck is a front-end to Claude Code and OpenCode.
 Mainly designed to:
 
 - Get an overview on what exactly the LLM did and why, as quickly as possible.
+- Interact with previous sessions or create new sessions in existing or new project directories.
 - Keep track of many sessions and tasks running in parallel. Don't lose track as you kick off edits in multiple worktrees and/or projects.
 
 A little bit like Conductor, but works remotely as well and is more flexible, Linux and Mac OS, can use git & worktrees but doesn't require it. Displays *all* coding agent sessions on the system, also ones that are started from the Claude Code CLI or IDE integration. Focus on fully understanding what the agent is doing, rather than hiding details. 
@@ -50,21 +51,23 @@ uvx git+https://github.com/tijszwinkels/vibedeck
 
 ### Live Viewer (default)
 
+Starts a web server and opens your browser to `http://localhost:8765`:
+
 ```bash
-# Watch all recent sessions (auto-detected, up to 10)
+# Start the server (auto-discovers recent sessions)
 vibedeck
 
-# Watch a specific session file (in addition to auto-discovered ones)
-vibedeck --session ~/.claude/projects/.../session.jsonl
-
-# Limit number of sessions
-vibedeck --max-sessions 5
-
 # Custom port
-vibedeck --port 8765
+vibedeck --port 9000
 
 # Don't auto-open browser
 vibedeck --no-open
+
+# Re-summarize sessions after 3 minutes of inactivity
+vibedeck --summarize-after-idle-for 180
+
+# Skip Claude Code permission prompts (use with caution!)
+vibedeck --dangerously-skip-permissions
 ```
 
 ### Export to HTML
@@ -97,23 +100,6 @@ vibedeck md session.jsonl -o transcript.md
 # Export OpenCode session
 vibedeck md ses_xxx -o transcript.md
 ```
-
-## Features
-
-### Live Viewer
-- **Multi-session tabs** - View multiple Claude Code sessions in a tabbed interface
-- **Auto-follow** - Automatically switches to the tab with new activity (optional)
-- **Live updates** - New messages appear automatically via Server-Sent Events
-- **Auto-scroll** - Follows new messages when you're at the bottom
-- **Resource-conscious** - Limits DOM nodes to prevent memory issues
-- **Session discovery** - Automatically finds recent sessions in ~/.claude/projects/
-- **Same styling** - Uses the same CSS as claude-code-transcripts
-
-### Static Export
-- **HTML export** - Paginated HTML files with index page, full-text search, and statistics
-- **Markdown export** - Single-file Markdown for documentation or archiving
-- **Gist upload** - Upload to GitHub Gist with gisthost.github.io preview URL
-- **Multi-backend** - Supports both Claude Code (.jsonl) and OpenCode (session IDs)
 
 ## Configuration
 
