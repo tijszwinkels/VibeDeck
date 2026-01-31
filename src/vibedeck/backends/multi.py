@@ -309,14 +309,33 @@ class MultiBackend:
         self,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
+        output_format: str | None = None,
+        add_dirs: list[str] | None = None,
     ) -> "CommandSpec":
         """Build the CLI command to start a new session.
 
         For multi-backend, defaults to first backend with CLI available.
+
+        Args:
+            message: Initial message.
+            skip_permissions: Whether to skip permission prompts.
+            model: Model to use (e.g., "claude-sonnet-4"). Optional.
+            output_format: Output format for the CLI (e.g., "stream-json").
+            add_dirs: Additional directories to allow. Optional.
+
+        Returns:
+            CommandSpec with args and optional stdin.
         """
         for backend in self._backends:
             if backend.is_cli_available():
-                return backend.build_new_session_command(message, skip_permissions)
+                return backend.build_new_session_command(
+                    message,
+                    skip_permissions,
+                    model=model,
+                    output_format=output_format,
+                    add_dirs=add_dirs,
+                )
         raise RuntimeError("No backend CLI available")
 
     def ensure_session_indexed(self, session_id: str) -> None:
