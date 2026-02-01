@@ -70,7 +70,8 @@ export function connect() {
         });
         reorderSidebar();
         const count = data.sessions.length;
-        const countText = count >= 100 ? 'last 100 sessions' : count + ' session' + (count !== 1 ? 's' : '');
+        const maxSessions = data.maxSessions || 100;
+        const countText = count >= maxSessions ? 'last ' + maxSessions + ' sessions' : count + ' session' + (count !== 1 ? 's' : '');
         updateStatus('', 'Connected (' + countText + ')');
     });
 
@@ -116,6 +117,7 @@ export function connect() {
                 data.summaryExecutive,
                 data.summaryBranch
             );
+            reorderSidebar();
 
             if (wasPendingActive && session) {
                 switchToSession(data.id, true);
@@ -136,6 +138,8 @@ export function connect() {
                 data.summaryExecutive,
                 data.summaryBranch
             );
+            reorderSidebar();
+
             if (state.autoSwitch && session) {
                 switchToSession(data.id, true);
             }
