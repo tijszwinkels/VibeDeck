@@ -41,7 +41,7 @@ I got inspired by Simon Willison's [claude-code-transcripts](https://simonwillis
 uv tool install vibedeck
 ```
 
-Or run directly:
+Or run directly without installing:
 
 ```bash
 uvx vibedeck
@@ -134,7 +134,8 @@ max_sessions = 50
 fork = true
 dangerously_skip_permissions = true
 summary_log = "~/logs/session-summaries.jsonl"
-summary_after_long_running = 180
+summary_after_long_running = 120  # 2 minutes (default)
+summarize_after_idle_for = 180    # 3 minutes (default)
 ```
 
 ## Development

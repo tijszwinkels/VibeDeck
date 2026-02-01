@@ -40,9 +40,9 @@ class ServeConfig:
     thinking_budget: int | None = None  # Fixed thinking token budget (overrides keyword detection)
     # Summary options
     summary_log: str | None = None  # Path to JSONL log file
-    summarize_after_idle_for: int | None = None  # Seconds of idle before re-summarizing
+    summarize_after_idle_for: int = 180  # Seconds of idle before re-summarizing (3 min)
     idle_summary_model: str = "haiku"  # Model to use for idle summarization
-    summary_after_long_running: int | None = None  # Summarize if CLI runs longer than N seconds
+    summary_after_long_running: int = 120  # Summarize if CLI runs longer than N seconds (2 min)
     summary_prompt: str | None = None  # Custom prompt template
     summary_prompt_file: str | None = None  # Path to prompt template file
     summary_log_keys: list[str] | None = None  # Keys to include in JSONL log
@@ -134,9 +134,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enable_thinking": False,
         "thinking_budget": None,
         "summary_log": None,
-        "summarize_after_idle_for": None,
+        "summarize_after_idle_for": 180,
         "idle_summary_model": "haiku",
-        "summary_after_long_running": None,
+        "summary_after_long_running": 120,
         "summary_prompt": None,
         "summary_prompt_file": None,
         "summary_log_keys": None,

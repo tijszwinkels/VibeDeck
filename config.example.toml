@@ -17,10 +17,10 @@
 # include_subagents = false      # Include subagent sessions in list
 
 # Summarization options
-# summary_log = "~/.mycel/agents/assistant/daily-assistant/incoming.jsonl"  # Append summaries to JSONL file
-# summarize_after_idle_for = 270  # Re-summarize after N seconds idle (optional)
+# summary_log = "~/logs/session-summaries.jsonl"  # Append summaries to JSONL file
+# summarize_after_idle_for = 180  # Re-summarize after N seconds idle (default: 180 = 3 min)
 # idle_summary_model = "haiku"    # Model for idle summarization (default: haiku). Immediate summaries use the conversation's model.
-# summary_after_long_running = 180  # Summarize if CLI runs longer than N seconds (uses conversation's model for warm cache)
+# summary_after_long_running = 120  # Summarize if CLI runs longer than N seconds (default: 120 = 2 min)
 # summary_prompt_file = "~/.config/vibedeck/prompt.txt"  # Custom prompt template file
 # summary_log_keys = ["title", "short_summary", "summary_generated_at", "session_id", "path"]  # Keys to include in log
 
