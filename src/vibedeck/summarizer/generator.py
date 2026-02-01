@@ -225,9 +225,13 @@ class Summarizer:
             for line in lines:
                 try:
                     data = json.loads(line)
-                    # Look for the assistant's text response
-                    if data.get("type") == "result":
-                        response_text = data.get("result", "")
+                    # Handle both formats: JSON Lines (dict per line) or array
+                    items = data if isinstance(data, list) else [data]
+                    for item in items:
+                        if isinstance(item, dict) and item.get("type") == "result":
+                            response_text = item.get("result", "")
+                            break
+                    if response_text:
                         break
                 except json.JSONDecodeError:
                     continue
