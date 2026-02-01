@@ -1006,7 +1006,7 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
             sessions_data = get_sessions_list()
         yield {
             "event": "sessions",
-            "data": json.dumps({"sessions": sessions_data}),
+            "data": json.dumps({"sessions": sessions_data, "maxSessions": MAX_SESSIONS}),
         }
 
         # Signal catchup complete immediately (messages loaded on-demand via REST API)
