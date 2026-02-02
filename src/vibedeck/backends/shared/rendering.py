@@ -12,6 +12,7 @@ import re
 
 from jinja2 import Environment, PackageLoader
 import markdown
+import nh3
 
 # Shared Jinja2 environment
 jinja_env = Environment(
@@ -41,35 +42,90 @@ def get_github_repo() -> str | None:
     return _github_repo
 
 
+# Allowed HTML tags for nh3 sanitization (markdown output)
+_NH3_ALLOWED_TAGS = {
+    "p", "pre", "code", "b", "i", "em", "strong", "a", "ul", "ol", "li",
+    "table", "thead", "tbody", "tr", "th", "td", "h1", "h2", "h3", "h4",
+    "h5", "h6", "blockquote", "hr", "br", "span", "div", "dl", "dt", "dd",
+    "sup", "sub", "kbd", "samp", "var", "del", "ins", "img",
+}
+
+# Allowed attributes per tag for nh3 sanitization
+_NH3_ALLOWED_ATTRIBUTES = {
+    "code": {"class"},  # For syntax highlighting (e.g., language-json)
+    "a": {"href", "title"},
+    "img": {"src", "alt", "title"},
+    "th": {"align"},
+    "td": {"align"},
+}
+
+
+def _sanitize_html(html_content: str) -> str:
+    """Sanitize HTML using nh3, allowing safe markdown output tags."""
+    return nh3.clean(
+        html_content,
+        tags=_NH3_ALLOWED_TAGS,
+        attributes=_NH3_ALLOWED_ATTRIBUTES,
+    )
+
+
 def render_markdown_text(text: str, safe: bool = False) -> str:
     """Render markdown text to HTML.
 
     Args:
         text: The markdown text to render.
-        safe: If True, disable raw HTML to prevent XSS attacks.
-              Raw HTML will be escaped and displayed as text.
+        safe: If True, sanitize the output HTML to prevent XSS attacks.
+              Dangerous tags (script, iframe, etc.) will be removed.
     """
     if not text:
         return ""
+    result = markdown.markdown(text, extensions=["fenced_code", "tables"])
     if safe:
-        # Escape HTML before markdown processing to prevent XSS
-        text = html.escape(text)
-    return markdown.markdown(text, extensions=["fenced_code", "tables"])
+        result = _sanitize_html(result)
+    return result
+
+
+# Pattern to match fenced code blocks (``` or ~~~)
+_CODE_FENCE_PATTERN = re.compile(
+    r"(^```.*?^```|^~~~.*?^~~~)", re.MULTILINE | re.DOTALL
+)
+
+
+def _escape_html_outside_code_blocks(text: str) -> str:
+    """Escape HTML tags outside of fenced code blocks.
+
+    This preserves code block content while escaping HTML-like content
+    in regular text to prevent XSS attacks.
+    """
+    parts = []
+    last_end = 0
+
+    for match in _CODE_FENCE_PATTERN.finditer(text):
+        # Escape the text before this code block
+        before = text[last_end : match.start()]
+        parts.append(html.escape(before))
+        # Keep code block unchanged
+        parts.append(match.group(0))
+        last_end = match.end()
+
+    # Escape any remaining text after the last code block
+    parts.append(html.escape(text[last_end:]))
+    return "".join(parts)
 
 
 def render_user_text(text: str) -> str:
-    """Render user text to HTML, escaping HTML entities for safety.
+    """Render user text to HTML, escaping HTML outside code blocks.
 
-    User messages should not contain raw HTML, so we escape angle brackets
-    before markdown processing to prevent HTML injection (e.g., <title> tags
-    being interpreted by the browser).
+    User messages may contain literal angle brackets like <title> that should
+    be displayed as text, not interpreted as HTML. We escape HTML-like content
+    outside code blocks before markdown processing, then let markdown's
+    fenced_code extension handle code blocks correctly.
     """
     if not text:
         return ""
-    # Escape HTML entities before markdown processing
-    # This prevents user-typed <tag> from being interpreted as HTML
-    text = html.escape(text)
-    return markdown.markdown(text, extensions=["fenced_code", "tables"])
+    # Escape HTML outside code blocks to prevent XSS and preserve literals
+    escaped = _escape_html_outside_code_blocks(text)
+    return markdown.markdown(escaped, extensions=["fenced_code", "tables"])
 
 
 def is_json_like(text: str) -> bool:
