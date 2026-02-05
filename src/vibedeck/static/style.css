@@ -718,12 +718,10 @@ button:hover .hamburger-icon span {
     background: var(--card-bg);
 }
 
-.preview-content { 
-    flex: 1; 
-    overflow: auto; 
+.preview-content {
+    flex: 1;
+    overflow: auto;
     padding: 0;
-    /* Always visible in split view (can be empty) */
-    display: block !important;
 }
 
 /* Adjust header to span full width or just main area? 
@@ -1222,6 +1220,9 @@ details[open] > summary .tree-icon-folder::before {
 }
 .right-sidebar-toggle:hover {
     background: rgba(255,255,255,0.2);
+    color: white;
+}
+.right-sidebar-toggle.active {
     color: white;
 }
 
@@ -1853,33 +1854,49 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
    Terminal Panel
    ========================================================================== */
 
-/* Terminal toggle button */
+/* Terminal toggle button (in status bar, matches folder toggle) */
 .terminal-toggle-btn {
     background: none;
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    padding: 4px 8px;
+    border: none;
     cursor: pointer;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    transition: all 0.15s ease;
-    margin-right: 8px;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: rgba(255,255,255,0.7);
+    transition: opacity 0.15s;
 }
 .terminal-toggle-btn:hover {
-    background: var(--bg-hover);
-    color: var(--text-primary);
+    background: rgba(255,255,255,0.2);
+    color: white;
 }
 .terminal-toggle-btn.active {
-    background: var(--accent-color);
     color: white;
-    border-color: var(--accent-color);
-}
-.terminal-toggle-btn .terminal-icon {
-    font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
-    font-weight: bold;
 }
 
-/* Terminal resize handle */
+/* Terminal icon (mini terminal shape) */
+.terminal-icon {
+    width: 16px;
+    height: 12px;
+    position: relative;
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+    background: transparent;
+    transition: opacity 0.15s;
+}
+.terminal-icon::after {
+    content: '>';
+    position: absolute;
+    top: -1px;
+    left: 2px;
+    font-size: 9px;
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+    font-weight: bold;
+    line-height: 12px;
+}
+
+/* Terminal resize handle (between file view and terminal) */
 .terminal-resize-handle {
     height: 4px;
     background: transparent;
@@ -1889,10 +1906,6 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 }
 .terminal-resize-handle:hover {
     background: var(--accent-color);
-}
-.terminal-panel.open ~ .terminal-resize-handle,
-.terminal-resize-handle:has(+ .terminal-panel.open) {
-    display: block;
 }
 
 /* Terminal panel */
@@ -1913,9 +1926,9 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 /* Terminal container */
 .terminal-container {
     flex: 1;
-    padding: 4px;
+    padding: 12px 4px;
     overflow: hidden;
-    min-height: 0; /* Important for flex children */
+    min-height: 0;
 }
 .terminal-container .xterm {
     height: 100%;
@@ -1928,20 +1941,35 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     height: 100%;
 }
 
-/* Terminal-only mode: hide file preview, terminal takes full height */
-.preview-main-area.terminal-only .preview-content {
+/* Right pane layout modes controlled by CSS classes on .preview-pane */
+
+/* When only terminal is open (no file view): terminal fills the pane */
+.preview-pane.terminal-only .preview-body {
+    flex-direction: column;
+}
+.preview-pane.terminal-only .file-tree-sidebar,
+.preview-pane.terminal-only .tree-resize-handle,
+.preview-pane.terminal-only .preview-main-area .preview-header,
+.preview-pane.terminal-only .preview-main-area .preview-content,
+.preview-pane.terminal-only .preview-main-area .preview-status,
+.preview-pane.terminal-only .terminal-resize-handle {
     display: none;
 }
-.preview-main-area.terminal-only .preview-status {
-    display: none;
-}
-.preview-main-area.terminal-only .terminal-resize-handle {
-    display: none;
-}
-.preview-main-area.terminal-only .terminal-panel {
+.preview-pane.terminal-only .terminal-panel {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     height: auto;
     border-top: none;
+}
+
+/* When both file view and terminal are open: split vertically */
+.preview-pane.split-mode .terminal-panel {
+    display: flex;
+    flex-direction: column;
+}
+.preview-pane.split-mode .terminal-resize-handle {
+    display: block;
 }
 
 /* Make preview-main-area a flex container for split layout */

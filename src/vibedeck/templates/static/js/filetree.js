@@ -1,6 +1,7 @@
 
 import { dom, state } from './state.js';
 import { openPreviewPane, closePreviewPane } from './preview.js';
+import { updateRightPaneLayout } from './terminal.js';
 import { isMobile, escapeHtml } from './utils.js';
 import { openDiffView } from './diff.js';
 
@@ -666,13 +667,11 @@ function toggleRightSidebar() {
     } else {
         openRightPane();
     }
+    // Update folder button active state
+    dom.rightSidebarToggle?.classList.toggle('active', state.previewPaneOpen);
 }
 
 export function openRightPane() {
-    dom.previewPane.classList.add('open');
-    dom.mainContent.classList.add('preview-open');
-    dom.inputBar.classList.add('preview-open');
-    dom.floatingControls.classList.add('preview-open');
     state.previewPaneOpen = true;
 
     // Apply persisted tree sidebar width
@@ -685,6 +684,12 @@ export function openRightPane() {
          // Initial load (default to project root if nothing loaded)
          loadFileTree(state.activeSessionId);
     }
+
+    // Update folder button active state
+    dom.rightSidebarToggle?.classList.toggle('active', true);
+
+    // Sync right pane layout (handles terminal-only / split / file-only)
+    updateRightPaneLayout();
 }
 
 export function syncTreeToFile(filePath) {

@@ -2,7 +2,12 @@
  * Terminal integration using xterm.js
  *
  * Provides an embedded terminal in the right pane with WebSocket connection
- * to a server-side PTY.
+ * to a server-side PTY. The terminal toggle works independently from the
+ * file view toggle (folder button):
+ *   - File view only: right pane shows file tree + preview
+ *   - Terminal only: right pane shows terminal filling the pane
+ *   - Both: split view with file tree/preview on top, terminal on bottom
+ *   - Neither: right pane is closed
  */
 
 import { dom, state } from './state.js';
@@ -29,7 +34,6 @@ export async function initTerminal() {
     }
 
     if (!terminalEnabled) {
-        // Hide terminal toggle button if feature is disabled
         const toggleBtn = document.getElementById('terminal-toggle-btn');
         if (toggleBtn) {
             toggleBtn.style.display = 'none';
@@ -41,7 +45,6 @@ export async function initTerminal() {
     const toggleBtn = document.getElementById('terminal-toggle-btn');
     if (toggleBtn) {
         toggleBtn.addEventListener('click', toggleTerminal);
-        toggleBtn.addEventListener('dblclick', toggleTerminalOnly);
     }
 
     // Set up resize handle
@@ -58,31 +61,16 @@ export async function initTerminal() {
  * Load xterm.js and addons from CDN.
  */
 async function loadXterm() {
-    // Check if already loaded
-    if (window.Terminal) {
-        console.log('xterm.js already loaded');
-        return;
-    }
+    if (window.Terminal) return;
 
-    console.log('Loading xterm.js from CDN...');
-
-    // Load CSS
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
     document.head.appendChild(link);
 
-    // Load xterm.js
     await loadScript('https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js');
-    console.log('xterm.js loaded, Terminal:', typeof window.Terminal);
-
-    // Load fit addon
     await loadScript('https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js');
-    console.log('FitAddon loaded:', typeof window.FitAddon);
-
-    // Load web-links addon
     await loadScript('https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js');
-    console.log('WebLinksAddon loaded:', typeof window.WebLinksAddon);
 }
 
 /**
@@ -99,44 +87,66 @@ function loadScript(src) {
 }
 
 /**
- * Toggle terminal panel visibility.
+ * Toggle terminal on/off independently from file view.
  */
 export function toggleTerminal() {
     if (!terminalEnabled) return;
 
     state.terminalOpen = !state.terminalOpen;
 
-    const panel = document.getElementById('terminal-panel');
     const toggleBtn = document.getElementById('terminal-toggle-btn');
-
     if (state.terminalOpen) {
-        panel?.classList.add('open');
         toggleBtn?.classList.add('active');
         openTerminal();
     } else {
-        panel?.classList.remove('open');
         toggleBtn?.classList.remove('active');
         closeTerminal();
     }
+
+    updateRightPaneLayout();
 }
 
 /**
- * Toggle terminal-only mode (full height, hide file preview).
+ * Update the right pane layout based on which toggles are active.
+ *
+ * Central layout manager called by both file view toggle (folder button)
+ * and terminal toggle. Determines:
+ *   - Whether the right pane is open or closed
+ *   - Which layout mode: file-only (default), terminal-only, or split
  */
-export function toggleTerminalOnly() {
-    if (!terminalEnabled || !state.terminalOpen) return;
+export function updateRightPaneLayout() {
+    const pane = dom.previewPane;
+    if (!pane) return;
 
-    state.terminalOnly = !state.terminalOnly;
+    const fileViewActive = state.previewPaneOpen;
+    const terminalActive = state.terminalOpen;
 
-    const mainArea = document.querySelector('.preview-main-area');
-    if (state.terminalOnly) {
-        mainArea?.classList.add('terminal-only');
+    // Remove all layout mode classes
+    pane.classList.remove('terminal-only', 'split-mode');
+
+    if (!fileViewActive && !terminalActive) {
+        // Neither active - close the right pane
+        pane.classList.remove('open');
+        dom.mainContent?.classList.remove('preview-open');
+        dom.inputBar?.classList.remove('preview-open');
+        dom.floatingControls?.classList.remove('preview-open');
     } else {
-        mainArea?.classList.remove('terminal-only');
+        // At least one is active - open the pane
+        pane.classList.add('open');
+        dom.mainContent?.classList.add('preview-open');
+        dom.inputBar?.classList.add('preview-open');
+        dom.floatingControls?.classList.add('preview-open');
+
+        if (terminalActive && !fileViewActive) {
+            pane.classList.add('terminal-only');
+        } else if (terminalActive && fileViewActive) {
+            pane.classList.add('split-mode');
+        }
+        // else: only fileView - default layout (no extra class needed)
     }
 
-    // Resize terminal to fit new dimensions
-    if (terminal && fitAddon) {
+    // Refit terminal if visible
+    if (terminalActive && terminal && fitAddon) {
         setTimeout(() => fitAddon.fit(), 100);
     }
 }
@@ -148,7 +158,7 @@ async function openTerminal() {
     const container = document.getElementById('terminal-container');
     if (!container) return;
 
-    // Create terminal if not exists
+    // Create terminal instance if it doesn't exist yet
     if (!terminal) {
         terminal = new window.Terminal({
             cursorBlink: true,
@@ -158,11 +168,9 @@ async function openTerminal() {
             allowProposedApi: true,
         });
 
-        // Add fit addon
         fitAddon = new window.FitAddon.FitAddon();
         terminal.loadAddon(fitAddon);
 
-        // Add web links addon
         const webLinksAddon = new window.WebLinksAddon.WebLinksAddon();
         terminal.loadAddon(webLinksAddon);
 
@@ -170,29 +178,23 @@ async function openTerminal() {
         fitAddon.fit();
 
         // Focus terminal when clicking on container
-        container.addEventListener('click', () => {
-            terminal.focus();
-        });
+        container.addEventListener('click', () => terminal.focus());
 
-        // Handle terminal input
+        // Handle terminal input -> WebSocket
         terminal.onData(data => {
-            console.log('Terminal onData:', JSON.stringify(data), 'WebSocket state:', webSocket?.readyState);
             if (webSocket && webSocket.readyState === WebSocket.OPEN) {
                 webSocket.send(JSON.stringify({ type: 'input', data }));
-                console.log('Sent to WebSocket');
-            } else {
-                console.warn('WebSocket not ready, state:', webSocket?.readyState);
             }
         });
 
-        // Handle resize
+        // Handle terminal resize -> WebSocket
         terminal.onResize(({ cols, rows }) => {
             if (webSocket && webSocket.readyState === WebSocket.OPEN) {
                 webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
             }
         });
 
-        // Resize on window resize
+        // Refit on window resize
         window.addEventListener('resize', () => {
             if (state.terminalOpen && fitAddon) {
                 fitAddon.fit();
@@ -200,13 +202,16 @@ async function openTerminal() {
         });
     }
 
-    // Connect WebSocket
+    // Apply persisted height
+    const panel = document.getElementById('terminal-panel');
+    if (panel && state.terminalHeight) {
+        panel.style.height = `${state.terminalHeight}px`;
+    }
+
     connectWebSocket();
 
-    // Focus terminal after a short delay to ensure it's ready
-    setTimeout(() => {
-        terminal?.focus();
-    }, 100);
+    // Focus terminal after layout settles
+    setTimeout(() => terminal?.focus(), 100);
 }
 
 /**
@@ -238,7 +243,7 @@ function getTerminalTheme() {
  */
 function connectWebSocket() {
     if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-        return; // Already connected
+        return;
     }
 
     // Get working directory from active session if available
@@ -259,12 +264,10 @@ function connectWebSocket() {
     webSocket = new WebSocket(url);
 
     webSocket.onopen = () => {
-        console.log('Terminal WebSocket connected, readyState:', webSocket.readyState);
         // Send initial resize
         if (terminal && fitAddon) {
             fitAddon.fit();
             const { cols, rows } = terminal;
-            console.log('Sending initial resize:', cols, 'x', rows);
             webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
         }
     };
@@ -275,7 +278,6 @@ function connectWebSocket() {
             if (msg.type === 'output' && terminal) {
                 terminal.write(msg.data);
             } else if (msg.type === 'exit') {
-                console.log('Shell exited with code:', msg.code);
                 terminal?.write('\r\n[Process exited]\r\n');
             } else if (msg.type === 'error') {
                 console.error('Terminal error:', msg.message);
@@ -287,9 +289,8 @@ function connectWebSocket() {
     };
 
     webSocket.onclose = (event) => {
-        console.log('Terminal WebSocket closed:', event.code, event.reason);
         if (state.terminalOpen && event.code !== 1000) {
-            // Unexpected close, try to reconnect after delay
+            // Unexpected close - try to reconnect
             setTimeout(() => {
                 if (state.terminalOpen) {
                     terminal?.write('\r\n[Reconnecting...]\r\n');
@@ -334,7 +335,6 @@ function initResizeHandle(handle) {
     });
 
     function onMouseMove(e) {
-        // Moving up increases height (since panel is at bottom)
         const delta = startY - e.clientY;
         const newHeight = Math.max(100, Math.min(window.innerHeight * 0.8, startHeight + delta));
 
@@ -344,7 +344,6 @@ function initResizeHandle(handle) {
             state.terminalHeight = newHeight;
         }
 
-        // Resize terminal to fit
         if (fitAddon) {
             fitAddon.fit();
         }
@@ -355,6 +354,7 @@ function initResizeHandle(handle) {
         document.removeEventListener('mouseup', onMouseUp);
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        localStorage.setItem('terminalHeight', state.terminalHeight);
     }
 }
 

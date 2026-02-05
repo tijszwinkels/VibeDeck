@@ -2,6 +2,7 @@
 import { dom, state } from './state.js';
 import { isMobile, copyToClipboard } from './utils.js';
 import { openRightPane, syncTreeToFile, loadFileTree } from './filetree.js';
+import { updateRightPaneLayout } from './terminal.js';
 import { showFlash } from './ui.js';
 import { startFileWatch, stopFileWatch } from './filewatch.js';
 
@@ -435,18 +436,20 @@ export function closePreviewPane(clearSessionAssociation = true) {
     // Stop file watching
     stopFileWatch();
 
-    dom.previewPane.classList.remove('open');
-    dom.mainContent.classList.remove('preview-open');
-    dom.inputBar.classList.remove('preview-open');
-    dom.floatingControls.classList.remove('preview-open');
     state.previewPaneOpen = false;
     state.previewFilePath = null;
     state.previewFileData = null;
+
+    // Update folder button active state
+    dom.rightSidebarToggle?.classList.remove('active');
 
     // Clear session association if requested (not when switching sessions)
     if (clearSessionAssociation && state.activeSessionId) {
         state.sessionPreviewPaths.delete(state.activeSessionId);
     }
+
+    // Sync right pane layout (may close pane or switch to terminal-only)
+    updateRightPaneLayout();
 }
 
 function renderPreviewContent(data, showRendered = true) {
