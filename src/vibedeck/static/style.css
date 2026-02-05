@@ -572,8 +572,17 @@ body { padding-top: 56px; padding-bottom: 100px; }
 /* Split View Container */
 .preview-body {
     display: flex;
+    flex-direction: column;
     flex: 1;
     overflow: hidden;
+}
+
+/* File view row: tree sidebar + file preview (horizontal layout) */
+.file-view-row {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
 }
 
 /* Tree Header (New) */
@@ -1936,14 +1945,7 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 /* Right pane layout modes controlled by CSS classes on .preview-pane */
 
 /* When only terminal is open (no file view): terminal fills the pane */
-.preview-pane.terminal-only .preview-body {
-    flex-direction: column;
-}
-.preview-pane.terminal-only .file-tree-sidebar,
-.preview-pane.terminal-only .tree-resize-handle,
-.preview-pane.terminal-only .preview-main-area .preview-header,
-.preview-pane.terminal-only .preview-main-area .preview-content,
-.preview-pane.terminal-only .preview-main-area .preview-status,
+.preview-pane.terminal-only .file-view-row,
 .preview-pane.terminal-only .terminal-resize-handle {
     display: none;
 }

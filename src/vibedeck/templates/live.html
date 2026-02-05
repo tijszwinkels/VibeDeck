@@ -82,60 +82,61 @@
     <!-- Preview Pane -->
     <div class="preview-pane" id="preview-pane">
         <div class="preview-body">
-            <!-- Left: Tree -->
-            <div class="file-tree-sidebar">
-                <div class="file-tree-header">
-                    <span class="tree-header-title">Files</span>
-                    <button class="tree-toggle-btn" id="tree-collapse-btn" title="Collapse Tree">
-                        <div class="hamburger-icon"><span></span></div>
-                    </button>
+            <!-- File view row: tree sidebar + file preview -->
+            <div class="file-view-row">
+                <!-- Left: Tree -->
+                <div class="file-tree-sidebar">
+                    <div class="file-tree-header">
+                        <span class="tree-header-title">Files</span>
+                        <button class="tree-toggle-btn" id="tree-collapse-btn" title="Collapse Tree">
+                            <div class="hamburger-icon"><span></span></div>
+                        </button>
+                    </div>
+                    <div class="file-tree-content" id="file-tree-content"></div>
                 </div>
-                <div class="file-tree-content" id="file-tree-content"></div>
+
+                <!-- Resize Handle -->
+                <div class="tree-resize-handle" id="tree-resize-handle"></div>
+
+                <!-- Right: Content -->
+                <div class="preview-main-area">
+                    <!-- Header (Scoped to File View) -->
+                    <div class="preview-header">
+                        <button class="tree-expand-btn" id="tree-expand-btn" title="Expand Tree">
+                            <div class="folder-icon"></div>
+                        </button>
+
+                        <div class="preview-title">
+                            <span class="preview-filename" id="preview-filename">File Browser</span>
+                            <span class="preview-path" id="preview-path"></span>
+                        </div>
+                        <div class="preview-actions">
+                            <label class="preview-view-toggle" id="preview-view-toggle" style="display: none;" title="Toggle between rendered and source view">
+                                <input type="checkbox" id="preview-view-checkbox" checked>
+                                <span class="toggle-label">Rendered</span>
+                            </label>
+                            <label class="preview-follow-toggle" id="preview-follow-toggle" style="display: none;" title="Auto-scroll to bottom on new content">
+                                <input type="checkbox" id="preview-follow-checkbox" checked>
+                                <span>Follow</span>
+                            </label>
+                            <button class="preview-copy-btn" id="preview-copy-btn" title="Copy file path" style="display: none;">Copy Path</button>
+                            <button class="preview-close-btn" id="preview-close-btn" title="Close preview">&times;</button>
+                        </div>
+                    </div>
+
+                    <div class="preview-content" id="preview-content">
+                        <div class="pending-session-placeholder" style="padding-top: 100px;">
+                            <p>Select a file to view</p>
+                        </div>
+                    </div>
+                    <div class="preview-status" id="preview-status"></div>
+                </div>
             </div>
-            
-            <!-- Resize Handle -->
-            <div class="tree-resize-handle" id="tree-resize-handle"></div>
-            
-            <!-- Right: Content -->
-            <div class="preview-main-area">
-                <!-- Header (Scoped to File View) -->
-                <div class="preview-header">
-                    <button class="tree-expand-btn" id="tree-expand-btn" title="Expand Tree">
-                        <div class="folder-icon"></div>
-                    </button>
-                    
-                    <div class="preview-title">
-                        <span class="preview-filename" id="preview-filename">File Browser</span>
-                        <span class="preview-path" id="preview-path"></span>
-                    </div>
-                    <div class="preview-actions">
-                        <label class="preview-view-toggle" id="preview-view-toggle" style="display: none;" title="Toggle between rendered and source view">
-                            <input type="checkbox" id="preview-view-checkbox" checked>
-                            <span class="toggle-label">Rendered</span>
-                        </label>
-                        <label class="preview-follow-toggle" id="preview-follow-toggle" style="display: none;" title="Auto-scroll to bottom on new content">
-                            <input type="checkbox" id="preview-follow-checkbox" checked>
-                            <span>Follow</span>
-                        </label>
-                        <button class="preview-copy-btn" id="preview-copy-btn" title="Copy file path" style="display: none;">Copy Path</button>
-                        <button class="preview-close-btn" id="preview-close-btn" title="Close preview">&times;</button>
-                    </div>
-                </div>
 
-                <div class="preview-content" id="preview-content">
-                    <div class="pending-session-placeholder" style="padding-top: 100px;">
-                        <p>Select a file to view</p>
-                    </div>
-                </div>
-                <div class="preview-status" id="preview-status"></div>
-
-                <!-- Terminal resize handle -->
-                <div class="terminal-resize-handle" id="terminal-resize-handle"></div>
-
-                <!-- Terminal panel -->
-                <div class="terminal-panel" id="terminal-panel">
-                    <div class="terminal-container" id="terminal-container"></div>
-                </div>
+            <!-- Terminal resize handle + panel (full width, below file view row) -->
+            <div class="terminal-resize-handle" id="terminal-resize-handle"></div>
+            <div class="terminal-panel" id="terminal-panel">
+                <div class="terminal-container" id="terminal-container"></div>
             </div>
         </div>
         
