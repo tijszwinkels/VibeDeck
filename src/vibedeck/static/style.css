@@ -429,6 +429,9 @@ body { padding-top: 56px; padding-bottom: 100px; }
     .input-bar.preview-open { right: 0 !important; display: none; }
     .floating-controls.preview-open { right: calc(12px + env(safe-area-inset-right, 0px)) !important; }
 
+    /* Hide terminal on mobile - xterm.js doesn't work well with virtual keyboards */
+    .terminal-toggle-btn { display: none; }
+
     /* Sidebar mobile improvements */
     .sidebar {
         padding-top: env(safe-area-inset-top, 0px);
@@ -703,8 +706,7 @@ button:hover .hamburger-icon span {
     flex: 1;
     overflow-y: auto;
     padding: 8px 0;
-    /* Always visible in split view - use flex for footer positioning */
-    display: flex !important;
+    display: flex;
     flex-direction: column;
 }
 
@@ -1265,11 +1267,6 @@ details[open] > summary .tree-icon-folder::before {
 .toggle-tree-btn .icon-open { display: none; }
 .toggle-tree-btn.collapsed .icon-open { display: block; }
 .toggle-tree-btn.collapsed .icon-close { display: none; }
-
-
-.right-sidebar-toggle:hover {
-    background: rgba(255,255,255,0.2);
-}
 
 /* View Switcher in Preview Header */
 .view-switcher {
@@ -1911,16 +1908,11 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 /* Terminal panel */
 .terminal-panel {
     display: none;
-    flex-shrink: 0;
     height: 200px;
     min-height: 100px;
     background: var(--bg-code);
     border-top: 1px solid var(--border-color);
     overflow: hidden;
-}
-.terminal-panel.open {
-    display: flex;
-    flex-direction: column;
 }
 
 /* Terminal container */
@@ -1935,7 +1927,7 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     width: 100%;
 }
 .terminal-container .xterm-viewport {
-    overflow-y: auto !important;
+    overflow-y: auto;
 }
 .terminal-container .xterm-screen {
     height: 100%;
@@ -1972,18 +1964,13 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     display: block;
 }
 
-/* Make preview-main-area a flex container for split layout */
-.preview-main-area {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    overflow: hidden;
-}
+/* Flex children within preview-main-area */
 .preview-main-area .preview-header {
     flex-shrink: 0;
 }
 .preview-main-area .preview-content {
     flex: 1;
+    min-height: 80px;
     overflow: auto;
 }
 .preview-main-area .preview-status {
