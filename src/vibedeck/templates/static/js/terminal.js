@@ -1,9 +1,11 @@
 /**
  * Terminal integration using xterm.js
  *
- * Provides an embedded terminal in the right pane with WebSocket connection
- * to a server-side PTY. The terminal toggle works independently from the
- * file view toggle (folder button):
+ * Provides per-session embedded terminals in the right pane with WebSocket
+ * connections to server-side PTYs. Each VibeDeck session gets its own
+ * independent terminal instance with preserved scrollback.
+ *
+ * The terminal toggle works independently from the file view toggle:
  *   - File view only: right pane shows file tree + preview
  *   - Terminal only: right pane shows terminal filling the pane
  *   - Both: split view with file tree/preview on top, terminal on bottom
@@ -12,11 +14,22 @@
 
 import { dom, state } from './state.js';
 
-// Terminal state
-let terminal = null;
-let fitAddon = null;
-let webSocket = null;
+/**
+ * Per-session terminal state.
+ * Map<sessionId, { terminal, fitAddon, webSocket, containerEl }>
+ */
+const sessionTerminals = new Map();
+
 let terminalEnabled = false;
+
+/**
+ * Get the terminal entry for the currently active session.
+ * @returns {Object|null} Terminal entry or null if none exists
+ */
+function getActiveEntry() {
+    if (!state.activeSessionId) return null;
+    return sessionTerminals.get(state.activeSessionId) || null;
+}
 
 /**
  * Initialize the terminal module.
@@ -52,6 +65,16 @@ export async function initTerminal() {
     if (resizeHandle) {
         initResizeHandle(resizeHandle);
     }
+
+    // Refit terminal on window resize
+    window.addEventListener('resize', () => {
+        if (state.terminalOpen) {
+            const entry = getActiveEntry();
+            if (entry?.fitAddon) {
+                entry.fitAddon.fit();
+            }
+        }
+    });
 
     // Load xterm.js dynamically
     await loadXterm();
@@ -146,72 +169,201 @@ export function updateRightPaneLayout() {
     }
 
     // Refit terminal if visible
-    if (terminalActive && terminal && fitAddon) {
-        setTimeout(() => fitAddon.fit(), 100);
+    if (terminalActive) {
+        const entry = getActiveEntry();
+        if (entry?.terminal && entry?.fitAddon) {
+            setTimeout(() => entry.fitAddon.fit(), 100);
+        }
     }
 }
 
 /**
- * Open terminal and connect to WebSocket.
+ * Create a terminal for the specified session.
+ * @param {string} sessionId - The session to create terminal for
+ * @returns {Object} The created terminal entry
  */
-async function openTerminal() {
-    const container = document.getElementById('terminal-container');
-    if (!container) return;
-
-    // Create terminal instance if it doesn't exist yet
-    if (!terminal) {
-        terminal = new window.Terminal({
-            cursorBlink: true,
-            fontSize: 14,
-            fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", monospace',
-            theme: getTerminalTheme(),
-            allowProposedApi: true,
-        });
-
-        fitAddon = new window.FitAddon.FitAddon();
-        terminal.loadAddon(fitAddon);
-
-        const webLinksAddon = new window.WebLinksAddon.WebLinksAddon();
-        terminal.loadAddon(webLinksAddon);
-
-        terminal.open(container);
-        fitAddon.fit();
-
-        // Focus terminal when clicking on container
-        container.addEventListener('click', () => terminal.focus());
-
-        // Handle terminal input -> WebSocket
-        terminal.onData(data => {
-            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                webSocket.send(JSON.stringify({ type: 'input', data }));
-            }
-        });
-
-        // Handle terminal resize -> WebSocket
-        terminal.onResize(({ cols, rows }) => {
-            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
-            }
-        });
-
-        // Refit on window resize
-        window.addEventListener('resize', () => {
-            if (state.terminalOpen && fitAddon) {
-                fitAddon.fit();
-            }
-        });
+function createTerminalForSession(sessionId) {
+    const panel = dom.terminalPanel;
+    if (!panel) {
+        console.error('Terminal panel not found');
+        return null;
     }
 
+    // Create container element
+    const containerEl = document.createElement('div');
+    containerEl.className = 'terminal-container';
+    containerEl.dataset.session = sessionId;
+    panel.appendChild(containerEl);
+
+    // Create xterm.js instance
+    const terminal = new window.Terminal({
+        cursorBlink: true,
+        fontSize: 12,
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", "Segoe UI Mono", "Roboto Mono", monospace',
+        theme: getTerminalTheme(),
+        allowProposedApi: true,
+    });
+
+    // Load addons
+    const fitAddon = new window.FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
+
+    const webLinksAddon = new window.WebLinksAddon.WebLinksAddon();
+    terminal.loadAddon(webLinksAddon);
+
+    // Open terminal in container
+    terminal.open(containerEl);
+    fitAddon.fit();
+
+    // Create entry object (webSocket will be set by connectWebSocketForSession)
+    const entry = { terminal, fitAddon, webSocket: null, containerEl };
+    sessionTerminals.set(sessionId, entry);
+
+    // Focus terminal when clicking on container
+    containerEl.addEventListener('click', () => terminal.focus());
+
+    // Handle terminal input -> WebSocket
+    // Uses closure over entry so it always gets current webSocket after reconnects
+    terminal.onData(data => {
+        if (entry.webSocket && entry.webSocket.readyState === WebSocket.OPEN) {
+            entry.webSocket.send(JSON.stringify({ type: 'input', data }));
+        }
+    });
+
+    // Handle terminal resize -> WebSocket
+    terminal.onResize(({ cols, rows }) => {
+        if (entry.webSocket && entry.webSocket.readyState === WebSocket.OPEN) {
+            entry.webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+    });
+
+    // Connect WebSocket
+    connectWebSocketForSession(sessionId);
+
+    return entry;
+}
+
+/**
+ * Connect WebSocket for the specified session's terminal.
+ * @param {string} sessionId - The session to connect WebSocket for
+ */
+function connectWebSocketForSession(sessionId) {
+    const entry = sessionTerminals.get(sessionId);
+    if (!entry) return;
+
+    // Don't reconnect if already open
+    if (entry.webSocket && entry.webSocket.readyState === WebSocket.OPEN) {
+        return;
+    }
+
+    // Get working directory from session
+    const session = state.sessions?.get(sessionId);
+    const cwd = session?.cwd || null;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let url = `${protocol}//${window.location.host}/ws/terminal`;
+    const params = new URLSearchParams();
+    if (cwd) {
+        params.set('cwd', cwd);
+    }
+    params.set('session_id', sessionId);
+    url += '?' + params.toString();
+
+    const webSocket = new WebSocket(url);
+    entry.webSocket = webSocket;
+
+    webSocket.onopen = () => {
+        // Send initial resize
+        if (entry.terminal && entry.fitAddon) {
+            entry.fitAddon.fit();
+            const { cols, rows } = entry.terminal;
+            webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+    };
+
+    webSocket.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'output' && entry.terminal) {
+                entry.terminal.write(msg.data);
+            } else if (msg.type === 'exit') {
+                entry.terminal?.write('\r\n[Process exited]\r\n');
+            } else if (msg.type === 'error') {
+                console.error('Terminal error:', msg.message);
+                entry.terminal?.write(`\r\n[Error: ${msg.message}]\r\n`);
+            }
+        } catch (e) {
+            console.error('Failed to parse terminal message:', e);
+        }
+    };
+
+    webSocket.onclose = (event) => {
+        // Clear the reference
+        if (entry.webSocket === webSocket) {
+            entry.webSocket = null;
+        }
+
+        // Unexpected close - try to reconnect if terminal is still open
+        if (state.terminalOpen && event.code !== 1000) {
+            setTimeout(() => {
+                // Only reconnect if session still exists and terminal panel is open
+                if (state.terminalOpen && sessionTerminals.has(sessionId)) {
+                    entry.terminal?.write('\r\n[Reconnecting...]\r\n');
+                    connectWebSocketForSession(sessionId);
+                }
+            }, 2000);
+        }
+    };
+
+    webSocket.onerror = (error) => {
+        console.error('Terminal WebSocket error:', error);
+    };
+}
+
+/**
+ * Show only the terminal container for the specified session.
+ * @param {string} sessionId - The session to show terminal for
+ */
+function showTerminalContainer(sessionId) {
+    // Toggle active class on all terminal containers
+    for (const [id, entry] of sessionTerminals) {
+        entry.containerEl.classList.toggle('active', id === sessionId);
+    }
+
+    // Fit the active terminal after layout settles
+    const entry = sessionTerminals.get(sessionId);
+    if (entry?.fitAddon) {
+        setTimeout(() => {
+            entry.fitAddon.fit();
+            entry.terminal?.focus();
+        }, 100);
+    }
+}
+
+/**
+ * Open terminal for the current session.
+ */
+async function openTerminal() {
+    const sessionId = state.activeSessionId;
+    if (!sessionId) return;
+
+    // Create terminal for this session if it doesn't exist
+    if (!sessionTerminals.has(sessionId)) {
+        createTerminalForSession(sessionId);
+    }
+
+    // Show this session's terminal container
+    showTerminalContainer(sessionId);
+
     // Apply persisted height
-    const panel = document.getElementById('terminal-panel');
+    const panel = dom.terminalPanel;
     if (panel && state.terminalHeight) {
         panel.style.height = `${state.terminalHeight}px`;
     }
 
-    connectWebSocket();
-
     // Focus terminal after layout settles
-    setTimeout(() => terminal?.focus(), 100);
+    const entry = sessionTerminals.get(sessionId);
+    setTimeout(() => entry?.terminal?.focus(), 100);
 }
 
 /**
@@ -239,80 +391,53 @@ function getTerminalTheme() {
 }
 
 /**
- * Connect to terminal WebSocket.
+ * Close terminal panel (but keep PTYs running in background).
  */
-function connectWebSocket() {
-    if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-        return;
+function closeTerminal() {
+    // Just hide all containers - don't close WebSockets
+    // PTYs keep running so scrollback is preserved
+    for (const entry of sessionTerminals.values()) {
+        entry.containerEl.classList.remove('active');
     }
-
-    // Get working directory from active session if available
-    let cwd = null;
-    if (state.activeSessionId) {
-        const session = state.sessions?.get(state.activeSessionId);
-        if (session?.cwd) {
-            cwd = session.cwd;
-        }
-    }
-
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let url = `${protocol}//${window.location.host}/ws/terminal`;
-    if (cwd) {
-        url += `?cwd=${encodeURIComponent(cwd)}`;
-    }
-
-    webSocket = new WebSocket(url);
-
-    webSocket.onopen = () => {
-        // Send initial resize
-        if (terminal && fitAddon) {
-            fitAddon.fit();
-            const { cols, rows } = terminal;
-            webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
-        }
-    };
-
-    webSocket.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'output' && terminal) {
-                terminal.write(msg.data);
-            } else if (msg.type === 'exit') {
-                terminal?.write('\r\n[Process exited]\r\n');
-            } else if (msg.type === 'error') {
-                console.error('Terminal error:', msg.message);
-                terminal?.write(`\r\n[Error: ${msg.message}]\r\n`);
-            }
-        } catch (e) {
-            console.error('Failed to parse terminal message:', e);
-        }
-    };
-
-    webSocket.onclose = (event) => {
-        if (state.terminalOpen && event.code !== 1000) {
-            // Unexpected close - try to reconnect
-            setTimeout(() => {
-                if (state.terminalOpen) {
-                    terminal?.write('\r\n[Reconnecting...]\r\n');
-                    connectWebSocket();
-                }
-            }, 2000);
-        }
-    };
-
-    webSocket.onerror = (error) => {
-        console.error('Terminal WebSocket error:', error);
-    };
 }
 
 /**
- * Close terminal and disconnect WebSocket.
+ * Switch the terminal view to a different session.
+ * Called from sessions.js when user switches sessions.
+ * @param {string} sessionId - The session to switch to
  */
-function closeTerminal() {
-    if (webSocket) {
-        webSocket.close(1000, 'User closed terminal');
-        webSocket = null;
+export function switchTerminalToSession(sessionId) {
+    if (!terminalEnabled || !state.terminalOpen) return;
+
+    // Create terminal on demand if it doesn't exist
+    if (!sessionTerminals.has(sessionId)) {
+        createTerminalForSession(sessionId);
     }
+
+    showTerminalContainer(sessionId);
+}
+
+/**
+ * Destroy the terminal for a session (cleanup when session is removed).
+ * @param {string} sessionId - The session to cleanup
+ */
+export function destroySessionTerminal(sessionId) {
+    const entry = sessionTerminals.get(sessionId);
+    if (!entry) return;
+
+    // Close WebSocket gracefully
+    if (entry.webSocket) {
+        entry.webSocket.close(1000, 'Session removed');
+    }
+
+    // Dispose xterm.js instance (frees memory, detaches from DOM)
+    entry.terminal.dispose();
+
+    // Remove container from DOM
+    entry.containerEl.remove();
+
+    // Remove from map
+    sessionTerminals.delete(sessionId);
 }
 
 /**
@@ -325,7 +450,7 @@ function initResizeHandle(handle) {
     handle.addEventListener('mousedown', (e) => {
         e.preventDefault();
         startY = e.clientY;
-        const panel = document.getElementById('terminal-panel');
+        const panel = dom.terminalPanel;
         startHeight = panel?.offsetHeight || 200;
 
         document.addEventListener('mousemove', onMouseMove);
@@ -338,14 +463,16 @@ function initResizeHandle(handle) {
         const delta = startY - e.clientY;
         const newHeight = Math.max(100, Math.min(window.innerHeight * 0.8, startHeight + delta));
 
-        const panel = document.getElementById('terminal-panel');
+        const panel = dom.terminalPanel;
         if (panel) {
             panel.style.height = `${newHeight}px`;
             state.terminalHeight = newHeight;
         }
 
-        if (fitAddon) {
-            fitAddon.fit();
+        // Fit the active terminal
+        const entry = getActiveEntry();
+        if (entry?.fitAddon) {
+            entry.fitAddon.fit();
         }
     }
 
@@ -362,8 +489,9 @@ function initResizeHandle(handle) {
  * Update terminal theme when page theme changes.
  */
 export function updateTerminalTheme() {
-    if (terminal) {
-        terminal.options.theme = getTerminalTheme();
+    const theme = getTerminalTheme();
+    for (const entry of sessionTerminals.values()) {
+        entry.terminal.options.theme = theme;
     }
 }
 

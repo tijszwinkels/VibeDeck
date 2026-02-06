@@ -34,6 +34,7 @@ class TerminalSession:
     process: "ptyprocess.PtyProcess | None" = None
     read_task: asyncio.Task | None = None
     cwd: str | None = None
+    session_id: str | None = None  # VibeDeck session ID for logging
 
     # Track if we're shutting down to avoid sending after close
     closing: bool = False
@@ -175,7 +176,9 @@ class TerminalManager:
                     pass
             logger.debug(f"PTY read loop ended, exit status: {proc.exitstatus}")
 
-    async def handle_websocket(self, websocket: WebSocket, cwd: str | None = None) -> None:
+    async def handle_websocket(
+        self, websocket: WebSocket, cwd: str | None = None, session_id: str | None = None
+    ) -> None:
         """Handle a WebSocket connection for terminal I/O.
 
         Protocol:
@@ -188,10 +191,10 @@ class TerminalManager:
         await websocket.accept()
         ws_id = id(websocket)
 
-        session = TerminalSession(websocket=websocket, cwd=cwd)
+        session = TerminalSession(websocket=websocket, cwd=cwd, session_id=session_id)
         self.sessions[ws_id] = session
 
-        logger.info(f"Terminal WebSocket connected: {ws_id}")
+        logger.info(f"Terminal WebSocket connected: ws={ws_id}, session={session_id}")
 
         # Spawn PTY
         if not await self.spawn_pty(session):
