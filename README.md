@@ -25,6 +25,7 @@ A little bit like Conductor, but works remotely as well and is more flexible, Li
 * full-fledged Claude Code interface in the browser. Run locally or in a remote dev environment.
 * Built-in file-browser with Browsing / Upload / Download / Delete file
 * File preview: Text / Code / MD / Images / Audio / HTML / Git Diff
+* Built-in terminal emulator per session
 * File-tail functionality (follow) for logfiles
 * Tooling for generating transcripts of Claude Code sessions, and searching previous sessions.
 * Preliminary support for OpenCode (but be prepared to file issues).
@@ -167,7 +168,7 @@ uv run vibedeck --debug
 
 ## Credits
 
-This project is based on [claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) by [Simon Willison](https://simonwillison.net/). This project allows to generate html-pages from claude code transcripts, put those in gists, and attach them to commit logs, which is tremendously useful. The layout is adapted from that project.
+The graphical interface of this project is inspired on [claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) by [Simon Willison](https://simonwillison.net/). This project allows to generate html-pages from claude code transcripts, put those in gists, and attach them to commit logs, which is tremendously useful. The layout is adapted from that project.
 
 ## License
 
