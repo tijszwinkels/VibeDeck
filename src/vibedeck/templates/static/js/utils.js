@@ -172,6 +172,23 @@ export function formatModelName(model) {
         const version = match[2] ? `${match[1]}.${match[2]}` : match[1];
         return `${name} ${version}`;
     }
+    // Format 4: claude-opus-4-6 (undated model IDs, e.g. Opus 4.6+)
+    match = model.match(/^claude-(\w+)-(\d+)-(\d+)$/);
+    if (match) {
+        const name = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+        return `${name} ${match[2]}.${match[3]}`;
+    }
+    // Format 5: claude-opus-4 (undated, single version number)
+    match = model.match(/^claude-(\w+)-(\d+)$/);
+    if (match) {
+        const name = match[1].charAt(0).toUpperCase() + match[1].slice(1);
+        return `${name} ${match[2]}`;
+    }
+    // Format 6: bare aliases "opus", "sonnet", "haiku"
+    const bare = model.toLowerCase();
+    if (['opus', 'sonnet', 'haiku'].includes(bare)) {
+        return bare.charAt(0).toUpperCase() + bare.slice(1) + ' (latest)';
+    }
     return model;
 }
 

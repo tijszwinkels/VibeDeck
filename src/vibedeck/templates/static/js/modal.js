@@ -2,6 +2,7 @@
 
 import { dom, state } from './state.js';
 import { createPendingSession } from './messaging.js';
+import { formatModelName } from './utils.js';
 
 // Load available backends
 async function loadBackends() {
@@ -88,7 +89,7 @@ async function populateModelSelect(backendName) {
     models.forEach(function(model) {
         const option = document.createElement('option');
         option.value = model;
-        option.textContent = model;
+        option.textContent = formatModelName(model);
         if (model === savedModel) {
             option.selected = true;
         }
@@ -106,10 +107,10 @@ function filterModels(searchText) {
     const savedModel = localStorage.getItem('newSessionModel_' + savedBackend) || (state.allModelsForFilter.length > 0 ? state.allModelsForFilter[0] : '');
 
     state.allModelsForFilter.forEach(function(model) {
-        if (!search || model.toLowerCase().includes(search)) {
+        if (!search || model.toLowerCase().includes(search) || formatModelName(model).toLowerCase().includes(search)) {
             const option = document.createElement('option');
             option.value = model;
-            option.textContent = model;
+            option.textContent = formatModelName(model);
             if (model === savedModel) {
                 option.selected = true;
             }

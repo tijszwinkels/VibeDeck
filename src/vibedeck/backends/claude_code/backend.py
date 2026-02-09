@@ -194,12 +194,19 @@ class ClaudeCodeBackend:
         """Get available models for Claude Code.
 
         Returns a list of model aliases that can be passed to the --model flag.
-        Opus is listed first as the default/recommended option.
+        Includes both latest aliases and pinned version aliases for fallback.
 
         Returns:
             List of model identifier strings.
         """
-        return ["opus", "sonnet", "haiku"]
+        return [
+            "opus",                 # Latest Opus (currently 4.6)
+            "sonnet",               # Latest Sonnet (currently 4.5)
+            "haiku",                # Latest Haiku (currently 4.5)
+            "claude-opus-4-5",      # Pinned Opus 4.5
+            "claude-sonnet-4-5",    # Pinned Sonnet 4.5
+            "claude-haiku-4-5",     # Pinned Haiku 4.5
+        ]
 
     # ===== CLI Interaction =====
 
