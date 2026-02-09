@@ -45,6 +45,20 @@ models:
     cache_write_1h: 30.00
     cache_read: 1.50
 
+  claude-sonnet-4-5:
+    input: 3.00
+    output: 15.00
+    cache_write_5m: 3.75
+    cache_write_1h: 6.00
+    cache_read: 0.30
+
+  claude-sonnet-4-5-20250929:
+    input: 3.00
+    output: 15.00
+    cache_write_5m: 3.75
+    cache_write_1h: 6.00
+    cache_read: 0.30
+
   claude-sonnet-4-5-20250514:
     input: 3.00
     output: 15.00
@@ -58,6 +72,20 @@ models:
     cache_write_5m: 3.75
     cache_write_1h: 6.00
     cache_read: 0.30
+
+  claude-haiku-4-5:
+    input: 1.00
+    output: 5.00
+    cache_write_5m: 1.25
+    cache_write_1h: 2.00
+    cache_read: 0.10
+
+  claude-haiku-4-5-20251001:
+    input: 1.00
+    output: 5.00
+    cache_write_5m: 1.25
+    cache_write_1h: 2.00
+    cache_read: 0.10
 
   claude-haiku-4-5-20250514:
     input: 1.00
