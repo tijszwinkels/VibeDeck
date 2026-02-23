@@ -361,10 +361,14 @@ def serve(
         limit=max_sessions, include_subagents=include_subagents
     )
     if not recent and session is None:
-        projects_dir = backend_instance.get_projects_dir()
-        click.echo(f"No session files found in {projects_dir}", err=True)
-        click.echo("Specify a session file with --session", err=True)
-        raise SystemExit(1)
+        # Isolation backend starts empty — users create sessions after login
+        if backend == "isolation":
+            click.echo("No sessions yet (isolation backend, waiting for users)")
+        else:
+            projects_dir = backend_instance.get_projects_dir()
+            click.echo(f"No session files found in {projects_dir}", err=True)
+            click.echo("Specify a session file with --session", err=True)
+            raise SystemExit(1)
 
     count = len(recent)
     if session:
