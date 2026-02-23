@@ -1,0 +1,65 @@
+# VibeDeck Configuration Example
+#
+# Multi-tenant isolation backend with OAuth authentication.
+# Copy this file to config.toml and customize.
+
+[serve]
+backend = "isolation"
+port = 8080
+host = "0.0.0.0"
+max_sessions = 200
+# disable_send = false  # Set to true to disable message sending to sessions
+
+[isolation]
+# Base directory containing per-user home directories.
+# Each user gets: {users_dir}/{user_id}/ bind-mounted as /root in their container.
+# Sessions are discovered at: {users_dir}/{user_id}/.claude/projects/**/*.jsonl
+users_dir = "/opt/vibedeck/users"
+
+# Docker container settings
+docker_image = "claude-sandbox"      # Image name (must be pre-built)
+docker_runtime = "runsc"             # Use gVisor for security (or "runc" for testing)
+memory = "2g"                        # Per-container memory limit
+cpus = "1"                           # Per-container CPU limit
+
+# Path to .env file with API keys passed to containers
+# env_file = "/opt/vibedeck/.env"
+
+[auth]
+# Session cookie signing secret (required when auth is enabled)
+session_secret = "change-me-to-a-random-string"
+
+# Which claim from the OAuth userinfo response maps to the user's directory name.
+# Common values: "sub" (OIDC standard), "id" (GitHub), "email", "preferred_username"
+id_claim = "sub"
+
+# --- GitHub OAuth ---
+# Create an OAuth App at: https://github.com/settings/applications/new
+# Set callback URL to: http://your-host:8080/auth/callback
+#
+# client_id = "your-github-oauth-app-client-id"
+# client_secret = "your-github-oauth-app-client-secret"
+# authorize_url = "https://github.com/login/oauth/authorize"
+# token_url = "https://github.com/login/oauth/access_token"
+# userinfo_url = "https://api.github.com/user"
+# scope = "user:email"
+# id_claim = "id"
+
+# --- Google OIDC ---
+# Create credentials at: https://console.cloud.google.com/apis/credentials
+# Set redirect URI to: http://your-host:8080/auth/callback
+#
+# client_id = "your-google-client-id.apps.googleusercontent.com"
+# client_secret = "your-google-client-secret"
+# server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
+# scope = "openid profile email"
+# id_claim = "sub"
+
+# --- Keycloak / Generic OIDC ---
+# Uses OIDC discovery (server_metadata_url) — no need to set individual URLs.
+#
+# client_id = "vibedeck"
+# client_secret = "your-keycloak-client-secret"
+# server_metadata_url = "https://keycloak.example.com/realms/myrealm/.well-known/openid-configuration"
+# scope = "openid profile email"
+# id_claim = "preferred_username"

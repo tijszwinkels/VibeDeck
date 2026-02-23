@@ -143,3 +143,13 @@ def ensure_backends_registered() -> None:
         import logging
 
         logging.getLogger(__name__).warning(f"OpenCode backend not available: {e}")
+
+    # Register Isolation backend
+    try:
+        from .isolation import IsolationBackend
+
+        register_backend("isolation", IsolationBackend)
+    except ImportError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"Isolation backend not available: {e}")

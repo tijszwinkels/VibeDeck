@@ -5,7 +5,7 @@ import inspect
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..models import (
     AllowDirectoryRequest,
@@ -41,11 +41,17 @@ def configure_session_routes(
     get_summarizer,
     get_idle_summary_model,
     cached_models,
+    get_session_owner=None,
 ):
     """Configure the session routes with server state dependencies.
 
     This avoids circular imports by having server.py inject dependencies
     at startup.
+
+    Args:
+        get_session_owner: Optional callback (session_path: Path) -> str | None
+            that returns the user_id owning a session. When set, enables
+            user-scoped session filtering.
     """
     _server_state["get_server_backend"] = get_server_backend
     _server_state["get_backend_for_session"] = get_backend_for_session
@@ -61,6 +67,38 @@ def configure_session_routes(
     _server_state["get_summarizer"] = get_summarizer
     _server_state["get_idle_summary_model"] = get_idle_summary_model
     _server_state["cached_models"] = cached_models
+    _server_state["get_session_owner"] = get_session_owner
+
+
+def _get_request_user_id(request: Request) -> str | None:
+    """Get the authenticated user's ID from the request session.
+
+    Returns None if auth is not enabled or user is not authenticated.
+    """
+    session = request.scope.get("session")
+    if session is None:
+        return None
+    user = session.get("user")
+    return user["id"] if user else None
+
+
+def _check_session_access(request: Request, info) -> None:
+    """Check that the authenticated user owns this session.
+
+    Raises HTTPException 403 if the user doesn't own the session.
+    No-op if auth is not enabled (no user_id in session).
+    """
+    user_id = _get_request_user_id(request)
+    if user_id is None:
+        return  # Auth not enabled, allow all access
+
+    get_owner = _server_state.get("get_session_owner")
+    if get_owner is None:
+        return  # No ownership tracking configured
+
+    owner = get_owner(info.path)
+    if owner is not None and owner != user_id:
+        raise HTTPException(status_code=403, detail="Access denied: session belongs to another user")
 
 
 def _normalize_backend_name(name: str) -> str:
@@ -87,18 +125,31 @@ def _get_target_backend(backend_name: str):
 
 
 @router.get("/sessions")
-async def list_sessions() -> dict:
-    """List all tracked sessions."""
+async def list_sessions(request: Request) -> dict:
+    """List tracked sessions, filtered by authenticated user if auth is enabled."""
+    user_id = _get_request_user_id(request)
+    get_owner = _server_state.get("get_session_owner")
+
     async with get_sessions_lock():
-        return {"sessions": get_sessions_list()}
+        sessions = get_sessions_list()
+
+        # Filter by user if auth is enabled and ownership tracking is configured
+        if user_id is not None and get_owner is not None:
+            sessions = [
+                s for s in sessions
+                if get_owner(Path(s["path"])) == user_id
+            ]
+
+        return {"sessions": sessions}
 
 
 @router.get("/sessions/{session_id}/status")
-async def session_status(session_id: str) -> dict:
+async def session_status(session_id: str, request: Request) -> dict:
     """Get the status of a session (running state, queue size)."""
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(request, info)
     return {
         "session_id": session_id,
         "running": info.process is not None,
@@ -107,7 +158,7 @@ async def session_status(session_id: str) -> dict:
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_session_messages(session_id: str) -> dict:
+async def get_session_messages(session_id: str, request: Request) -> dict:
     """Fetch all messages for a session (lazy loading).
 
     Returns rendered HTML for all messages in the session,
@@ -117,6 +168,7 @@ async def get_session_messages(session_id: str) -> dict:
         info = get_session(session_id)
         if info is None:
             raise HTTPException(status_code=404, detail="Session not found")
+        _check_session_access(request, info)
 
         # Get the renderer for this specific session
         backend = _server_state["get_backend_for_session"](info.path)

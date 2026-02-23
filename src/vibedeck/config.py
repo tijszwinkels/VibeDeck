@@ -68,19 +68,48 @@ class MdConfig:
 
 
 @dataclass
+class IsolationConfig:
+    """Configuration for the isolation backend."""
+
+    users_dir: str = ""
+    docker_image: str = "claude-sandbox"
+    docker_runtime: str = "runsc"
+    memory: str = "2g"
+    cpus: str = "1"
+    env_file: str | None = None
+
+
+@dataclass
+class AuthConfig:
+    """Configuration for OAuth/OIDC authentication."""
+
+    client_id: str = ""
+    client_secret: str = ""
+    authorize_url: str | None = None
+    token_url: str | None = None
+    userinfo_url: str | None = None
+    server_metadata_url: str | None = None
+    scope: str = "openid profile email"
+    id_claim: str = "sub"
+    session_secret: str = ""
+
+
+@dataclass
 class Config:
     """Top-level configuration container."""
 
     serve: ServeConfig = field(default_factory=ServeConfig)
     html: HtmlConfig = field(default_factory=HtmlConfig)
     md: MdConfig = field(default_factory=MdConfig)
+    isolation: IsolationConfig = field(default_factory=IsolationConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:
         """Create a Config from a dictionary (e.g., parsed TOML).
 
         Args:
-            data: Dictionary with section keys (serve, html, md).
+            data: Dictionary with section keys.
 
         Returns:
             Config instance with values from dict, defaults for missing.
@@ -88,11 +117,15 @@ class Config:
         serve_data = data.get("serve", {})
         html_data = data.get("html", {})
         md_data = data.get("md", {})
+        isolation_data = data.get("isolation", {})
+        auth_data = data.get("auth", {})
 
         return cls(
             serve=ServeConfig(**{k: v for k, v in serve_data.items() if hasattr(ServeConfig, k)}),
             html=HtmlConfig(**{k: v for k, v in html_data.items() if hasattr(HtmlConfig, k)}),
             md=MdConfig(**{k: v for k, v in md_data.items() if hasattr(MdConfig, k)}),
+            isolation=IsolationConfig(**{k: v for k, v in isolation_data.items() if hasattr(IsolationConfig, k)}),
+            auth=AuthConfig(**{k: v for k, v in auth_data.items() if hasattr(AuthConfig, k)}),
         )
 
     def get_for_command(self, command: str) -> ServeConfig | HtmlConfig | MdConfig:

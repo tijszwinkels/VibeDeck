@@ -286,6 +286,21 @@ def serve(
             click.echo(f"Using backends: {', '.join(backend_names)}")
         else:
             click.echo(f"Using backend: {backend_instance.name}")
+    elif backend == "isolation":
+        # Isolation backend needs config from [isolation] section
+        if not config.isolation.users_dir:
+            click.echo("Error: [isolation] users_dir is required when backend = 'isolation'", err=True)
+            raise SystemExit(1)
+        backend_instance = server.initialize_backend(
+            backend,
+            users_dir=config.isolation.users_dir,
+            docker_image=config.isolation.docker_image,
+            docker_runtime=config.isolation.docker_runtime,
+            memory=config.isolation.memory,
+            cpus=config.isolation.cpus,
+            env_file=config.isolation.env_file,
+        )
+        click.echo(f"Using backend: {backend_instance.name} (users_dir={config.isolation.users_dir})")
     else:
         backend_instance = server.initialize_backend(backend)
         click.echo(f"Using backend: {backend_instance.name}")
@@ -316,6 +331,16 @@ def serve(
         click.echo(f"Summary log: {summary_log}")
     if summarize_after_idle_for:
         click.echo(f"Summarize after idle: {summarize_after_idle_for}s")
+
+    # Configure auth if [auth] section is present with client_id
+    if config.auth.client_id:
+        from .auth import setup_auth
+        try:
+            setup_auth(server.app, config.auth)
+            click.echo(f"OAuth authentication enabled (id_claim={config.auth.id_claim})")
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            raise SystemExit(1)
 
     if disable_send:
         click.echo("Message sending is disabled (--disable-send)")

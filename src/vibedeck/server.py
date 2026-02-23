@@ -909,6 +909,11 @@ async def lifespan(app: FastAPI):
     # Load allowed directories from config file
     load_allowed_directories_from_config()
 
+    # Determine session owner callback for user-scoped access
+    _get_session_owner = None
+    if hasattr(backend, "get_session_owner"):
+        _get_session_owner = backend.get_session_owner
+
     # Configure session routes with server dependencies
     configure_session_routes(
         get_server_backend=get_server_backend,
@@ -925,6 +930,7 @@ async def lifespan(app: FastAPI):
         get_summarizer=get_summarizer,
         get_idle_summary_model=get_idle_summary_model,
         cached_models=_cached_models,
+        get_session_owner=_get_session_owner,
     )
 
     # Startup: find recent sessions
