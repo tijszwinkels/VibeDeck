@@ -6,11 +6,18 @@ starting, and executing commands in per-user Docker containers with gVisor.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class ContainerError(Exception):
+    """Raised when a Docker container operation fails."""
+
+    pass
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -183,6 +190,94 @@ class ContainerManager:
             "-f", "{{.State.Running}}",
             self.get_container_name(user_id),
         ]
+
+    async def ensure_container(self, user_id: str) -> None:
+        """Ensure a user's container exists and is running.
+
+        Inspects the container state and:
+        - If not found: creates and starts it.
+        - If stopped: starts it.
+        - If running: no-op.
+
+        Args:
+            user_id: User identifier.
+
+        Raises:
+            ContainerError: If creation or start fails.
+        """
+        container_name = self.get_container_name(user_id)
+
+        # Check current state
+        inspect_cmd = self.build_inspect_command(user_id)
+        proc = await asyncio.create_subprocess_exec(
+            *inspect_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            # Container doesn't exist — create and start
+            logger.info(f"Container {container_name} not found, creating")
+            await self._create_container(user_id)
+            await self._start_container(user_id)
+            return
+
+        # Container exists — check if running
+        state = stdout.decode().strip().lower()
+        if state == "true":
+            logger.debug(f"Container {container_name} already running")
+            return
+
+        # Container exists but stopped
+        logger.info(f"Container {container_name} stopped, starting")
+        await self._start_container(user_id)
+
+    async def _create_container(self, user_id: str) -> None:
+        """Create a Docker container for the user.
+
+        Raises:
+            ContainerError: If docker create fails.
+        """
+        cmd = self.build_create_command(user_id)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            error_msg = stderr.decode().strip()
+            logger.error(f"Failed to create container for {user_id}: {error_msg}")
+            raise ContainerError(
+                f"Failed to create container sandbox-{user_id}: {error_msg}"
+            )
+
+        logger.info(f"Created container sandbox-{user_id}")
+
+    async def _start_container(self, user_id: str) -> None:
+        """Start a stopped Docker container.
+
+        Raises:
+            ContainerError: If docker start fails.
+        """
+        cmd = self.build_start_command(user_id)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            error_msg = stderr.decode().strip()
+            logger.error(f"Failed to start container for {user_id}: {error_msg}")
+            raise ContainerError(
+                f"Failed to start container sandbox-{user_id}: {error_msg}"
+            )
+
+        logger.info(f"Started container sandbox-{user_id}")
 
     @staticmethod
     def is_docker_available() -> bool:

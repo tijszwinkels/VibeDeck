@@ -192,7 +192,7 @@ async def get_session_messages(session_id: str, request: Request) -> dict:
 
 
 @router.post("/sessions/{session_id}/send")
-async def send_message(session_id: str, request: SendMessageRequest) -> dict:
+async def send_message(session_id: str, request: SendMessageRequest, http_request: Request) -> dict:
     """Send a message to a coding session."""
     if not _server_state["is_send_enabled"]():
         raise HTTPException(
@@ -203,6 +203,7 @@ async def send_message(session_id: str, request: SendMessageRequest) -> dict:
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     # Validate input first (before checking CLI availability)
     message = request.message.strip()
@@ -236,7 +237,7 @@ async def send_message(session_id: str, request: SendMessageRequest) -> dict:
 
 
 @router.post("/sessions/{session_id}/fork")
-async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
+async def fork_session(session_id: str, request: SendMessageRequest, http_request: Request) -> dict:
     """Fork a session: create a new session with conversation history and send a message."""
     if not _server_state["is_fork_enabled"]():
         raise HTTPException(
@@ -247,6 +248,7 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     # Get the specific backend for this session
     backend = _server_state["get_backend_for_session"](info.path)
@@ -277,7 +279,7 @@ async def fork_session(session_id: str, request: SendMessageRequest) -> dict:
 
 @router.post("/sessions/{session_id}/grant-permission")
 async def grant_permission(
-    session_id: str, request: GrantPermissionRequest
+    session_id: str, request: GrantPermissionRequest, http_request: Request
 ) -> dict:
     """Grant permissions and re-send the original message.
 
@@ -296,6 +298,7 @@ async def grant_permission(
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     # Get the specific backend for this session
     backend = _server_state["get_backend_for_session"](info.path)
@@ -347,7 +350,7 @@ async def grant_permission(
 
 
 @router.post("/sessions/grant-permission-new")
-async def grant_permission_new_session(request: GrantPermissionNewSessionRequest) -> dict:
+async def grant_permission_new_session(request: GrantPermissionNewSessionRequest, http_request: Request) -> dict:
     """Grant permissions and resume the session that was created.
 
     This endpoint is called when permission is denied during new session creation.
@@ -416,7 +419,7 @@ async def grant_permission_new_session(request: GrantPermissionNewSessionRequest
         logger.info(f"Found existing session {matching_session.session_id} for cwd {cwd_str}, sending message there")
         # Send to the existing session instead of creating a new one
         send_request = SendMessageRequest(message=request.original_message.strip())
-        return await send_message(matching_session.session_id, send_request)
+        return await send_message(matching_session.session_id, send_request, http_request)
     else:
         # No existing session found - this shouldn't happen normally, but fall back to creating new
         logger.warning(f"No existing session found for cwd {cwd_str}, creating new session")
@@ -426,7 +429,7 @@ async def grant_permission_new_session(request: GrantPermissionNewSessionRequest
             backend=request.backend,
             model_index=request.model_index,
         )
-        return await create_new_session(new_session_request)
+        return await create_new_session(new_session_request, http_request)
 
 
 @router.post("/allow-directory")
@@ -463,7 +466,7 @@ async def allow_directory(request: AllowDirectoryRequest) -> dict:
 
 
 @router.post("/sessions/{session_id}/interrupt")
-async def interrupt_session(session_id: str) -> dict:
+async def interrupt_session(session_id: str, http_request: Request) -> dict:
     """Interrupt a running CLI process and clear the message queue."""
     if not _server_state["is_send_enabled"]():
         raise HTTPException(
@@ -474,6 +477,7 @@ async def interrupt_session(session_id: str) -> dict:
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     if info.process is None:
         raise HTTPException(
@@ -503,7 +507,7 @@ async def interrupt_session(session_id: str) -> dict:
 
 
 @router.post("/sessions/{session_id}/summarize")
-async def trigger_summary(session_id: str, background_tasks: BackgroundTasks) -> dict:
+async def trigger_summary(session_id: str, background_tasks: BackgroundTasks, http_request: Request) -> dict:
     """Manually trigger summarization for a session.
 
     This endpoint allows users to request an on-demand summary of a session,
@@ -513,6 +517,7 @@ async def trigger_summary(session_id: str, background_tasks: BackgroundTasks) ->
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     if _server_state["get_summarizer"]() is None:
         raise HTTPException(
@@ -538,7 +543,7 @@ async def trigger_summary(session_id: str, background_tasks: BackgroundTasks) ->
 
 
 @router.post("/sessions/new")
-async def create_new_session(request: NewSessionRequest) -> dict:
+async def create_new_session(request: NewSessionRequest, http_request: Request) -> dict:
     """Start a new session with an initial message."""
     import os
 
@@ -574,24 +579,28 @@ async def create_new_session(request: NewSessionRequest) -> dict:
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-    # Validate model_index if provided (doesn't require CLI)
-    build_cmd = target_backend.build_new_session_command
-    sig = inspect.signature(build_cmd)
+    # Check if this is a user-aware backend (isolation backend)
+    has_user_aware_cmd = hasattr(target_backend, "build_new_session_command_for_user")
 
+    # Validate model_index if provided (doesn't require CLI)
+    # (model selection not supported for isolation backend — it uses container defaults)
     model: str | None = None
-    cached_models = _server_state["cached_models"]
-    if "model" in sig.parameters and request.model_index is not None:
-        # Look up model from cached list by index
-        normalized_backend = _normalize_backend_name(target_backend.name)
-        cached = cached_models.get(normalized_backend, [])
-        if 0 <= request.model_index < len(cached):
-            model = cached[request.model_index]
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid model_index: {request.model_index}. "
-                f"Fetch models from /backends/{target_backend.name}/models first.",
-            )
+    if not has_user_aware_cmd:
+        build_cmd = target_backend.build_new_session_command
+        sig = inspect.signature(build_cmd)
+
+        cached_models = _server_state["cached_models"]
+        if "model" in sig.parameters and request.model_index is not None:
+            normalized_backend = _normalize_backend_name(target_backend.name)
+            cached = cached_models.get(normalized_backend, [])
+            if 0 <= request.model_index < len(cached):
+                model = cached[request.model_index]
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid model_index: {request.model_index}. "
+                    f"Fetch models from /backends/{target_backend.name}/models first.",
+                )
 
     # Check if CLI is available
     if not target_backend.is_cli_available():
@@ -600,39 +609,62 @@ async def create_new_session(request: NewSessionRequest) -> dict:
             detail=f"CLI not found. {target_backend.get_cli_install_instructions()}",
         )
 
-    # Determine working directory - must be an absolute path (~ is expanded)
-    cwd: Path | None = None
-    if request.cwd:
-        potential_cwd = Path(request.cwd).expanduser()
-        if not potential_cwd.is_absolute():
+    # For isolation backend: extract user, ensure container, build command
+    if has_user_aware_cmd:
+        user_id = _get_request_user_id(http_request)
+        if user_id is None:
             raise HTTPException(
-                status_code=400, detail="Directory path must be absolute (e.g., /home/user/project or ~/project)"
+                status_code=401,
+                detail="Authentication required to create sessions with isolation backend",
             )
-        if not potential_cwd.exists():
-            try:
-                potential_cwd.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Created directory: {potential_cwd}")
-            except OSError as e:
-                raise HTTPException(
-                    status_code=400, detail=f"Cannot create directory: {e}"
-                )
-        if potential_cwd.is_dir():
-            cwd = potential_cwd
 
-    # Determine if we should use permission detection
-    skip_permissions = _server_state["is_skip_permissions"]()
-    use_permission_detection = (
-        not skip_permissions
-        and hasattr(target_backend, "supports_permission_detection")
-        and target_backend.supports_permission_detection()
-    )
-    output_format = "stream-json" if use_permission_detection else None
-    add_dirs = _server_state["get_allowed_directories"]() or None
+        # Ensure container is running before creating session
+        try:
+            await target_backend.container_manager.ensure_container(user_id)
+        except Exception as e:
+            logger.error(f"Failed to ensure container for {user_id}: {e}")
+            raise HTTPException(status_code=503, detail=str(e))
 
-    if model:
-        cmd_spec = build_cmd(message, skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
+        cmd_spec = target_backend.build_new_session_command_for_user(user_id, message)
+        # cwd is inside the container (/root), not meaningful on host
+        cwd = None
+        # Isolation backend doesn't use permission detection (gVisor is boundary)
+        use_permission_detection = False
     else:
-        cmd_spec = build_cmd(message, skip_permissions, output_format=output_format, add_dirs=add_dirs)
+        # Standard backend path: determine working directory
+        cwd: Path | None = None
+        if request.cwd:
+            potential_cwd = Path(request.cwd).expanduser()
+            if not potential_cwd.is_absolute():
+                raise HTTPException(
+                    status_code=400, detail="Directory path must be absolute (e.g., /home/user/project or ~/project)"
+                )
+            if not potential_cwd.exists():
+                try:
+                    potential_cwd.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Created directory: {potential_cwd}")
+                except OSError as e:
+                    raise HTTPException(
+                        status_code=400, detail=f"Cannot create directory: {e}"
+                    )
+            if potential_cwd.is_dir():
+                cwd = potential_cwd
+
+        # Determine if we should use permission detection
+        skip_permissions = _server_state["is_skip_permissions"]()
+        use_permission_detection = (
+            not skip_permissions
+            and hasattr(target_backend, "supports_permission_detection")
+            and target_backend.supports_permission_detection()
+        )
+        output_format = "stream-json" if use_permission_detection else None
+        add_dirs = _server_state["get_allowed_directories"]() or None
+
+        build_cmd = target_backend.build_new_session_command
+        if model:
+            cmd_spec = build_cmd(message, skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
+        else:
+            cmd_spec = build_cmd(message, skip_permissions, output_format=output_format, add_dirs=add_dirs)
 
     # Import here to access pending processes dict
     from ..server import _pending_new_session_processes
@@ -719,11 +751,12 @@ async def create_new_session(request: NewSessionRequest) -> dict:
 
 
 @router.get("/sessions/{session_id}/tree")
-async def get_session_file_tree(session_id: str, path: str | None = None) -> dict:
+async def get_session_file_tree(session_id: str, http_request: Request, path: str | None = None) -> dict:
     """Get the file tree for a session's working directory or specific path.
 
     Args:
         session_id: The session ID
+        http_request: FastAPI request for auth checking
         path: Optional absolute path to list. If None, uses session's project path.
     """
     import os
@@ -731,6 +764,7 @@ async def get_session_file_tree(session_id: str, path: str | None = None) -> dic
     info = get_session(session_id)
     if info is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    _check_session_access(http_request, info)
 
     target_path = None
 

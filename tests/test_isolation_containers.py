@@ -143,3 +143,150 @@ class TestLoadEnvFile:
 
         env_vars = load_env_file(Path("/nonexistent/.env"))
         assert env_vars == {}
+
+
+class TestEnsureContainer:
+    """Test async container lifecycle management."""
+
+    @pytest.mark.asyncio
+    async def test_creates_container_when_not_found(self, manager):
+        """Should create and start container when it doesn't exist."""
+        mock_proc = AsyncMock()
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        # First call: inspect fails (container not found)
+        inspect_proc = AsyncMock()
+        inspect_proc.communicate = AsyncMock(
+            return_value=(b"", b"Error: No such object")
+        )
+        inspect_proc.returncode = 1
+
+        # Second call: create succeeds
+        create_proc = AsyncMock()
+        create_proc.communicate = AsyncMock(return_value=(b"abc123\n", b""))
+        create_proc.returncode = 0
+
+        # Third call: start succeeds
+        start_proc = AsyncMock()
+        start_proc.communicate = AsyncMock(return_value=(b"", b""))
+        start_proc.returncode = 0
+
+        call_count = 0
+        procs = [inspect_proc, create_proc, start_proc]
+
+        async def mock_create_subprocess(*args, **kwargs):
+            nonlocal call_count
+            proc = procs[call_count]
+            call_count += 1
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+            await manager.ensure_container("alice")
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_starts_stopped_container(self, manager):
+        """Should start container when it exists but is stopped."""
+        # inspect returns "false" (not running)
+        inspect_proc = AsyncMock()
+        inspect_proc.communicate = AsyncMock(return_value=(b"false\n", b""))
+        inspect_proc.returncode = 0
+
+        # start succeeds
+        start_proc = AsyncMock()
+        start_proc.communicate = AsyncMock(return_value=(b"", b""))
+        start_proc.returncode = 0
+
+        call_count = 0
+        procs = [inspect_proc, start_proc]
+
+        async def mock_create_subprocess(*args, **kwargs):
+            nonlocal call_count
+            proc = procs[call_count]
+            call_count += 1
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+            await manager.ensure_container("alice")
+
+        assert call_count == 2  # inspect + start, no create
+
+    @pytest.mark.asyncio
+    async def test_noop_when_running(self, manager):
+        """Should do nothing when container is already running."""
+        inspect_proc = AsyncMock()
+        inspect_proc.communicate = AsyncMock(return_value=(b"true\n", b""))
+        inspect_proc.returncode = 0
+
+        call_count = 0
+
+        async def mock_create_subprocess(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return inspect_proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+            await manager.ensure_container("alice")
+
+        assert call_count == 1  # only inspect
+
+    @pytest.mark.asyncio
+    async def test_raises_on_create_failure(self, manager):
+        """Should raise RuntimeError when container creation fails."""
+        from vibedeck.backends.isolation.containers import ContainerError
+
+        # inspect: not found
+        inspect_proc = AsyncMock()
+        inspect_proc.communicate = AsyncMock(return_value=(b"", b"No such object"))
+        inspect_proc.returncode = 1
+
+        # create: fails
+        create_proc = AsyncMock()
+        create_proc.communicate = AsyncMock(
+            return_value=(b"", b"image not found: claude-sandbox")
+        )
+        create_proc.returncode = 1
+
+        procs = [inspect_proc, create_proc]
+        call_count = 0
+
+        async def mock_create_subprocess(*args, **kwargs):
+            nonlocal call_count
+            proc = procs[call_count]
+            call_count += 1
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+            with pytest.raises(ContainerError, match="Failed to create container"):
+                await manager.ensure_container("alice")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_start_failure(self, manager):
+        """Should raise RuntimeError when container start fails."""
+        from vibedeck.backends.isolation.containers import ContainerError
+
+        # inspect: stopped
+        inspect_proc = AsyncMock()
+        inspect_proc.communicate = AsyncMock(return_value=(b"false\n", b""))
+        inspect_proc.returncode = 0
+
+        # start: fails
+        start_proc = AsyncMock()
+        start_proc.communicate = AsyncMock(
+            return_value=(b"", b"cannot start container")
+        )
+        start_proc.returncode = 1
+
+        procs = [inspect_proc, start_proc]
+        call_count = 0
+
+        async def mock_create_subprocess(*args, **kwargs):
+            nonlocal call_count
+            proc = procs[call_count]
+            call_count += 1
+            return proc
+
+        with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+            with pytest.raises(ContainerError, match="Failed to start container"):
+                await manager.ensure_container("alice")

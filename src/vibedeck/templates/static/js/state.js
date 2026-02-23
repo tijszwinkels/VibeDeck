@@ -264,7 +264,11 @@ export const state = {
     // Terminal state
     terminalOpen: false,           // Is terminal panel visible?
     terminalOnly: false,           // Is terminal in full-pane mode?
-    terminalHeight: parseInt(localStorage.getItem('terminalHeight')) || 200
+    terminalHeight: parseInt(localStorage.getItem('terminalHeight')) || 200,
+
+    // Auth state
+    authEnabled: false,
+    currentUser: null
 };
 
 // Initialize status colors based on URL param

@@ -108,11 +108,25 @@ class Summarizer:
 
         # Build resume command with --no-session-persistence
         # This reads the session for context but doesn't write anything back
-        cmd_spec = self.backend.build_send_command(
-            session_id=session.session_id,
-            message=prompt,
-            skip_permissions=True,
-        )
+        has_user_aware_send = hasattr(self.backend, "build_send_command_for_user")
+        if has_user_aware_send:
+            # Isolation backend: derive user_id from session path
+            user_id = self.backend.get_session_owner(Path(session.path))
+            if user_id is None:
+                return SummaryResult(
+                    success=False,
+                    error=f"Cannot determine owner for session {session.session_id}",
+                )
+            await self.backend.container_manager.ensure_container(user_id)
+            cmd_spec = self.backend.build_send_command_for_user(
+                user_id, session.session_id, prompt
+            )
+        else:
+            cmd_spec = self.backend.build_send_command(
+                session_id=session.session_id,
+                message=prompt,
+                skip_permissions=True,
+            )
         # Add extra flags to the command args
         cmd_args = cmd_spec.args + ["--no-session-persistence", "--output-format", "json"]
 
@@ -125,7 +139,10 @@ class Summarizer:
         try:
             # Run from the project directory
             # Claude CLI requires being in the project directory to find sessions
-            cwd = session.project_path if session.project_path else None
+            # For isolation backends, cwd is irrelevant (docker exec handles it)
+            cwd = None if has_user_aware_send else (
+                session.project_path if session.project_path else None
+            )
 
             # Set up environment with thinking budget if configured
             env = None

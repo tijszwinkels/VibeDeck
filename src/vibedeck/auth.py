@@ -20,7 +20,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 logger = logging.getLogger(__name__)
 
 # Paths that bypass authentication
-_PUBLIC_PATHS = frozenset({"/login", "/auth/callback", "/health", "/favicon.ico"})
+_PUBLIC_PATHS = frozenset({"/login", "/auth/callback", "/auth/user", "/health", "/favicon.ico"})
 
 
 def get_current_user(request: Request) -> dict | None:
@@ -205,10 +205,8 @@ def setup_auth(app: FastAPI, config) -> None:
         request.session.clear()
         return RedirectResponse("/login")
 
-    @app.get("/auth/user")
-    async def auth_user(request: Request):
-        """Get the currently authenticated user."""
-        user = get_current_user(request)
-        return {"user": user, "auth_enabled": True}
+    # Set auth flag on the server module so the /auth/user endpoint knows auth is active
+    from . import server as server_mod
+    server_mod._auth_enabled = True
 
     logger.info("OAuth authentication enabled")

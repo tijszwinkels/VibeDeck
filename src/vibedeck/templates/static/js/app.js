@@ -18,6 +18,7 @@ import { initPermissions } from './permissions.js';
 import { initDiffView } from './diff.js';
 import { initArtifacts } from './artifacts.js';
 import { initTerminal } from './terminal.js';
+import { initAuth } from './auth.js';
 
 // Initialize the application
 function init() {
@@ -62,6 +63,9 @@ function init() {
 
     // Initialize terminal
     initTerminal();
+
+    // Initialize auth UI (login/logout indicator)
+    initAuth();
 
     // Initialize global click handler for copy buttons (event delegation)
     document.addEventListener('click', function(e) {

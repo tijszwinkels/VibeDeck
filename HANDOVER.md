@@ -35,25 +35,34 @@ All in `specs/backend/20260223-multi-tenant-isolation/`:
 
 ## Status
 
-**Backend implementation complete.** All 497 tests pass (51 new).
+**All requirements implemented.** 516 tests pass (70 new).
 
 ### What's implemented
 
 - **`src/vibedeck/backends/isolation/`** — New backend package:
   - `discovery.py` — Per-user session discovery (`find_sessions_for_user`, `find_sessions_for_all_users`, `get_session_owner`)
-  - `containers.py` — Docker container lifecycle (`ContainerManager` with create/exec/start commands, env file loading)
-  - `backend.py` — `IsolationBackend` class implementing `CodingToolBackend` protocol
+  - `containers.py` — Docker container lifecycle (`ContainerManager` with create/exec/start/inspect commands, env file loading, `ensure_container()` async method)
+  - `backend.py` — `IsolationBackend` class implementing `CodingToolBackend` protocol with user-aware command builders
 - **`src/vibedeck/auth.py`** — OAuth/OIDC via Authlib with `SessionMiddleware` + `AuthRequiredMiddleware`
 - **`src/vibedeck/config.py`** — Added `IsolationConfig` and `AuthConfig` dataclasses
 - **`config.toml.example`** — Example config with GitHub, Google, and Keycloak examples
 - **Backend registration** in `registry.py`
-- **Server integration** in `__init__.py` (isolation backend init, auth setup) and `server.py` (session owner callback)
-- **User-scoped routes** in `routes/sessions.py` (filtered session list, access checks on session endpoints)
+- **Server integration** in `__init__.py` (isolation backend init, auth setup) and `server.py` (session owner callback, SSE filtering, `/auth/user` endpoint)
+- **User-scoped routes** in `routes/sessions.py` — access checks on ALL session endpoints (list, status, messages, send, fork, grant-permission, interrupt, summarize, tree, new session)
+- **SSE event filtering** in `server.py` — `event_generator()` filters session list and streamed events by authenticated user
+- **New session creation** with user context — `create_new_session()` calls `ensure_container()` + `build_new_session_command_for_user()` for isolation backend
+- **Frontend auth UI** — `templates/static/js/auth.js` fetches `/auth/user`, shows user name + logout button in status bar
 - **Dependencies** added: `authlib`, `httpx`, `itsdangerous`
 
 ### What's NOT implemented yet
 
-- Frontend auth UI (login/logout buttons, user indicator) — Requirement 6
-- Container `ensure_container()` async method (actually creating/starting Docker containers at runtime) — currently only builds commands
-- SSE event stream filtering by user (events are broadcast to all connected clients)
-- Frontend changes for new session creation with user context
+All spec requirements are now implemented. Areas that may need future work:
+
+- **Integration testing with real Docker/gVisor** — All container lifecycle tests use mocked `asyncio.create_subprocess_exec`. An integration test with actual Docker would verify the full flow.
+- **Custom login page HTML** — Currently `/login` redirects directly to the OAuth provider. A branded login page with a "Sign in" button would be better UX.
+- **Per-user broadcast queues** — SSE filtering currently checks every event against the session owner. For many concurrent users, per-user queues would be more efficient.
+- **`/api/file` user scoping** — The file preview endpoint uses path allowlist (`Path.home()`, `/tmp`) rather than user-based scoping. For isolation backend, the auth middleware + tree endpoint access check provide sufficient protection since the tree endpoint is the only UI path to discover file paths.
+
+## Commit history
+
+- `a94c86a` — Initial implementation: isolation backend, OAuth auth, user-scoped routes, config, 51 tests

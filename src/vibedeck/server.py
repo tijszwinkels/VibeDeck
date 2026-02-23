@@ -87,6 +87,9 @@ _css: str | None = None
 # Cached models per backend (backend_name -> list of model strings)
 _cached_models: dict[str, list[str]] = {}
 
+# Session ownership callback for SSE filtering (set during lifespan if isolation backend)
+_session_owner_callback = None
+
 
 # Configuration setters/getters
 
@@ -581,9 +584,22 @@ async def run_cli_for_session(
         output_format = "stream-json" if use_permission_detection else None
         add_dirs = get_allowed_directories() or None
 
+        # Check if this is a user-aware backend (isolation backend)
+        has_user_aware_send = hasattr(backend, "build_send_command_for_user")
+
         if fork:
             cmd_spec = backend.build_fork_command(
                 session_id, message, _skip_permissions, output_format, add_dirs
+            )
+        elif has_user_aware_send:
+            # Isolation backend: derive user_id from session path, ensure container
+            user_id = backend.get_session_owner(Path(info.path))
+            if user_id is None:
+                logger.error(f"Cannot determine owner for session {session_id}")
+                return
+            await backend.container_manager.ensure_container(user_id)
+            cmd_spec = backend.build_send_command_for_user(
+                user_id, session_id, message
             )
         else:
             cmd_spec = backend.build_send_command(
@@ -591,7 +607,8 @@ async def run_cli_for_session(
             )
 
         # Determine working directory from session info
-        cwd = (
+        # For isolation backends, cwd is irrelevant (docker exec handles it)
+        cwd = None if has_user_aware_send else (
             info.project_path
             if info.project_path and Path(info.project_path).is_dir()
             else None
@@ -910,9 +927,11 @@ async def lifespan(app: FastAPI):
     load_allowed_directories_from_config()
 
     # Determine session owner callback for user-scoped access
+    global _session_owner_callback
     _get_session_owner = None
     if hasattr(backend, "get_session_owner"):
         _get_session_owner = backend.get_session_owner
+        _session_owner_callback = _get_session_owner
 
     # Configure session routes with server dependencies
     configure_session_routes(
@@ -1013,15 +1032,72 @@ async def serve_js(filename: str) -> Response:
         raise HTTPException(status_code=404, detail="Not found")
 
 
+def _get_sse_user_id(request: Request) -> str | None:
+    """Extract user_id from request for SSE filtering.
+
+    Returns None if auth is not enabled.
+    """
+    session = request.scope.get("session")
+    if session is None:
+        return None
+    user = session.get("user")
+    return user["id"] if user else None
+
+
+def _event_belongs_to_user(event: dict, user_id: str, get_owner) -> bool:
+    """Check if an SSE event belongs to the given user.
+
+    Events without a session_id pass through (global events).
+    Events with a session_id are checked against the session owner.
+    """
+    data = event.get("data", {})
+
+    # Extract session_id from event data
+    session_id = data.get("session_id") or data.get("id")
+    if session_id is None:
+        # Global events (no session_id) pass through
+        return True
+
+    # Look up the session to get its path, then check owner
+    info = get_session(session_id)
+    if info is None:
+        # Session not found — could be a removal event with "id" field
+        # For removal events, let them through (client handles unknown IDs gracefully)
+        return True
+
+    owner = get_owner(info.path)
+    if owner is None:
+        return True  # Can't determine owner, allow
+
+    return owner == user_id
+
+
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
-    """Generate SSE events for a client."""
+    """Generate SSE events for a client.
+
+    When auth is enabled, filters events to only include the authenticated
+    user's sessions.
+    """
     queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     add_client(queue)
+
+    # Determine user filtering
+    user_id = _get_sse_user_id(request)
+    get_owner = _session_owner_callback
+    filter_by_user = user_id is not None and get_owner is not None
 
     try:
         # Send sessions list (lazy loading: no messages sent here)
         async with get_sessions_lock():
             sessions_data = get_sessions_list()
+
+        # Filter sessions by user if auth is enabled
+        if filter_by_user:
+            sessions_data = [
+                s for s in sessions_data
+                if get_owner(Path(s["path"])) == user_id
+            ]
+
         yield {
             "event": "sessions",
             "data": json.dumps({"sessions": sessions_data, "maxSessions": MAX_SESSIONS}),
@@ -1041,6 +1117,11 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
             try:
                 # Wait for new event with timeout for ping
                 event = await asyncio.wait_for(queue.get(), timeout=ping_interval)
+
+                # Filter event by user ownership
+                if filter_by_user and not _event_belongs_to_user(event, user_id, get_owner):
+                    continue
+
                 yield {
                     "event": event["event"],
                     "data": json.dumps(event["data"]),
@@ -1057,6 +1138,26 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
 async def events(request: Request) -> EventSourceResponse:
     """SSE endpoint for live transcript updates."""
     return EventSourceResponse(event_generator(request))
+
+
+# Auth status (set to True when setup_auth() is called)
+_auth_enabled = False
+
+
+@app.get("/auth/user")
+async def auth_user(request: Request) -> dict:
+    """Get the currently authenticated user.
+
+    Returns auth status and user info. When auth is disabled,
+    returns auth_enabled=false. When auth is enabled but user not
+    logged in, returns user=null with auth_enabled=true.
+    """
+    if not _auth_enabled:
+        return {"user": None, "auth_enabled": False}
+
+    session = request.scope.get("session")
+    user = session.get("user") if session else None
+    return {"user": user, "auth_enabled": True}
 
 
 @app.get("/health")

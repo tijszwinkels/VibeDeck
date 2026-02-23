@@ -156,3 +156,27 @@ class TestGetCurrentUserId:
         request = MagicMock()
         request.scope = {}
         assert get_current_user_id(request) is None
+
+
+class TestAuthUserEndpoint:
+    """Test /auth/user endpoint behavior."""
+
+    def test_auth_disabled_returns_false(self):
+        """When auth is not configured, auth_enabled should be false."""
+        import vibedeck.server as server_mod
+        original = server_mod._auth_enabled
+        server_mod._auth_enabled = False
+        try:
+            client = TestClient(server_mod.app)
+            resp = client.get("/auth/user")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["auth_enabled"] is False
+            assert data["user"] is None
+        finally:
+            server_mod._auth_enabled = original
+
+    def test_auth_user_is_public_path(self):
+        """The /auth/user endpoint should bypass auth middleware."""
+        from vibedeck.auth import _PUBLIC_PATHS
+        assert "/auth/user" in _PUBLIC_PATHS
