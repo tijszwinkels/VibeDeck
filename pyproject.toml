@@ -1,6 +1,6 @@
 [project]
 name = "vibedeck"
-version = "0.2.0"
+version = "0.2.1"
 description = "Live-updating transcript viewer, web frontend and tooling for Claude Code and OpenCode sessions"
 readme = "README.md"
 requires-python = ">=3.10"
