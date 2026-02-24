@@ -1,6 +1,7 @@
 """VibeDeck - Live-updating transcript viewer and web frontend for Claude Code and OpenCode sessions."""
 
 import logging
+import os
 import webbrowser
 from pathlib import Path
 from threading import Timer
@@ -12,7 +13,7 @@ import uvicorn
 from .backends import list_backends, get_multi_backend
 from .config import load_config
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 logger = logging.getLogger(__name__)
 
@@ -331,15 +332,17 @@ def serve(
 
         add_session(session)
 
+    # Ensure projects directory exists so file watcher has something to watch
+    projects_dir = backend_instance.get_projects_dir()
+    if projects_dir:
+        os.makedirs(projects_dir, exist_ok=True)
+
     # Check if any sessions were found
     recent = backend_instance.find_recent_sessions(
         limit=max_sessions, include_subagents=include_subagents
     )
     if not recent and session is None:
-        projects_dir = backend_instance.get_projects_dir()
-        click.echo(f"No session files found in {projects_dir}", err=True)
-        click.echo("Specify a session file with --session", err=True)
-        raise SystemExit(1)
+        click.echo(f"No session files found yet in {projects_dir} — waiting for sessions to appear", err=True)
 
     count = len(recent)
     if session:
