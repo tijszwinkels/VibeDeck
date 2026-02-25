@@ -18,7 +18,10 @@ from .backends import CodingToolBackend, get_backend, get_multi_backend
 from .backends.thinking import detect_thinking_level
 from .broadcasting import (
     add_client,
+    add_json_client,
     broadcast_event,
+    broadcast_json_event,
+    broadcast_json_message,
     broadcast_message,
     broadcast_permission_denied,
     broadcast_session_added,
@@ -28,7 +31,10 @@ from .broadcasting import (
     broadcast_session_summary_updated,
     broadcast_session_token_usage_updated,
     get_clients,
+    get_json_clients,
+    has_json_clients,
     remove_client,
+    remove_json_client,
 )
 from .routes import archives_router, diff_router, files_router, sessions_router, statuses_router
 from .routes.sessions import configure_session_routes
@@ -427,6 +433,27 @@ def get_renderer_for_session(session_path: Path):
     return backend.get_message_renderer()
 
 
+def get_normalizer_for_session(session_path: Path):
+    """Get a normalization function for a session.
+
+    Returns a callable that accepts a raw entry dict and returns
+    NormalizedMessage | None. The normalizer is chosen based on
+    which backend owns the session.
+
+    Args:
+        session_path: Path to the session file.
+
+    Returns:
+        A callable (entry: dict) -> NormalizedMessage | None.
+    """
+    from .backends.shared.normalizer import normalize_claude_code_message, normalize_opencode_message
+
+    backend = get_backend_for_session(session_path)
+    if backend.name == "OpenCode":
+        return normalize_opencode_message
+    return normalize_claude_code_message
+
+
 def get_backend_for_session(session_path: Path) -> CodingToolBackend:
     """Get the appropriate backend for a session.
 
@@ -456,8 +483,10 @@ def get_backend_for_session(session_path: Path) -> CodingToolBackend:
 
 
 async def _broadcast_session_catchup(info: SessionInfo) -> None:
-    """Broadcast session catchup using the renderer for this session."""
-    await broadcast_session_catchup(info, get_renderer_for_session)
+    """Broadcast session catchup using the renderer (and normalizer if JSON clients connected)."""
+    await broadcast_session_catchup(
+        info, get_renderer_for_session, get_normalizer_for_session
+    )
 
 
 async def _broadcast_session_summary_updated(session_id: str) -> None:
@@ -720,12 +749,27 @@ async def process_session_messages(session_id: str) -> None:
     # Get the renderer for this specific session
     renderer = get_renderer_for_session(info.path)
 
+    # Only set up normalizer if JSON clients are connected (lazy normalization)
+    normalizer = None
+    if has_json_clients():
+        normalizer = get_normalizer_for_session(info.path)
+
     new_entries = info.tailer.read_new_lines()
     logger.debug(f"read_new_lines returned {len(new_entries)} entries for {session_id}")
     for entry in new_entries:
+        # HTML broadcast
         html = renderer.render_message(entry)
         if html:
             await broadcast_message(session_id, html)
+
+        # JSON broadcast (only when clients connected)
+        if normalizer is not None:
+            try:
+                msg = normalizer(entry)
+                if msg is not None:
+                    await broadcast_json_message(session_id, msg)
+            except Exception as e:
+                logger.warning(f"Failed to normalize entry for JSON broadcast: {e}")
 
     # Broadcast updated waiting state and token usage after processing messages
     if new_entries:
@@ -1049,8 +1093,55 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
 
 @app.get("/events")
 async def events(request: Request) -> EventSourceResponse:
-    """SSE endpoint for live transcript updates."""
+    """SSE endpoint for live transcript updates (HTML)."""
     return EventSourceResponse(event_generator(request))
+
+
+async def json_event_generator(request: Request) -> AsyncGenerator[dict, None]:
+    """Generate SSE events for a JSON client.
+
+    Same event types as event_generator() but message events contain
+    normalized JSON content blocks instead of HTML.
+    """
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    add_json_client(queue)
+
+    try:
+        # Send sessions list (same as HTML stream)
+        async with get_sessions_lock():
+            sessions_data = get_sessions_list()
+        yield {
+            "event": "sessions",
+            "data": json.dumps({"sessions": sessions_data, "maxSessions": MAX_SESSIONS}),
+        }
+
+        # Signal catchup complete
+        yield {"event": "catchup_complete", "data": "{}"}
+
+        # Stream new events
+        ping_interval = 30  # seconds
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=ping_interval)
+                yield {
+                    "event": event["event"],
+                    "data": json.dumps(event["data"]),
+                }
+            except asyncio.TimeoutError:
+                yield {"event": "ping", "data": "{}"}
+
+    finally:
+        remove_json_client(queue)
+
+
+@app.get("/events/json")
+async def events_json(request: Request) -> EventSourceResponse:
+    """SSE endpoint for live transcript updates (structured JSON)."""
+    return EventSourceResponse(json_event_generator(request))
 
 
 @app.get("/health")
