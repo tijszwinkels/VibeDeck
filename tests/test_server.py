@@ -89,7 +89,7 @@ class TestServerEndpoints:
         response = client.get("/")
         # JS is now loaded as an ES module
         assert 'type="module"' in response.text
-        assert 'src="/static/js/app.js"' in response.text
+        assert 'src="static/js/app.js"' in response.text
 
     def test_index_includes_sidebar(self, temp_jsonl_file):
         """Test that index includes sidebar elements."""
