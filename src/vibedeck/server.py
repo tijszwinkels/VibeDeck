@@ -1088,11 +1088,14 @@ async def terminal_shells() -> dict:
 
 
 @app.websocket("/ws/terminal")
-async def terminal_websocket(websocket: WebSocket, cwd: str | None = None) -> None:
+async def terminal_websocket(
+    websocket: WebSocket, cwd: str | None = None, session_id: str | None = None
+) -> None:
     """WebSocket endpoint for terminal I/O.
 
     Query params:
         cwd: Working directory for the terminal (optional)
+        session_id: VibeDeck session ID for logging (optional)
     """
     from .terminal import is_terminal_available, terminal_manager
 
@@ -1104,4 +1107,4 @@ async def terminal_websocket(websocket: WebSocket, cwd: str | None = None) -> No
         await websocket.close(code=4003, reason="ptyprocess not installed")
         return
 
-    await terminal_manager.handle_websocket(websocket, cwd)
+    await terminal_manager.handle_websocket(websocket, cwd, session_id=session_id)

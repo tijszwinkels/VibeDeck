@@ -89,7 +89,6 @@ export const dom = {
     // Terminal elements
     terminalToggleBtn: null,
     terminalPanel: null,
-    terminalContainer: null,
     terminalResizeHandle: null
 };
 
@@ -172,7 +171,6 @@ export function initDom() {
     // Terminal elements
     dom.terminalToggleBtn = document.getElementById('terminal-toggle-btn');
     dom.terminalPanel = document.getElementById('terminal-panel');
-    dom.terminalContainer = document.getElementById('terminal-container');
     dom.terminalResizeHandle = document.getElementById('terminal-resize-handle');
 }
 

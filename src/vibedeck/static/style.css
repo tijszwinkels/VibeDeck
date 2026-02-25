@@ -1924,12 +1924,17 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     overflow: hidden;
 }
 
-/* Terminal container */
+/* Terminal container - hidden by default, shown when .active */
 .terminal-container {
+    display: none;
     flex: 1;
     padding: 12px 4px;
     overflow: hidden;
     min-height: 0;
+}
+.terminal-container.active {
+    display: flex;
+    flex-direction: column;
 }
 .terminal-container .xterm {
     height: 100%;

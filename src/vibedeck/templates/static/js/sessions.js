@@ -17,6 +17,7 @@ import { loadFileTree, setProjectRoot } from './filetree.js';
 import { showProjectContextMenu, showSessionContextMenu } from './sidebar-context-menu.js';
 import { extractArtifactsFromElement, onSessionChanged } from './artifacts.js';
 import { parseAndExecuteCommands } from './commands.js';
+import { switchTerminalToSession, destroySessionTerminal } from './terminal.js';
 
 // Forward declarations for circular dependency - will be set by other modules
 let updateInputBarUI = () => {};
@@ -364,6 +365,9 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
 export function removeSession(sessionId) {
     const session = state.sessions.get(sessionId);
     if (!session) return;
+
+    // Clean up terminal for this session
+    destroySessionTerminal(sessionId);
 
     // Remove from project
     const project = state.projects.get(session.projectName);
@@ -1239,6 +1243,9 @@ export function switchToSession(sessionId, scrollToBottom = false) {
     } else {
         loadFileTree(sessionId, session.cwd || null);
     }
+
+    // Switch terminal to this session (if terminal panel is open)
+    switchTerminalToSession(sessionId);
 }
 
 export function updateSessionWaitingState(sessionId) {
