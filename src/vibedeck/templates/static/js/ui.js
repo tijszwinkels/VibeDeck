@@ -1,7 +1,7 @@
 // UI module - sidebar, theme, tooltips, flash messages, scroll controls
 
 import { dom, state, dateCategoryLabels } from './state.js';
-import { isMobile, escapeHtml, formatTimestamp, formatTokenCount, formatCost, formatModelName, getDateCategory } from './utils.js';
+import { isMobile, escapeHtml, formatTimestamp, formatTokenCount, formatCost, formatModelName, getDateCategory, getSessionCategoryTimestamp } from './utils.js';
 import { updateTerminalTheme } from './terminal.js';
 
 // Sidebar state management
@@ -417,8 +417,8 @@ export function showTooltip(sessionId, e) {
 }
 
 export function showDateCategoryTooltip(projectName, category, e) {
-    const project = state.projects.get(projectName);
-    if (!project) return;
+    const project = projectName ? state.projects.get(projectName) : null;
+    if (projectName && !project) return;
 
     if (state.tooltipTimeout) clearTimeout(state.tooltipTimeout);
 
@@ -427,21 +427,45 @@ export function showDateCategoryTooltip(projectName, category, e) {
         let totalInput = 0, totalOutput = 0, totalCacheCreate = 0, totalCacheRead = 0, totalCost = 0;
         let sessionCount = 0;
 
-        project.sessions.forEach(function(sessionId) {
-            const session = state.sessions.get(sessionId);
-            if (!session) return;
-            const sessionCategory = getDateCategory(session.lastUpdatedAt);
-            if (sessionCategory !== category) return;
+        if (project) {
+            // Project mode: aggregate within this project
+            project.sessions.forEach(function(sessionId) {
+                const session = state.sessions.get(sessionId);
+                if (!session) return;
+                const sessionCategory = getDateCategory(getSessionCategoryTimestamp(session, state.sortBy));
+                if (sessionCategory !== category) return;
 
-            sessionCount++;
-            if (session.tokenUsage) {
-                totalInput += session.tokenUsage.input_tokens || 0;
-                totalOutput += session.tokenUsage.output_tokens || 0;
-                totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
-                totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
-                totalCost += session.tokenUsage.cost || 0;
-            }
-        });
+                sessionCount++;
+                if (session.tokenUsage) {
+                    totalInput += session.tokenUsage.input_tokens || 0;
+                    totalOutput += session.tokenUsage.output_tokens || 0;
+                    totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
+                    totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
+                    totalCost += session.tokenUsage.cost || 0;
+                }
+            });
+        } else {
+            // Session mode: aggregate across all non-archived sessions
+            state.sessions.forEach(function(session) {
+                const isArchived = state.archivedSessionIds.has(session.id) ||
+                    (session.cwd && state.archivedProjectPaths.has(session.cwd));
+                if (isArchived) {
+                    if (category !== 'archived') return;
+                } else {
+                    const sessionCategory = getDateCategory(getSessionCategoryTimestamp(session, state.sortBy));
+                    if (sessionCategory !== category) return;
+                }
+
+                sessionCount++;
+                if (session.tokenUsage) {
+                    totalInput += session.tokenUsage.input_tokens || 0;
+                    totalOutput += session.tokenUsage.output_tokens || 0;
+                    totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
+                    totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
+                    totalCost += session.tokenUsage.cost || 0;
+                }
+            });
+        }
 
         if (sessionCount === 0) {
             hideTooltip();
@@ -449,9 +473,12 @@ export function showDateCategoryTooltip(projectName, category, e) {
         }
 
         const categoryLabel = dateCategoryLabels[category] || category;
+        const headerLabel = projectName
+            ? `${escapeHtml(categoryLabel)} - ${escapeHtml(projectName)}`
+            : escapeHtml(categoryLabel);
 
         dom.sessionTooltip.innerHTML = `
-            <div class="tooltip-label">${escapeHtml(categoryLabel)} - ${escapeHtml(projectName)}</div>
+            <div class="tooltip-label">${headerLabel}</div>
             <div class="tooltip-value">${sessionCount} session${sessionCount !== 1 ? 's' : ''}</div>
             <div class="tooltip-label">Token Usage</div>
             <div class="tooltip-value tooltip-usage">
