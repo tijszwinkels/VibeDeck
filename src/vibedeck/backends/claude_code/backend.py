@@ -65,6 +65,10 @@ class ClaudeCodeBackend:
         return "Claude Code"
 
     @property
+    def normalizer_key(self) -> str:
+        return "claude_code"
+
+    @property
     def cli_command(self) -> str | None:
         """CLI command name."""
         return CLI_COMMAND

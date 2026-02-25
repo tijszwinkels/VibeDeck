@@ -446,12 +446,15 @@ def get_normalizer_for_session(session_path: Path):
     Returns:
         A callable (entry: dict) -> NormalizedMessage | None.
     """
-    from .backends.shared.normalizer import normalize_claude_code_message, normalize_opencode_message
+    from .backends.shared.normalizer import normalize_message
 
     backend = get_backend_for_session(session_path)
-    if backend.name == "OpenCode":
-        return normalize_opencode_message
-    return normalize_claude_code_message
+    key = backend.normalizer_key
+
+    def _normalize(entry: dict):
+        return normalize_message(entry, key)
+
+    return _normalize
 
 
 def get_backend_for_session(session_path: Path) -> CodingToolBackend:

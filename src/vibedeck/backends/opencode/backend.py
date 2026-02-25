@@ -68,6 +68,10 @@ class OpenCodeBackend:
         return "OpenCode"
 
     @property
+    def normalizer_key(self) -> str:
+        return "opencode"
+
+    @property
     def cli_command(self) -> str | None:
         """CLI command name."""
         return CLI_COMMAND

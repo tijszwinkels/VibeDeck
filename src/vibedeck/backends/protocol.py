@@ -206,6 +206,11 @@ class CodingToolBackend(Protocol):
         ...
 
     @property
+    def normalizer_key(self) -> str:
+        """Key for the normalization dispatch (e.g., 'claude_code', 'opencode')."""
+        ...
+
+    @property
     def cli_command(self) -> str | None:
         """CLI command name if available (e.g., 'claude'), or None."""
         ...

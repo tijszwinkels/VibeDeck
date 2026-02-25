@@ -70,6 +70,11 @@ class MultiBackend:
         return "Multi-Backend"
 
     @property
+    def normalizer_key(self) -> str:
+        # MultiBackend delegates to sub-backends; this should not be called directly.
+        raise NotImplementedError("Use get_backend_for_session() to get specific backend")
+
+    @property
     def cli_command(self) -> str | None:
         """CLI command name - not applicable for multi-backend."""
         return None

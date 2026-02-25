@@ -146,26 +146,23 @@ async def get_session_messages_json(session_id: str) -> dict:
     Returns structured content blocks instead of HTML,
     for custom GUI clients.
     """
-    from ..backends.shared.normalizer import normalize_claude_code_message, normalize_opencode_message
+    from ..backends.shared.normalizer import normalize_message
 
     async with get_sessions_lock():
         info = get_session(session_id)
         if info is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Determine normalizer based on backend
+        # Determine normalizer key based on backend
         backend = _server_state["get_backend_for_session"](info.path)
-        if backend.name == "OpenCode":
-            normalizer = normalize_opencode_message
-        else:
-            normalizer = normalize_claude_code_message
+        key = backend.normalizer_key
 
         # Read all messages and normalize
         entries = info.tailer.read_all()
         messages = []
         for entry in entries:
             try:
-                msg = normalizer(entry)
+                msg = normalize_message(entry, key)
                 if msg is not None:
                     messages.append(msg.to_dict())
             except Exception:
