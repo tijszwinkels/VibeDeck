@@ -126,6 +126,13 @@ class SessionTailerProtocol(Protocol):
         """Whether the session is waiting for user input."""
         ...
 
+    def seek_to_end(self) -> None:
+        """Seek to end of messages, marking all existing as seen.
+
+        Used for fast initialization when only new messages are needed.
+        """
+        ...
+
     def read_new_lines(self) -> list[dict]:
         """Read new messages since last call.
 

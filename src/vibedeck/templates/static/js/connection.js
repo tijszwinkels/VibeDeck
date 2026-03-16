@@ -65,7 +65,8 @@ export function connect() {
                 session.summaryTitle,
                 session.summaryShort,
                 session.summaryExecutive,
-                session.summaryBranch
+                session.summaryBranch,
+                session.model
             );
         });
         reorderSidebar();
@@ -115,7 +116,8 @@ export function connect() {
                 data.summaryTitle,
                 data.summaryShort,
                 data.summaryExecutive,
-                data.summaryBranch
+                data.summaryBranch,
+                data.model
             );
             reorderSidebar();
 
@@ -136,7 +138,8 @@ export function connect() {
                 data.summaryTitle,
                 data.summaryShort,
                 data.summaryExecutive,
-                data.summaryBranch
+                data.summaryBranch,
+                data.model
             );
             reorderSidebar();
 
@@ -192,7 +195,7 @@ export function connect() {
         const data = JSON.parse(e.data);
         if (data.type === 'html' && data.session_id) {
             if (!state.sessions.has(data.session_id)) {
-                createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null, null);
+                createSession(data.session_id, data.session_id.substring(0, 8), 'Unknown', null, null, null, null, null, null, null, null, null, null, null);
             }
 
             // Parse VibeDeck commands and add execute buttons

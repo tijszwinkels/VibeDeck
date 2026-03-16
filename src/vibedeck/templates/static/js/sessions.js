@@ -188,7 +188,7 @@ export function getOrCreateProject(projectName, projectPath) {
     return project;
 }
 
-export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch) {
+export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch, model) {
     if (state.sessions.has(sessionId)) return state.sessions.get(sessionId);
 
     // Create container with session header
@@ -266,7 +266,10 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         } else if (e.target.classList.contains('new-in-folder-btn')) {
             // Create new session in same folder (same as project header "+" button)
             const cwd = sidebarItem.dataset.cwd;
-            createPendingSession(cwd || null, projectName);
+            const session = state.sessions.get(sessionId);
+            const model = session ? session.model : null;
+            const backend = session ? session.backend : null;
+            createPendingSession(cwd || null, projectName, backend, null, model);
         } else {
             // Check if this session is in an archived project
             const session = state.sessions.get(sessionId);
@@ -332,6 +335,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         cwd: projectPath || null,
         tokenUsage: tokenUsage || null,
         backend: backend || null,
+        model: model || null,
         // Summary data (may be null if no summary file exists yet)
         summaryTitle: summaryTitle || null,
         summaryShort: summaryShort || null,
