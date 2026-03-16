@@ -227,6 +227,7 @@ def serve(
     fork = fork if fork is not None else cfg.fork
     default_send_backend = default_send_backend if default_send_backend is not None else cfg.default_send_backend
     include_subagents = include_subagents if include_subagents is not None else cfg.include_subagents
+    show_codex_bootstrap_messages = cfg.show_codex_bootstrap_messages
     enable_thinking = enable_thinking if enable_thinking is not None else cfg.enable_thinking
     thinking_budget = thinking_budget if thinking_budget is not None else cfg.thinking_budget
     idle_summary_model = idle_summary_model if idle_summary_model is not None else cfg.idle_summary_model
@@ -288,7 +289,10 @@ def serve(
         else:
             click.echo(f"Using backend: {backend_instance.name}")
     else:
-        backend_instance = server.initialize_backend(backend)
+        backend_kwargs = {}
+        if backend == "codex":
+            backend_kwargs["show_bootstrap_messages"] = show_codex_bootstrap_messages
+        backend_instance = server.initialize_backend(backend, **backend_kwargs)
         click.echo(f"Using backend: {backend_instance.name}")
 
     # Configure server features

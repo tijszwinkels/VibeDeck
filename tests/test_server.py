@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vibedeck import server, sessions, broadcasting
+from vibedeck.backends.protocol import CommandSpec
 from vibedeck.server import app
 from vibedeck.sessions import add_session
 from vibedeck.routes.sessions import configure_session_routes
@@ -267,6 +268,153 @@ class TestSendFeature:
         assert data["session_id"] == temp_jsonl_file.stem
         assert data["running"] is False
         assert data["queued_messages"] == 0
+
+    def test_run_cli_for_session_processes_final_messages_without_watcher(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """A final read after CLI exit should broadcast appended assistant output."""
+        info, _ = add_session(temp_jsonl_file)
+        session_id = info.session_id
+
+        class _FakeStdin:
+            def write(self, data):
+                self.data = data
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+            async def wait_closed(self):
+                return None
+
+        class _FakeProcess:
+            def __init__(self, path: Path):
+                self.path = path
+                self.returncode = 0
+                self.stdin = _FakeStdin()
+
+            async def communicate(self):
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "timestamp": "2024-12-30T10:00:02.000Z",
+                                "message": {
+                                    "content": [
+                                        {"type": "text", "text": "Final reply"}
+                                    ]
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                return b"", b""
+
+        messages = []
+
+        class _FakeBackend:
+            name = "Fake"
+
+            def ensure_session_indexed(self, session_id_arg):
+                return None
+
+            def build_send_command(
+                self,
+                session_id_arg,
+                message,
+                skip_permissions=False,
+                output_format=None,
+                add_dirs=None,
+            ):
+                return CommandSpec(args=["fake-cli"], stdin=message)
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_session_model(self, session_path):
+                return None
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeProcess(temp_jsonl_file)
+
+        async def _fake_broadcast_message(session_id_arg: str, html: str):
+            messages.append((session_id_arg, html))
+
+        async def _fake_broadcast_status(session_id_arg: str):
+            return None
+
+        monkeypatch.setattr(
+            server.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+        )
+        monkeypatch.setattr(server, "get_backend_for_session", lambda path: _FakeBackend())
+        monkeypatch.setattr(server, "broadcast_message", _fake_broadcast_message)
+        monkeypatch.setattr(server, "_broadcast_session_status", _fake_broadcast_status)
+
+        asyncio.run(server.run_cli_for_session(session_id, "continue"))
+
+        assert any(msg_session == session_id for msg_session, _ in messages)
+        assert any("Final reply" in html for _, html in messages)
+
+    def test_process_session_messages_with_settle_rechecks_running_session(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """A delayed follow-up read should catch later lines in the same send."""
+        info, _ = add_session(temp_jsonl_file)
+        session_id = info.session_id
+
+        class _Tailer:
+            def __init__(self):
+                self.calls = 0
+                self.waiting_for_input = False
+
+            def read_new_lines(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return []
+                if self.calls > 2:
+                    return []
+                return [
+                    {
+                        "type": "assistant",
+                        "timestamp": "2024-12-30T10:00:02.000Z",
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "Settled reply"}
+                            ]
+                        },
+                    }
+                ]
+
+        class _Renderer:
+            def render_message(self, entry):
+                return "<div>Settled reply</div>"
+
+        info.tailer = _Tailer()
+        info.process = object()
+        messages = []
+
+        async def _fake_broadcast_message(session_id_arg: str, html: str):
+            messages.append((session_id_arg, html))
+
+        async def _fake_broadcast_status(session_id_arg: str):
+            return None
+
+        async def _fake_broadcast_usage(session_id_arg: str):
+            return None
+
+        monkeypatch.setattr(server, "get_renderer_for_session", lambda path: _Renderer())
+        monkeypatch.setattr(server, "broadcast_message", _fake_broadcast_message)
+        monkeypatch.setattr(server, "_broadcast_session_status", _fake_broadcast_status)
+        monkeypatch.setattr(
+            server, "_broadcast_session_token_usage_updated", _fake_broadcast_usage
+        )
+
+        asyncio.run(server.process_session_messages_with_settle(session_id, settle_delay=0))
+
+        assert messages == [(session_id, "<div>Settled reply</div>")]
 
     def test_session_status_404_for_unknown(self):
         """Test session status returns 404 for unknown session."""
