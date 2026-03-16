@@ -231,6 +231,8 @@ def db_exists() -> bool:
 
 
 def get_session_metadata_from_db(session_id: str) -> tuple[str, str | None] | None:
+    if not db_exists():
+        return None
     with OpenCodeDB() as db:
         session = db.get_session_by_id(session_id)
         if session is None:
