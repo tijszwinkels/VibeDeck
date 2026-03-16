@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 CATCHUP_TIMEOUT = (
     30  # seconds - max time for catchup before telling client to reinitialize
 )
+HTML_SSE_QUEUE_MAXSIZE = 5000  # Large enough for bursty Codex transcript batches
 _send_enabled = True  # Enabled by default, disable with --disable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
@@ -914,7 +915,6 @@ async def check_for_new_sessions() -> None:
                         # Check if there's a pending process for this session's project path
                         attached = _attach_pending_process(info)
                         await broadcast_session_added(info)
-                        await _broadcast_session_catchup(info)
                         # If we attached a process, broadcast status and start monitoring
                         if attached:
                             await _broadcast_session_status(info.session_id)
@@ -1159,7 +1159,7 @@ async def serve_js(filename: str) -> Response:
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     """Generate SSE events for a client."""
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=HTML_SSE_QUEUE_MAXSIZE)
     add_client(queue)
 
     try:

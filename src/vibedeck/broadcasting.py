@@ -60,6 +60,10 @@ async def broadcast_event(event_type: str, data: dict) -> None:
         try:
             queue.put_nowait({"event": event_type, "data": data})
         except asyncio.QueueFull:
+            logger.warning(
+                "Dropping HTML SSE client after queue overflow while broadcasting %s",
+                event_type,
+            )
             dead_clients.append(queue)
 
     for queue in dead_clients:
@@ -86,6 +90,10 @@ async def broadcast_json_event(event_type: str, data: dict) -> None:
         try:
             queue.put_nowait({"event": event_type, "data": data})
         except asyncio.QueueFull:
+            logger.warning(
+                "Dropping JSON SSE client after queue overflow while broadcasting %s",
+                event_type,
+            )
             dead_clients.append(queue)
 
     for queue in dead_clients:

@@ -113,6 +113,69 @@ class TestServerEndpoints:
         assert "sessions" in data
         assert "clients" in data
 
+    @pytest.mark.asyncio
+    async def test_event_generator_uses_large_html_queue(self):
+        """HTML SSE clients should have enough queue capacity for Codex bursts."""
+
+        captured_queue = None
+        original_add_client = server.add_client
+
+        def _capture_add_client(queue):
+            nonlocal captured_queue
+            captured_queue = queue
+            original_add_client(queue)
+
+        class _Request:
+            async def is_disconnected(self):
+                return False
+
+        server.remove_client(captured_queue) if captured_queue is not None else None
+
+        try:
+            server.add_client = _capture_add_client
+            gen = server.event_generator(_Request())
+            await anext(gen)
+            await anext(gen)
+            assert captured_queue is not None
+            assert captured_queue.maxsize == server.HTML_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize > 100
+        finally:
+            server.add_client = original_add_client
+            if captured_queue is not None:
+                server.remove_client(captured_queue)
+            await gen.aclose()
+
+    @pytest.mark.asyncio
+    async def test_check_for_new_sessions_does_not_broadcast_transcript_catchup(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """Watcher-discovered sessions should not replay full transcripts over SSE."""
+
+        sessions.get_sessions().clear()
+        sessions.get_known_session_files().clear()
+
+        added_sessions = []
+        catchups = []
+
+        async def _fake_broadcast_session_added(info):
+            added_sessions.append(info.session_id)
+
+        async def _fake_broadcast_session_catchup(info):
+            catchups.append(info.session_id)
+
+        class _BackendProxy:
+            def find_recent_sessions(self, limit, include_subagents=False):
+                return [temp_jsonl_file]
+
+        monkeypatch.setattr(server, "get_server_backend", lambda: _BackendProxy())
+        monkeypatch.setattr(server, "broadcast_session_added", _fake_broadcast_session_added)
+        monkeypatch.setattr(server, "_broadcast_session_catchup", _fake_broadcast_session_catchup)
+
+        await server.check_for_new_sessions()
+
+        assert len(added_sessions) == 1
+        assert catchups == []
+
     def test_sessions_endpoint(self, temp_jsonl_file):
         """Test sessions list endpoint."""
         add_session(temp_jsonl_file)

@@ -406,3 +406,63 @@ class TestDefaultOutputKeys:
         assert "summary_generated_at" in DEFAULT_OUTPUT_KEYS
         assert "session_started_at" in DEFAULT_OUTPUT_KEYS
         assert "session_last_updated_at" in DEFAULT_OUTPUT_KEYS
+
+
+class TestSummarizerCommandBuilding:
+    """Tests for backend-specific summary CLI arguments."""
+
+    @pytest.mark.asyncio
+    async def test_codex_summary_uses_ephemeral_json_flags(self, tmp_path):
+        """Codex summaries should use --json and --ephemeral, not Claude flags."""
+        from vibedeck.backends.protocol import CommandSpec
+
+        backend = MagicMock()
+        backend.cli_command = "codex"
+        backend.build_send_command.return_value = CommandSpec(
+            args=["codex", "exec", "resume", "test-id", "-", "--json"],
+            stdin="summary prompt",
+        )
+
+        session_file = tmp_path / "test-session.jsonl"
+        session_file.write_text('{"type": "user", "message": "hello"}')
+
+        session = MagicMock()
+        session.session_id = "test-id"
+        session.project_path = str(tmp_path)
+        session.path = session_file
+        session.tailer.get_first_timestamp.return_value = "2026-01-15T12:00:00"
+
+        captured = {}
+
+        class _Proc:
+            returncode = 0
+
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+
+            async def communicate(self):
+                return (
+                    b'{"type":"result","result":"{\\"title\\":\\"Test\\"}"}',
+                    b"",
+                )
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            captured["args"] = list(args)
+            captured["kwargs"] = kwargs
+            return _Proc()
+
+        summarizer = Summarizer(backend=backend)
+
+        with patch("asyncio.create_subprocess_exec", _fake_create_subprocess_exec):
+            result = await summarizer.summarize(session, model="gpt-5.4")
+
+        assert result.success is True
+        assert "--ephemeral" in captured["args"]
+        assert "--json" in captured["args"]
+        assert "--no-session-persistence" not in captured["args"]
+        assert "--output-format" not in captured["args"]
+        assert captured["args"][-2:] == ["--model", "gpt-5.4"]

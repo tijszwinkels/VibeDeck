@@ -58,6 +58,36 @@ class MultiBackend:
         # Map session paths to their owning backend
         self._session_backend: dict[Path, "CodingToolBackend"] = {}
 
+    def _path_matches_backend_root(self, backend: "CodingToolBackend", path: Path) -> bool:
+        """Check whether a changed path lives under a backend's storage root."""
+        try:
+            backend_root = backend.get_projects_dir().resolve()
+            return path.resolve().is_relative_to(backend_root)
+        except (OSError, RuntimeError, ValueError):
+            return False
+
+    def _candidate_backends_for_path(self, path: Path) -> list["CodingToolBackend"]:
+        """Return candidate backends for a changed path, most specific first."""
+        candidates: list["CodingToolBackend"] = []
+
+        registered = self._session_backend.get(path)
+        if registered is not None:
+            candidates.append(registered)
+
+        for backend in self._backends:
+            if backend in candidates:
+                continue
+            if self._path_matches_backend_root(backend, path):
+                candidates.append(backend)
+
+        for backend in self._backends:
+            if backend in candidates:
+                continue
+            if backend.should_watch_file(path):
+                candidates.append(backend)
+
+        return candidates
+
     def _normalize_name(self, name: str) -> str:
         """Normalize backend name for consistent lookup."""
         return name.lower().replace(" ", "-")
@@ -409,11 +439,11 @@ class MultiBackend:
 
         Tries each backend until one returns a session ID.
         """
-        for backend in self._backends:
-            if backend.should_watch_file(path):
-                session_id = backend.get_session_id_from_changed_file(path)
-                if session_id:
-                    return session_id
+        for backend in self._candidate_backends_for_path(path):
+            session_id = backend.get_session_id_from_changed_file(path)
+            if session_id:
+                self._session_backend[path] = backend
+                return session_id
         return None
 
     def get_backend_for_changed_file(self, path: Path) -> "CodingToolBackend | None":
@@ -425,10 +455,8 @@ class MultiBackend:
         Returns:
             The backend that claims this file, or None.
         """
-        for backend in self._backends:
-            if backend.should_watch_file(path):
-                return backend
-        return None
+        candidates = self._candidate_backends_for_path(path)
+        return candidates[0] if candidates else None
 
     def register_session(self, path: Path, backend: "CodingToolBackend") -> None:
         """Register a session path with its owning backend.
