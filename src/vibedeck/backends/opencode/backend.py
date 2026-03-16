@@ -19,15 +19,20 @@ from ..protocol import (
     TokenUsage,
 )
 from .tailer import OpenCodeTailer
+from .db import OpenCodeDB
 from .discovery import (
-    get_session_name,
-    get_session_id,
+    get_session_metadata,
+    get_session_id_from_path,
+    is_db_session,
     find_recent_sessions,
     should_watch_file,
+    has_messages_db,
     has_messages,
     get_first_user_message,
     get_session_id_from_file_path,
+    get_db_path,
     DEFAULT_STORAGE_DIR,
+    DEFAULT_DB_PATH,
 )
 from .pricing import get_session_token_usage
 from .cli import (
@@ -97,22 +102,27 @@ class OpenCodeBackend:
         """Get the base directory where sessions are stored."""
         return self._storage_dir
 
+    def get_db_path(self) -> Path | None:
+        """Get the path to the SQLite database if using SQLite storage.
+
+        Returns:
+            Path to opencode.db if it exists, None otherwise.
+        """
+        if DEFAULT_DB_PATH.exists():
+            return DEFAULT_DB_PATH
+        return None
+
     # ===== Session Metadata =====
 
     def get_session_metadata(self, session_path: Path) -> SessionMetadata:
-        """Extract metadata from a session.
+        project_name, project_path = get_session_metadata(
+            session_path, self._storage_dir
+        )
+        session_id = get_session_id_from_path(session_path)
+        first_message = get_first_user_message(
+            session_path, self._storage_dir, session_id=session_id
+        )
 
-        Args:
-            session_path: Path to the session JSON file.
-
-        Returns:
-            Session metadata.
-        """
-        project_name, project_path = get_session_name(session_path, self._storage_dir)
-        session_id = get_session_id(session_path)
-        first_message = get_first_user_message(session_path, self._storage_dir)
-
-        # Get first timestamp from tailer
         tailer = OpenCodeTailer(self._storage_dir, session_id)
         started_at = tailer.get_first_timestamp()
 
@@ -129,39 +139,18 @@ class OpenCodeBackend:
         )
 
     def get_session_id(self, session_path: Path) -> str:
-        """Get the unique session ID from a path.
-
-        Args:
-            session_path: Path to the session file.
-
-        Returns:
-            Session ID (filename without extension).
-        """
-        return get_session_id(session_path)
+        return get_session_id_from_path(session_path)
 
     def has_messages(self, session_path: Path) -> bool:
-        """Check if a session has any user or assistant messages.
-
-        Args:
-            session_path: Path to the session file.
-
-        Returns:
-            True if session has messages.
-        """
+        session_id = get_session_id_from_path(session_path)
+        if is_db_session(session_path):
+            return has_messages_db(session_id)
         return has_messages(session_path, self._storage_dir)
 
     # ===== Session Reading =====
 
     def create_tailer(self, session_path: Path) -> SessionTailerProtocol:
-        """Create a tailer for reading session messages.
-
-        Args:
-            session_path: Path to the session file.
-
-        Returns:
-            An OpenCodeTailer instance.
-        """
-        session_id = get_session_id(session_path)
+        session_id = get_session_id_from_path(session_path)
         return OpenCodeTailer(self._storage_dir, session_id)
 
     # ===== Token Usage & Pricing =====
@@ -180,15 +169,26 @@ class OpenCodeBackend:
     def get_session_model(self, session_path: Path) -> str | None:
         """Get the primary model used in a session.
 
-        Not implemented for OpenCode backend - returns None.
+        Returns the model from the first assistant message, which is used for
+        continuing the session with the same model.
 
         Args:
-            session_path: Path to the session file.
+            session_path: Path to the session file (or session:xxx for SQLite).
 
         Returns:
-            None (not implemented).
+            Model identifier (e.g., "anthropic/claude-sonnet-4-5") or None.
         """
-        logger.debug("get_session_model() not implemented for OpenCode backend")
+        session_id = get_session_id_from_path(session_path)
+
+        if is_db_session(session_path):
+            try:
+                with OpenCodeDB() as db:
+                    return db.get_session_model(session_id)
+            except Exception as e:
+                logger.debug(f"Failed to get model from database: {e}")
+                return None
+
+        # Legacy JSON format - not implemented
         return None
 
     # ===== CLI Interaction =====
@@ -314,7 +314,7 @@ class OpenCodeBackend:
     def should_watch_file(self, path: Path) -> bool:
         """Check if a file should be watched for changes.
 
-        For OpenCode, we watch message and part JSON files.
+        For OpenCode, we watch message and part JSON files (legacy) and the SQLite database.
 
         Args:
             path: File path to check.
@@ -323,6 +323,58 @@ class OpenCodeBackend:
             True if the file should be watched.
         """
         return should_watch_file(path)
+
+    def is_db_file(self, path: Path) -> bool:
+        """Check if this is the SQLite database file.
+
+        Args:
+            path: File path to check.
+
+        Returns:
+            True if this is the opencode.db file.
+        """
+        str_path = str(path)
+        return str_path.endswith("opencode.db") or str_path.endswith("opencode.db-wal")
+
+    def get_updated_sessions(
+        self, tracked_session_ids: list[str], last_check_time: float
+    ) -> list[str]:
+        """Get session IDs that have been updated since the last check.
+
+        This is used for SQLite-based sessions where we can't easily determine
+        which session changed from a file watch event.
+
+        Args:
+            tracked_session_ids: List of session IDs currently being tracked.
+            last_check_time: Unix timestamp (seconds) of the last check.
+
+        Returns:
+            List of session IDs that have new messages since last_check_time.
+        """
+        if not DEFAULT_DB_PATH.exists():
+            return []
+
+        try:
+            with OpenCodeDB() as db:
+                cursor = db._get_conn().cursor()
+                last_check_ms = int(last_check_time * 1000)
+                placeholders = ",".join("?" * len(tracked_session_ids))
+                cursor.execute(
+                    f"""
+                    SELECT DISTINCT session_id FROM message
+                    WHERE session_id IN ({placeholders})
+                    AND time_updated > ?
+                    """,
+                    tracked_session_ids + [last_check_ms],
+                )
+                result = [row[0] for row in cursor.fetchall()]
+                logger.debug(
+                    f"get_updated_sessions: {len(result)} updated sessions since {last_check_time}"
+                )
+                return result
+        except Exception as e:
+            logger.warning(f"Failed to check for updated sessions: {e}")
+            return []
 
     def get_session_id_from_changed_file(self, path: Path) -> str | None:
         """Get session ID from a changed message or part file.

@@ -72,7 +72,9 @@ class MultiBackend:
     @property
     def normalizer_key(self) -> str:
         # MultiBackend delegates to sub-backends; this should not be called directly.
-        raise NotImplementedError("Use get_backend_for_session() to get specific backend")
+        raise NotImplementedError(
+            "Use get_backend_for_session() to get specific backend"
+        )
 
     @property
     def cli_command(self) -> str | None:
@@ -174,13 +176,19 @@ class MultiBackend:
         """Get all project directories to watch.
 
         Returns:
-            List of directories from all backends.
+            List of directories and database files from all backends.
         """
         dirs = []
         for backend in self._backends:
             d = backend.get_projects_dir()
             if d not in dirs:
                 dirs.append(d)
+            # Also include SQLite database file if backend has one
+            db_path = getattr(backend, "get_db_path", None)
+            if db_path:
+                db = db_path()
+                if db and db.exists() and db not in dirs:
+                    dirs.append(db.parent)
         return dirs
 
     # ===== Session Metadata =====
@@ -390,6 +398,45 @@ class MultiBackend:
         Returns True if any backend wants to watch this file.
         """
         return any(b.should_watch_file(path) for b in self._backends)
+
+    def is_db_file(self, path: Path) -> bool:
+        """Check if this is a SQLite database file.
+
+        Returns True if any backend identifies this as a database file.
+        """
+        for backend in self._backends:
+            is_db = getattr(backend, "is_db_file", None)
+            if is_db and is_db(path):
+                return True
+        return False
+
+    def get_updated_sessions(
+        self, tracked_session_ids: list[str], last_check_time: float
+    ) -> list[str]:
+        """Get session IDs that have been updated since the last check.
+
+        Returns updated session IDs from any backend that supports this.
+        """
+        updated = []
+        for backend in self._backends:
+            get_updated = getattr(backend, "get_updated_sessions", None)
+            if get_updated:
+                # Get all sessions for this backend
+                backend_session_ids = []
+                for path, b in self._session_backend.items():
+                    if b == backend:
+                        # Extract session ID from path
+                        path_str = str(path)
+                        if path_str.startswith("session:"):
+                            session_id = path_str[8:]  # Remove 'session:' prefix
+                        else:
+                            session_id = path.stem
+                        if session_id in tracked_session_ids:
+                            backend_session_ids.append(session_id)
+
+                if backend_session_ids:
+                    updated.extend(get_updated(backend_session_ids, last_check_time))
+        return updated
 
     def is_summary_file(self, path: Path) -> bool:
         """Check if a file is a summary file.
