@@ -1,7 +1,14 @@
 // Messaging module - input bar, send/fork/interrupt functionality
 
 import { dom, state } from './state.js';
-import { isMobile, escapeHtml } from './utils.js';
+import {
+    isMobile,
+    escapeHtml,
+    formatContextPercent,
+    formatTokenCount,
+    getSessionContextUsageTokens,
+    getSessionTotalUsedTokens
+} from './utils.js';
 import { showFlash, updateSidebarState } from './ui.js';
 import { createPlaceholderMessage, switchToSession, setUpdateInputBarUI, setCreatePendingSession } from './sessions.js';
 
@@ -59,6 +66,72 @@ function updateForkButtonVisibility() {
 export function updateInputBarUI() {
     const hasMessage = dom.messageInput.value.trim();
 
+    function hideContextIndicator() {
+        dom.contextIndicator.style.display = 'none';
+        dom.contextIndicator.textContent = '';
+        dom.contextIndicator.title = '';
+    }
+
+    function updateContextIndicator(session) {
+        if (!session) {
+            hideContextIndicator();
+            return;
+        }
+
+        const parts = [];
+        const contextTokens = getSessionContextUsageTokens(session);
+        const limitTokens = session.contextLimitTokens;
+        if (contextTokens && limitTokens) {
+            parts.push(
+                '<span class="context-indicator-group">' +
+                '<span class="context-indicator-label">Context</span>' +
+                '<span class="context-indicator-value">' +
+                escapeHtml(formatContextPercent(contextTokens, limitTokens)) +
+                '</span>' +
+                '<span class="context-indicator-detail">' +
+                escapeHtml(
+                    formatTokenCount(contextTokens) + ' / ' + formatTokenCount(limitTokens) + ' tokens'
+                ) +
+                '</span>' +
+                '</span>'
+            );
+        }
+
+        const totalUsedTokens = getSessionTotalUsedTokens(session);
+        if (totalUsedTokens) {
+            parts.push(
+                '<span class="context-indicator-group">' +
+                '<span class="context-indicator-label">Used</span>' +
+                '<span class="context-indicator-detail">' +
+                escapeHtml(formatTokenCount(totalUsedTokens) + ' tokens') +
+                '</span>' +
+                '</span>'
+            );
+        }
+
+        if (parts.length === 0) {
+            hideContextIndicator();
+            return;
+        }
+
+        dom.contextIndicator.innerHTML = parts.join('<span class="context-indicator-sep">·</span>');
+        const titleParts = [];
+        if (contextTokens && limitTokens) {
+            titleParts.push(
+                'Latest known input context: ' +
+                contextTokens.toLocaleString() +
+                ' of ' +
+                limitTokens.toLocaleString() +
+                ' tokens'
+            );
+        }
+        if (totalUsedTokens) {
+            titleParts.push('Total used tokens: ' + totalUsedTokens.toLocaleString());
+        }
+        dom.contextIndicator.title = titleParts.join(' | ');
+        dom.contextIndicator.style.display = 'flex';
+    }
+
     // Update fork button visibility (desktop only, when enabled)
     updateForkButtonVisibility();
 
@@ -69,6 +142,7 @@ export function updateInputBarUI() {
         dom.inputStatus.className = 'input-status';
         dom.sendBtn.classList.remove('hidden');
         dom.interruptBtn.classList.add('hidden');
+        hideContextIndicator();
         return;
     }
 
@@ -76,12 +150,13 @@ export function updateInputBarUI() {
     const status = state.sessionStatus.get(state.activeSessionId) || { running: false, queued_messages: 0 };
 
     if (session && session.pending && session.starting) {
-        dom.inputStatus.innerHTML = '<span class="spinner"></span> Starting session...';
+        dom.inputStatus.innerHTML = '<span class="spinner"></span>';
         dom.inputStatus.className = 'input-status running';
         dom.sendBtn.classList.remove('hidden');
         dom.sendBtn.disabled = true;
         dom.forkBtn.disabled = true;
         dom.interruptBtn.classList.add('hidden');
+        updateContextIndicator(session);
         return;
     }
 
@@ -90,13 +165,7 @@ export function updateInputBarUI() {
         dom.sendBtn.classList.add('hidden');
         dom.interruptBtn.classList.remove('hidden');
         dom.forkBtn.disabled = !hasMessage;
-
-        if (status.queued_messages > 0) {
-            dom.inputStatus.innerHTML = '<span class="spinner"></span> ' +
-                status.queued_messages + ' message' + (status.queued_messages > 1 ? 's' : '') + ' queued...';
-        } else {
-            dom.inputStatus.innerHTML = '<span class="spinner"></span> Claude is thinking...';
-        }
+        dom.inputStatus.innerHTML = '<span class="spinner"></span>';
     } else {
         dom.inputStatus.textContent = '';
         dom.inputStatus.className = 'input-status';
@@ -106,6 +175,7 @@ export function updateInputBarUI() {
     }
 
     dom.sendBtn.disabled = !hasMessage;
+    updateContextIndicator(session);
 }
 
 // Register updateInputBarUI with sessions module

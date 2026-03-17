@@ -50,6 +50,7 @@ export const dom = {
     floatingControls: null,
     messageInput: null,
     inputStatus: null,
+    contextIndicator: null,
     sendBtn: null,
     forkBtn: null,
     interruptBtn: null,
@@ -128,6 +129,7 @@ export function initDom() {
     dom.floatingControls = document.getElementById('floating-controls');
     dom.messageInput = document.getElementById('message-input');
     dom.inputStatus = document.getElementById('input-status');
+    dom.contextIndicator = document.getElementById('context-indicator');
     dom.sendBtn = document.getElementById('send-btn');
     dom.forkBtn = document.getElementById('fork-btn');
     dom.interruptBtn = document.getElementById('interrupt-btn');

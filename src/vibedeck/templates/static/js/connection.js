@@ -65,7 +65,8 @@ export function connect() {
                 session.summaryTitle,
                 session.summaryShort,
                 session.summaryExecutive,
-                session.summaryBranch
+                session.summaryBranch,
+                session.contextLimitTokens
             );
         });
         reorderSidebar();
@@ -115,7 +116,8 @@ export function connect() {
                 data.summaryTitle,
                 data.summaryShort,
                 data.summaryExecutive,
-                data.summaryBranch
+                data.summaryBranch,
+                data.contextLimitTokens
             );
             reorderSidebar();
 
@@ -136,7 +138,8 @@ export function connect() {
                 data.summaryTitle,
                 data.summaryShort,
                 data.summaryExecutive,
-                data.summaryBranch
+                data.summaryBranch,
+                data.contextLimitTokens
             );
             reorderSidebar();
 
@@ -228,6 +231,9 @@ export function connect() {
         const session = state.sessions.get(data.session_id);
         if (session && data.tokenUsage) {
             session.tokenUsage = data.tokenUsage;
+            if (data.session_id === state.activeSessionId) {
+                updateInputBarUI();
+            }
         }
     });
 

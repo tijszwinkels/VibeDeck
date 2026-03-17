@@ -289,6 +289,17 @@ class MultiBackend:
             return None
         return backend.get_session_model(session_path)
 
+    def get_context_limit_tokens(self, session_path: Path) -> int | None:
+        """Get the effective context limit for a session, if supported."""
+        backend = self._session_backend.get(session_path)
+        if backend is None:
+            return None
+
+        get_context_limit_tokens = getattr(backend, "get_context_limit_tokens", None)
+        if get_context_limit_tokens is None:
+            return None
+        return get_context_limit_tokens(session_path)
+
     # ===== CLI Interaction =====
 
     def supports_send_message(self) -> bool:

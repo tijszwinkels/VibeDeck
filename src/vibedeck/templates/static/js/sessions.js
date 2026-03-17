@@ -188,7 +188,7 @@ export function getOrCreateProject(projectName, projectPath) {
     return project;
 }
 
-export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch) {
+export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch, contextLimitTokens = null) {
     if (state.sessions.has(sessionId)) return state.sessions.get(sessionId);
 
     // Create container with session header
@@ -332,6 +332,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         cwd: projectPath || null,
         tokenUsage: tokenUsage || null,
         backend: backend || null,
+        contextLimitTokens: contextLimitTokens,
         // Summary data (may be null if no summary file exists yet)
         summaryTitle: summaryTitle || null,
         summaryShort: summaryShort || null,
@@ -1101,6 +1102,7 @@ export async function loadSessionMessages(sessionId) {
 
         session.loaded = true;
         session.messageCount = data.message_count || 0;
+        updateInputBarUI();
 
         // Clear unread count since we've loaded the messages
         session.unreadCount = 0;
@@ -1406,6 +1408,7 @@ export function appendMessage(sessionId, html) {
         // Update navigation buttons when a new message arrives
         if (isActiveSession) {
             updateUserNavButtons();
+            updateInputBarUI();
         }
     }
 }

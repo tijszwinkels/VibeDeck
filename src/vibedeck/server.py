@@ -328,6 +328,13 @@ async def _summarize_session_async(session: SessionInfo, model: str | None = Non
 
     # Get the session-specific backend (MultiBackend can't build commands directly)
     session_backend = get_backend_for_session(session.path)
+    if not getattr(session_backend, "supports_summarization", lambda: True)():
+        logger.info(
+            "Skipping summary for %s: backend %s does not support summarization",
+            session.session_id,
+            session_backend.name,
+        )
+        return False
 
     # Create a summarizer with the correct backend for this session
     session_summarizer = Summarizer(

@@ -13,6 +13,7 @@ from ..protocol import (
     SessionTailerProtocol,
     TokenUsage,
 )
+from ..shared.context_window import get_codex_context_limit_tokens
 from .cli import (
     CLI_COMMAND,
     CLI_INSTALL_INSTRUCTIONS,
@@ -111,6 +112,9 @@ class CodexBackend:
     def get_session_model(self, session_path: Path) -> str | None:
         return get_session_model(session_path)
 
+    def get_context_limit_tokens(self, session_path: Path) -> int | None:
+        return get_codex_context_limit_tokens(get_session_model(session_path))
+
     def get_models(self) -> list[str]:
         """Get available Codex model identifiers.
 
@@ -146,6 +150,9 @@ class CodexBackend:
         return True
 
     def supports_permission_detection(self) -> bool:
+        return False
+
+    def supports_summarization(self) -> bool:
         return False
 
     def is_cli_available(self) -> bool:

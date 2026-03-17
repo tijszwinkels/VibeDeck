@@ -509,6 +509,13 @@ async def trigger_summary(session_id: str, background_tasks: BackgroundTasks) ->
             detail="Summarization is not configured. Start server with summarization options.",
         )
 
+    backend = _server_state["get_backend_for_session"](info.path)
+    if not getattr(backend, "supports_summarization", lambda: True)():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Summarization is not supported for {backend.name} sessions.",
+        )
+
     # Run summarization in background task to not block the response
     async def run_summary():
         try:

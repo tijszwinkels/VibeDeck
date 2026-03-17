@@ -4,6 +4,7 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -112,6 +113,50 @@ class TestServerEndpoints:
         assert data["status"] == "ok"
         assert "sessions" in data
         assert "clients" in data
+
+    def test_manual_summary_rejected_for_codex_session(self):
+        """Codex sessions should reject manual summary triggers."""
+        from vibedeck.routes import sessions as session_routes
+
+        info = MagicMock()
+        info.session_id = "codex-session"
+        info.path = Path("/tmp/codex-session.jsonl")
+        sessions.get_sessions()[info.session_id] = info
+
+        codex_backend = MagicMock()
+        codex_backend.name = "Codex"
+        codex_backend.supports_summarization.return_value = False
+
+        session_routes._server_state["get_backend_for_session"] = lambda path: codex_backend
+        session_routes._server_state["get_summarizer"] = lambda: object()
+
+        client = TestClient(app)
+        response = client.post(f"/sessions/{info.session_id}/summarize")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Summarization is not supported for Codex sessions."
+
+    @pytest.mark.asyncio
+    async def test_summarize_session_async_skips_backend_without_support(self):
+        """Unsupported backends should be skipped before spawning summarizer subprocesses."""
+        session = MagicMock()
+        session.session_id = "codex-session"
+        session.path = Path("/tmp/codex-session.jsonl")
+
+        codex_backend = MagicMock()
+        codex_backend.name = "Codex"
+        codex_backend.supports_summarization.return_value = False
+
+        original = server.get_backend_for_session
+        server._summarizer = MagicMock()
+        try:
+            server.get_backend_for_session = lambda path: codex_backend
+            result = await server._summarize_session_async(session)
+        finally:
+            server.get_backend_for_session = original
+            server._summarizer = None
+
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_event_generator_uses_large_html_queue(self):

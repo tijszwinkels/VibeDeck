@@ -154,6 +154,25 @@ class TestSessionInfoSummary:
         # Cleanup
         remove_session(info.session_id)
 
+    def test_to_dict_includes_context_limit_tokens(self, temp_session_without_summary):
+        """Should include backend-provided context limits in to_dict output."""
+        session_path = temp_session_without_summary
+
+        info, _ = add_session(session_path)
+        assert info is not None
+
+        from vibedeck import sessions
+
+        backend = sessions.get_current_backend()
+        assert backend is not None
+        backend.get_context_limit_tokens = lambda path: 123456
+
+        data = info.to_dict()
+        assert data["contextLimitTokens"] == 123456
+
+        # Cleanup
+        remove_session(info.session_id)
+
     def test_to_dict_summary_fields_null_without_file(self, temp_session_without_summary):
         """Should have null summary fields in to_dict when no summary exists."""
         session_path = temp_session_without_summary
