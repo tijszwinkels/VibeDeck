@@ -43,6 +43,7 @@ class SessionInfo:
     project_path: str = ""
     first_message: str | None = None
     backend_name: str = ""  # Name of the backend this session belongs to
+    model: str | None = None  # Model used in this session
     # Process management for sending messages
     process: asyncio.subprocess.Process | None = None
     message_queue: list[str] = field(default_factory=list)
@@ -88,6 +89,15 @@ class SessionInfo:
                 if not self.project_name:
                     self.project_name = self.session_id
 
+        # Get the model used in this session
+        if self.model is None:
+            try:
+                get_model = getattr(backend, "get_session_model", None)
+                if get_model is not None:
+                    self.model = get_model(self.path)
+            except (OSError, IOError) as e:
+                logger.debug(f"Failed to get model for {self.path}: {e}")
+
         # Try to load summary data if it exists
         self.load_summary()
 
@@ -116,7 +126,9 @@ class SessionInfo:
             self.summary_short = data.get("short_summary")
             self.summary_executive = data.get("executive_summary")
             self.summary_branch = data.get("branch")
-            logger.debug(f"Loaded summary for session {self.session_id}: {self.summary_title}")
+            logger.debug(
+                f"Loaded summary for session {self.session_id}: {self.summary_title}"
+            )
             return True
         except (OSError, IOError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to load summary for {self.session_id}: {e}")
@@ -180,6 +192,7 @@ class SessionInfo:
             "lastUpdatedAt": last_updated,
             "tokenUsage": token_usage,
             "backend": self.backend_name,
+            "model": self.model,
             # Summary data (may be None if no summary file exists yet)
             "summaryTitle": self.summary_title,
             "summaryShort": self.summary_short,
@@ -241,9 +254,18 @@ def get_oldest_session_id() -> str | None:
         return None
     oldest = min(
         _sessions.items(),
-        key=lambda x: _get_session_timestamp(x[1]) if _get_session_timestamp(x[1]) > 0 else float("inf"),
+        key=lambda x: (
+            _get_session_timestamp(x[1])
+            if _get_session_timestamp(x[1]) > 0
+            else float("inf")
+        ),
     )
     return oldest[0]
+
+
+def is_synthetic_session_path(path: Path) -> bool:
+    """Check if a path is a synthetic session path (e.g., 'session:xxx' for SQLite)."""
+    return str(path).startswith("session:")
 
 
 def add_session(
@@ -259,31 +281,30 @@ def add_session(
     if backend is None:
         raise RuntimeError("Backend not initialized. Call set_backend() first.")
 
-    # Validate path is actually a file (not a directory)
-    if not path.is_file():
-        logger.debug(f"Skipping non-file path: {path}")
-        return None, None
+    is_synthetic = is_synthetic_session_path(path)
+
+    if not is_synthetic:
+        if not path.is_file():
+            logger.debug(f"Skipping non-file path: {path}")
+            return None, None
+
+        try:
+            if path.stat().st_size == 0:
+                logger.debug(f"Skipping empty session file: {path}")
+                return None, None
+        except OSError:
+            return None, None
 
     session_id = backend.get_session_id(path)
 
     if session_id in _sessions:
         return None, None
 
-    # Skip empty files (claude --resume creates empty files before connecting)
-    try:
-        if path.stat().st_size == 0:
-            logger.debug(f"Skipping empty session file: {path}")
-            return None, None
-    except OSError:
-        return None, None
-
-    # Skip sessions without any user/assistant messages
     if not backend.has_messages(path):
         logger.debug(f"Skipping session without messages: {path}")
         return None, None
 
     evicted_id = None
-    # If at limit, remove the oldest session to make room
     if len(_sessions) >= MAX_SESSIONS:
         if evict_oldest:
             oldest_id = get_oldest_session_id()
@@ -296,9 +317,6 @@ def add_session(
             return None, None
 
     tailer = backend.create_tailer(path)
-    # Fast initialization: seek to end without parsing content.
-    # Messages are loaded on-demand via REST API when user views session.
-    # File watching still works - read_new_lines() detects new content.
     tailer.seek_to_end()
     info = SessionInfo(path=path, tailer=tailer)
     _sessions[session_id] = info
@@ -325,6 +343,8 @@ def _get_session_timestamp(info: SessionInfo) -> float:
             return ts
     except AttributeError:
         pass
+    if is_synthetic_session_path(info.path):
+        return 0
     try:
         return info.path.stat().st_mtime if info.path.exists() else 0
     except OSError:

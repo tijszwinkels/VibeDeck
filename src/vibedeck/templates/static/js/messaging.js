@@ -211,7 +211,42 @@ async function startPendingSession(pendingSession, message) {
 
     try {
         const backend = getBackendForNewSession(pendingSession);
-        const modelIndex = pendingSession.selectedModelIndex;
+        let modelIndex = pendingSession.selectedModelIndex;
+
+        // If we have a model name (ID) but no index, look up the index
+        if (modelIndex === null && pendingSession.selectedModelName) {
+            // Try to get models from cache first, then load if needed
+            let modelList = null;
+            
+            if (backend && state.cachedModels && state.cachedModels[backend]) {
+                modelList = state.cachedModels[backend];
+            } else if (backend) {
+                // Load models for this backend if not cached
+                try {
+                    const response = await fetch('backends/' + encodeURIComponent(backend) + '/models');
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (!state.cachedModels) state.cachedModels = {};
+                        state.cachedModels[backend] = data.models || [];
+                        modelList = state.cachedModels[backend];
+                    }
+                } catch (e) {
+                    console.error('Failed to load models for ' + backend + ':', e);
+                }
+            }
+            
+            // Fallback to allModelsForFilter
+            if (!modelList) {
+                modelList = state.allModelsForFilter || [];
+            }
+            
+            if (modelList && modelList.length > 0) {
+                const idx = modelList.indexOf(pendingSession.selectedModelName);
+                if (idx >= 0) {
+                    modelIndex = idx;
+                }
+            }
+        }
 
         const requestBody = {
             message: message,
@@ -257,7 +292,7 @@ async function startPendingSession(pendingSession, message) {
     } catch (e) {
         // Reset starting flag on error
         pendingSession.starting = false;
-        alert('Error: Failed to start session');
+        alert('Failed to start session');
         console.error('New session error:', e);
         dom.inputStatus.textContent = '';
         dom.inputStatus.className = 'input-status';
@@ -403,11 +438,12 @@ export function createPendingSession(cwd, projectName, backend, modelIndex, mode
         }
 
         const displayProjectName = projectName || 'New Session';
-        const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null, null);
+        const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null, null, null, null, null, null, null);
         session.pending = true;
         session.cwd = cwd;
         session.selectedBackend = backend || null;
         session.selectedModelIndex = modelIndex;  // Integer index or null
+        session.selectedModelName = modelName || null;  // Model ID string (e.g., "anthropic/claude-sonnet-4-5")
 
         session.sidebarItem.classList.add('pending');
         const backendInfo = backend ? ' using <strong>' + escapeHtml(backend) + '</strong>' : '';

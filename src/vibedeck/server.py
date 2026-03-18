@@ -36,7 +36,13 @@ from .broadcasting import (
     remove_client,
     remove_json_client,
 )
-from .routes import archives_router, diff_router, files_router, sessions_router, statuses_router
+from .routes import (
+    archives_router,
+    diff_router,
+    files_router,
+    sessions_router,
+    statuses_router,
+)
 from .routes.sessions import configure_session_routes
 from .sessions import (
     MAX_SESSIONS,
@@ -79,7 +85,9 @@ _summarizer: "Summarizer | None" = None
 _idle_tracker: "IdleTracker | None" = None
 _summarize_after_idle_for: int | None = None
 _idle_summary_model: str = "haiku"  # Model to use for idle summarization
-_summary_after_long_running: int | None = None  # Summarize if CLI runs longer than N seconds
+_summary_after_long_running: int | None = (
+    None  # Summarize if CLI runs longer than N seconds
+)
 
 # Pending processes for new sessions (cwd -> process)
 # When a new session is started, we store the process here until the session file appears
@@ -244,7 +252,9 @@ def load_allowed_directories_from_config() -> None:
     global _allowed_directories
     _allowed_directories = _load_allowed_directories()
     if _allowed_directories:
-        logger.info(f"Loaded {len(_allowed_directories)} allowed directories from config")
+        logger.info(
+            f"Loaded {len(_allowed_directories)} allowed directories from config"
+        )
 
 
 # Summarization configuration
@@ -272,7 +282,12 @@ def configure_summarization(
         summary_prompt_file: Path to prompt template file.
         summary_log_keys: Keys to include in JSONL log.
     """
-    global _summarizer, _idle_tracker, _summarize_after_idle_for, _idle_summary_model, _summary_after_long_running
+    global \
+        _summarizer, \
+        _idle_tracker, \
+        _summarize_after_idle_for, \
+        _idle_summary_model, \
+        _summary_after_long_running
 
     # Create log writer
     log_writer = LogWriter(
@@ -313,7 +328,9 @@ def get_idle_summary_model() -> str:
     return _idle_summary_model
 
 
-async def _summarize_session_async(session: SessionInfo, model: str | None = None) -> bool:
+async def _summarize_session_async(
+    session: SessionInfo, model: str | None = None
+) -> bool:
     """Async wrapper for summarization.
 
     Args:
@@ -513,7 +530,9 @@ async def _broadcast_session_status(session_id: str) -> None:
 
 async def _broadcast_session_token_usage_updated(session_id: str) -> None:
     """Broadcast session token usage update."""
-    await broadcast_session_token_usage_updated(session_id, get_session, get_current_backend)
+    await broadcast_session_token_usage_updated(
+        session_id, get_session, get_current_backend
+    )
 
 
 # Process management
@@ -549,14 +568,21 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
             if not info.get_summary_path().exists():
                 should_summarize = True
                 summary_reason = "new session"
-            elif _summary_after_long_running is not None and duration >= _summary_after_long_running:
+            elif (
+                _summary_after_long_running is not None
+                and duration >= _summary_after_long_running
+            ):
                 should_summarize = True
-                summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
+                summary_reason = (
+                    f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
+                )
 
             if should_summarize:
                 session_backend = get_backend_for_session(info.path)
                 session_model = session_backend.get_session_model(info.path)
-                logger.info(f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}")
+                logger.info(
+                    f"Triggering summary for {summary_reason} session {info.session_id} with model {session_model}"
+                )
                 asyncio.create_task(_summarize_session_async(info, model=session_model))
 
         await _broadcast_session_status(info.session_id)
@@ -659,16 +685,24 @@ async def run_cli_for_session(
             )
         else:
             env = os.environ.copy()
-            logger.info(f"Sending message to {session_id} (thinking disabled by default)")
+            logger.info(
+                f"Sending message to {session_id} (thinking disabled by default)"
+            )
 
         # Track start time for long-running session detection
         start_time = time.monotonic()
         duration = 0.0  # Initialize in case of early exception
 
         # Capture stdout if using permission detection
-        stdout_pipe = asyncio.subprocess.PIPE if use_permission_detection else asyncio.subprocess.DEVNULL
+        stdout_pipe = (
+            asyncio.subprocess.PIPE
+            if use_permission_detection
+            else asyncio.subprocess.DEVNULL
+        )
         # Use PIPE for stdin if we need to pass message content
-        stdin_pipe = asyncio.subprocess.PIPE if cmd_spec.stdin else asyncio.subprocess.DEVNULL
+        stdin_pipe = (
+            asyncio.subprocess.PIPE if cmd_spec.stdin else asyncio.subprocess.DEVNULL
+        )
 
         proc = await asyncio.create_subprocess_exec(
             *cmd_spec.args,
@@ -734,7 +768,10 @@ async def run_cli_for_session(
                 if not info.get_summary_path().exists():
                     should_summarize = True
                     summary_reason = "new session"
-                elif _summary_after_long_running is not None and duration >= _summary_after_long_running:
+                elif (
+                    _summary_after_long_running is not None
+                    and duration >= _summary_after_long_running
+                ):
                     should_summarize = True
                     summary_reason = f"long-running ({duration:.1f}s >= {_summary_after_long_running}s)"
 
@@ -742,7 +779,9 @@ async def run_cli_for_session(
                 # Use the same model that was used for the conversation
                 session_backend = get_backend_for_session(info.path)
                 session_model = session_backend.get_session_model(info.path)
-                logger.info(f"Triggering summary for {summary_reason} session {session_id} with model {session_model}")
+                logger.info(
+                    f"Triggering summary for {summary_reason} session {session_id} with model {session_model}"
+                )
                 asyncio.create_task(_summarize_session_async(info, model=session_model))
 
             # Process queue if messages waiting
@@ -991,9 +1030,40 @@ async def watch_loop() -> None:
                 if not backend.should_watch_file(changed_path):
                     continue
 
+                # Check if this is a SQLite database file change
+                is_db_file = getattr(backend, "is_db_file", None)
+                if is_db_file and is_db_file(changed_path):
+                    # For SQLite changes, check all tracked OpenCode sessions for updates
+                    import time
+
+                    current_time = time.time()
+                    # Get tracked session IDs
+                    tracked_sessions = get_sessions()
+                    if tracked_sessions:
+                        tracked_ids = list(tracked_sessions.keys())
+                        # Filter to only OpenCode session IDs (start with "ses_")
+                        synthetic_ids = [
+                            sid for sid in tracked_ids if sid.startswith("ses_")
+                        ]
+                        if synthetic_ids:
+                            get_updated = getattr(backend, "get_updated_sessions", None)
+                            if get_updated:
+                                # Use current_time - 5 to catch recent changes
+                                # (SQLite writes may not be immediately visible)
+                                check_time = current_time - 5
+                                updated_ids = get_updated(synthetic_ids, check_time)
+                                for sid in updated_ids:
+                                    sessions_to_process.add(sid)
+                                logger.debug(
+                                    f"SQLite change detected, {len(updated_ids)} sessions updated"
+                                )
+                    # Also check for new sessions
+                    need_new_session_check = True
+                    continue
+
                 # Get session ID from the changed file path
                 # For Claude Code: session ID is the filename (or from summary file)
-                # For OpenCode: session ID is extracted from message/part path
+                # For OpenCode legacy: session ID is extracted from message/part path
                 session_id = backend.get_session_id_from_changed_file(changed_path)
                 logger.debug(
                     "File change backend=%s type=%s path=%s -> session=%s",
@@ -1176,7 +1246,9 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
             sessions_data = get_sessions_list()
         yield {
             "event": "sessions",
-            "data": json.dumps({"sessions": sessions_data, "maxSessions": MAX_SESSIONS}),
+            "data": json.dumps(
+                {"sessions": sessions_data, "maxSessions": MAX_SESSIONS}
+            ),
         }
 
         # Signal catchup complete immediately (messages loaded on-demand via REST API)
@@ -1226,7 +1298,9 @@ async def json_event_generator(request: Request) -> AsyncGenerator[dict, None]:
             sessions_data = get_sessions_list()
         yield {
             "event": "sessions",
-            "data": json.dumps({"sessions": sessions_data, "maxSessions": MAX_SESSIONS}),
+            "data": json.dumps(
+                {"sessions": sessions_data, "maxSessions": MAX_SESSIONS}
+            ),
         }
 
         # Signal catchup complete
