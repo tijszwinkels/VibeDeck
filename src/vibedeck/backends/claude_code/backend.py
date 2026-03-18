@@ -29,6 +29,7 @@ from .discovery import (
     DEFAULT_PROJECTS_DIR,
 )
 from .pricing import get_session_token_usage, get_session_model
+from ..shared.context_window import get_claude_context_limit_tokens
 from .cli import (
     CLI_COMMAND,
     CLI_INSTALL_INSTRUCTIONS,
@@ -191,6 +192,10 @@ class ClaudeCodeBackend:
             Model ID string or None if not found.
         """
         return get_session_model(session_path)
+
+    def get_context_limit_tokens(self, session_path: Path) -> int | None:
+        """Get the effective context limit for the session's primary model."""
+        return get_claude_context_limit_tokens(get_session_model(session_path))
 
     # ===== Model Selection =====
 

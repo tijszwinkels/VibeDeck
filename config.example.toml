@@ -29,6 +29,7 @@
 # dangerously_skip_permissions = false  # Skip Claude permission prompts
 # fork = false                   # Enable session forking
 # default_send_backend = "claude-code"  # Default backend for new sessions
+# show_codex_bootstrap_messages = false  # Show Codex-injected AGENTS bootstrap messages
 # enable_thinking = false        # Enable thinking level detection (off by default)
 # thinking_budget = 10000        # Fixed thinking token budget (overrides keyword detection)
 

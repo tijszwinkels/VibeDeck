@@ -66,6 +66,8 @@ logger = logging.getLogger(__name__)
 CATCHUP_TIMEOUT = (
     30  # seconds - max time for catchup before telling client to reinitialize
 )
+HTML_SSE_QUEUE_MAXSIZE = 5000  # Large enough for bursty Codex transcript batches
+JSON_SSE_QUEUE_MAXSIZE = 5000  # JSON clients receive the same message bursts
 _send_enabled = True  # Enabled by default, disable with --disable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
@@ -344,6 +346,13 @@ async def _summarize_session_async(
 
     # Get the session-specific backend (MultiBackend can't build commands directly)
     session_backend = get_backend_for_session(session.path)
+    if not getattr(session_backend, "supports_summarization", lambda: True)():
+        logger.info(
+            "Skipping summary for %s: backend %s does not support summarization",
+            session.session_id,
+            session_backend.name,
+        )
+        return False
 
     # Create a summarizer with the correct backend for this session
     session_summarizer = Summarizer(
@@ -545,6 +554,7 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
     try:
         await info.process.wait()
         duration = time.monotonic() - start_time
+        await process_session_messages(info.session_id)
     except Exception as e:
         logger.error(f"Error monitoring process for {info.session_id}: {e}")
     finally:
@@ -738,6 +748,9 @@ async def run_cli_for_session(
                     await _broadcast_session_status(session_id)
                 return
 
+        if not fork:
+            await process_session_messages(session_id)
+
     except Exception as e:
         logger.error(f"Error running CLI for {session_id}: {e}")
 
@@ -782,14 +795,15 @@ async def run_cli_for_session(
 # Session message processing
 
 
-async def process_session_messages(session_id: str) -> None:
+async def process_session_messages(session_id: str) -> int:
     """Read new messages from a session and broadcast to clients."""
     info = get_session(session_id)
     if info is None:
-        return
+        return 0
 
     # Get the renderer for this specific session
     renderer = get_renderer_for_session(info.path)
+    backend = get_backend_for_session(info.path)
 
     # Only set up normalizer if JSON clients are connected (lazy normalization)
     normalizer = None
@@ -797,11 +811,24 @@ async def process_session_messages(session_id: str) -> None:
         normalizer = get_normalizer_for_session(info.path)
 
     new_entries = info.tailer.read_new_lines()
-    logger.debug(f"read_new_lines returned {len(new_entries)} entries for {session_id}")
+    logger.debug(
+        "process_session_messages backend=%s session=%s path=%s entries=%s running=%s",
+        backend.name,
+        session_id,
+        info.path,
+        len(new_entries),
+        info.process is not None,
+    )
     for entry in new_entries:
         # HTML broadcast
         html = renderer.render_message(entry)
         if html:
+            logger.debug(
+                "Broadcasting HTML message for %s from payload=%s role=%s",
+                session_id,
+                entry.get("payload", {}).get("type"),
+                entry.get("payload", {}).get("role"),
+            )
             await broadcast_message(session_id, html)
 
         # JSON broadcast (only when clients connected)
@@ -817,6 +844,77 @@ async def process_session_messages(session_id: str) -> None:
     if new_entries:
         await _broadcast_session_status(session_id)
         await _broadcast_session_token_usage_updated(session_id)
+    return len(new_entries)
+
+
+async def process_session_messages_with_settle(
+    session_id: str,
+    settle_delay: float = 0.20,
+    max_rounds: int = 8,
+    idle_rounds_to_stop: int = 2,
+) -> None:
+    """Process new messages and poll briefly for bursty transcript writes.
+
+    Some CLIs write transcript records in short bursts that do not always
+    produce a second filesystem event for the later lines. While a session
+    process is still running, poll the file for a short settling window.
+    """
+    await process_session_messages(session_id)
+
+    info = get_session(session_id)
+    if info is None or info.process is None:
+        logger.debug(
+            "Skipping settle re-read for %s (session missing or no running process)",
+            session_id,
+        )
+        return
+
+    try:
+        last_size = info.path.stat().st_size
+    except OSError:
+        last_size = -1
+
+    idle_rounds = 0
+    for round_idx in range(max_rounds):
+        await asyncio.sleep(settle_delay)
+
+        info = get_session(session_id)
+        if info is None or info.process is None:
+            logger.debug(
+                "Stopping settle polling for %s at round %s (session missing or process ended)",
+                session_id,
+                round_idx + 1,
+            )
+            return
+
+        try:
+            current_size = info.path.stat().st_size
+        except OSError:
+            current_size = -1
+
+        logger.debug(
+            "Settle poll round %s/%s for %s (size %s -> %s)",
+            round_idx + 1,
+            max_rounds,
+            session_id,
+            last_size,
+            current_size,
+        )
+        new_count = await process_session_messages(session_id)
+
+        if new_count == 0 and current_size == last_size:
+            idle_rounds += 1
+            if idle_rounds >= idle_rounds_to_stop:
+                logger.debug(
+                    "Stopping settle polling for %s after %s idle rounds",
+                    session_id,
+                    idle_rounds,
+                )
+                return
+        else:
+            idle_rounds = 0
+
+        last_size = current_size
 
 
 async def process_session_summary_update(session_id: str) -> None:
@@ -864,7 +962,6 @@ async def check_for_new_sessions() -> None:
                         # Check if there's a pending process for this session's project path
                         attached = _attach_pending_process(info)
                         await broadcast_session_added(info)
-                        await _broadcast_session_catchup(info)
                         # If we attached a process, broadcast status and start monitoring
                         if attached:
                             await _broadcast_session_status(info.session_id)
@@ -969,7 +1066,11 @@ async def watch_loop() -> None:
                 # For OpenCode legacy: session ID is extracted from message/part path
                 session_id = backend.get_session_id_from_changed_file(changed_path)
                 logger.debug(
-                    f"File change: {change_type.name} {changed_path.name} -> session {session_id}"
+                    "File change backend=%s type=%s path=%s -> session=%s",
+                    backend.name,
+                    change_type.name,
+                    changed_path,
+                    session_id,
                 )
 
                 if session_id and get_session(session_id) is not None:
@@ -986,9 +1087,19 @@ async def watch_loop() -> None:
                         sessions_with_summary_updates.add(session_id)
                     else:
                         # Regular session file - queue for message processing
+                        logger.debug(
+                            "Queued session %s for message processing from file event %s",
+                            session_id,
+                            changed_path,
+                        )
                         sessions_to_process.add(session_id)
                 else:
                     # Unknown session - might be a new session file
+                    logger.debug(
+                        "Unknown watched file change for backend=%s path=%s; scheduling new-session scan",
+                        backend.name,
+                        changed_path,
+                    )
                     need_new_session_check = True
 
             # Check for new sessions (needs lock, but only once per batch)
@@ -997,7 +1108,7 @@ async def watch_loop() -> None:
 
             # Process messages for known sessions (doesn't need lock)
             for session_id in sessions_to_process:
-                await process_session_messages(session_id)
+                await process_session_messages_with_settle(session_id)
                 # Notify idle tracker of activity (for re-summarization after idle)
                 if _idle_tracker is not None:
                     _idle_tracker.on_session_activity(session_id)
@@ -1126,7 +1237,7 @@ async def serve_js(filename: str) -> Response:
 
 async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
     """Generate SSE events for a client."""
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=HTML_SSE_QUEUE_MAXSIZE)
     add_client(queue)
 
     try:
@@ -1178,7 +1289,7 @@ async def json_event_generator(request: Request) -> AsyncGenerator[dict, None]:
     Same event types as event_generator() but message events contain
     normalized JSON content blocks instead of HTML.
     """
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=JSON_SSE_QUEUE_MAXSIZE)
     add_json_client(queue)
 
     try:

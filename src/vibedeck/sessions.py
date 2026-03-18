@@ -165,8 +165,21 @@ class SessionInfo:
             except (OSError, IOError) as e:
                 logger.warning(f"Failed to get token usage for {self.path}: {e}")
                 token_usage = {}
+
+            get_context_limit_tokens = getattr(backend, "get_context_limit_tokens", None)
+            if get_context_limit_tokens is not None:
+                try:
+                    context_limit_tokens = get_context_limit_tokens(self.path)
+                except (OSError, IOError) as e:
+                    logger.warning(
+                        "Failed to get context limit for %s: %s", self.path, e
+                    )
+                    context_limit_tokens = None
+            else:
+                context_limit_tokens = None
         else:
             token_usage = {}
+            context_limit_tokens = None
 
         return {
             "id": self.session_id,
@@ -185,6 +198,7 @@ class SessionInfo:
             "summaryShort": self.summary_short,
             "summaryExecutive": self.summary_executive,
             "summaryBranch": self.summary_branch,
+            "contextLimitTokens": context_limit_tokens,
         }
 
 

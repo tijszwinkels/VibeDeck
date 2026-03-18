@@ -166,6 +166,8 @@ uv run vibedeck --debug
 
 * OpenCode support is not currently maintained very well, and misses some features such as the permissions system and automatic summaries. Create an issue if anything doesn't work.
 
+* Notes for a future Codex backend, including discovered CLI commands and the current on-disk `~/.codex` session format, are documented in `docs/20260316-codex-cli-interface.md`.
+
 ## Credits
 
 The graphical interface of this project is inspired on [claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) by [Simon Willison](https://simonwillison.net/). This project allows to generate html-pages from claude code transcripts, put those in gists, and attach them to commit logs, which is tremendously useful. The layout is adapted from that project.

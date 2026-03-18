@@ -4,11 +4,13 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from vibedeck import server, sessions, broadcasting
+from vibedeck.backends.protocol import CommandSpec
 from vibedeck.server import app
 from vibedeck.sessions import add_session
 from vibedeck.routes.sessions import configure_session_routes
@@ -111,6 +113,146 @@ class TestServerEndpoints:
         assert data["status"] == "ok"
         assert "sessions" in data
         assert "clients" in data
+
+    def test_manual_summary_rejected_for_codex_session(self):
+        """Codex sessions should reject manual summary triggers."""
+        from vibedeck.routes import sessions as session_routes
+
+        info = MagicMock()
+        info.session_id = "codex-session"
+        info.path = Path("/tmp/codex-session.jsonl")
+        sessions.get_sessions()[info.session_id] = info
+
+        codex_backend = MagicMock()
+        codex_backend.name = "Codex"
+        codex_backend.supports_summarization.return_value = False
+
+        session_routes._server_state["get_backend_for_session"] = lambda path: codex_backend
+        session_routes._server_state["get_summarizer"] = lambda: object()
+
+        client = TestClient(app)
+        response = client.post(f"/sessions/{info.session_id}/summarize")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Summarization is not supported for Codex sessions."
+
+    @pytest.mark.asyncio
+    async def test_summarize_session_async_skips_backend_without_support(self):
+        """Unsupported backends should be skipped before spawning summarizer subprocesses."""
+        session = MagicMock()
+        session.session_id = "codex-session"
+        session.path = Path("/tmp/codex-session.jsonl")
+
+        codex_backend = MagicMock()
+        codex_backend.name = "Codex"
+        codex_backend.supports_summarization.return_value = False
+
+        original = server.get_backend_for_session
+        server._summarizer = MagicMock()
+        try:
+            server.get_backend_for_session = lambda path: codex_backend
+            result = await server._summarize_session_async(session)
+        finally:
+            server.get_backend_for_session = original
+            server._summarizer = None
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_event_generator_uses_large_html_queue(self):
+        """HTML SSE clients should have enough queue capacity for Codex bursts."""
+
+        captured_queue = None
+        original_add_client = server.add_client
+
+        def _capture_add_client(queue):
+            nonlocal captured_queue
+            captured_queue = queue
+            original_add_client(queue)
+
+        class _Request:
+            async def is_disconnected(self):
+                return False
+
+        server.remove_client(captured_queue) if captured_queue is not None else None
+
+        try:
+            server.add_client = _capture_add_client
+            gen = server.event_generator(_Request())
+            await anext(gen)
+            await anext(gen)
+            assert captured_queue is not None
+            assert captured_queue.maxsize == server.HTML_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize > 100
+        finally:
+            server.add_client = original_add_client
+            if captured_queue is not None:
+                server.remove_client(captured_queue)
+            await gen.aclose()
+
+    @pytest.mark.asyncio
+    async def test_json_event_generator_uses_large_json_queue(self):
+        """JSON SSE clients should have enough queue capacity for Codex bursts."""
+
+        captured_queue = None
+        original_add_json_client = server.add_json_client
+
+        def _capture_add_json_client(queue):
+            nonlocal captured_queue
+            captured_queue = queue
+            original_add_json_client(queue)
+
+        class _Request:
+            async def is_disconnected(self):
+                return False
+
+        server.remove_json_client(captured_queue) if captured_queue is not None else None
+
+        try:
+            server.add_json_client = _capture_add_json_client
+            gen = server.json_event_generator(_Request())
+            await anext(gen)
+            await anext(gen)
+            assert captured_queue is not None
+            assert captured_queue.maxsize == server.JSON_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize >= server.HTML_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize > 100
+        finally:
+            server.add_json_client = original_add_json_client
+            if captured_queue is not None:
+                server.remove_json_client(captured_queue)
+            await gen.aclose()
+
+    @pytest.mark.asyncio
+    async def test_check_for_new_sessions_does_not_broadcast_transcript_catchup(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """Watcher-discovered sessions should not replay full transcripts over SSE."""
+
+        sessions.get_sessions().clear()
+        sessions.get_known_session_files().clear()
+
+        added_sessions = []
+        catchups = []
+
+        async def _fake_broadcast_session_added(info):
+            added_sessions.append(info.session_id)
+
+        async def _fake_broadcast_session_catchup(info):
+            catchups.append(info.session_id)
+
+        class _BackendProxy:
+            def find_recent_sessions(self, limit, include_subagents=False):
+                return [temp_jsonl_file]
+
+        monkeypatch.setattr(server, "get_server_backend", lambda: _BackendProxy())
+        monkeypatch.setattr(server, "broadcast_session_added", _fake_broadcast_session_added)
+        monkeypatch.setattr(server, "_broadcast_session_catchup", _fake_broadcast_session_catchup)
+
+        await server.check_for_new_sessions()
+
+        assert len(added_sessions) == 1
+        assert catchups == []
 
     def test_sessions_endpoint(self, temp_jsonl_file):
         """Test sessions list endpoint."""
@@ -267,6 +409,153 @@ class TestSendFeature:
         assert data["session_id"] == temp_jsonl_file.stem
         assert data["running"] is False
         assert data["queued_messages"] == 0
+
+    def test_run_cli_for_session_processes_final_messages_without_watcher(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """A final read after CLI exit should broadcast appended assistant output."""
+        info, _ = add_session(temp_jsonl_file)
+        session_id = info.session_id
+
+        class _FakeStdin:
+            def write(self, data):
+                self.data = data
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+            async def wait_closed(self):
+                return None
+
+        class _FakeProcess:
+            def __init__(self, path: Path):
+                self.path = path
+                self.returncode = 0
+                self.stdin = _FakeStdin()
+
+            async def communicate(self):
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "timestamp": "2024-12-30T10:00:02.000Z",
+                                "message": {
+                                    "content": [
+                                        {"type": "text", "text": "Final reply"}
+                                    ]
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                return b"", b""
+
+        messages = []
+
+        class _FakeBackend:
+            name = "Fake"
+
+            def ensure_session_indexed(self, session_id_arg):
+                return None
+
+            def build_send_command(
+                self,
+                session_id_arg,
+                message,
+                skip_permissions=False,
+                output_format=None,
+                add_dirs=None,
+            ):
+                return CommandSpec(args=["fake-cli"], stdin=message)
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_session_model(self, session_path):
+                return None
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeProcess(temp_jsonl_file)
+
+        async def _fake_broadcast_message(session_id_arg: str, html: str):
+            messages.append((session_id_arg, html))
+
+        async def _fake_broadcast_status(session_id_arg: str):
+            return None
+
+        monkeypatch.setattr(
+            server.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+        )
+        monkeypatch.setattr(server, "get_backend_for_session", lambda path: _FakeBackend())
+        monkeypatch.setattr(server, "broadcast_message", _fake_broadcast_message)
+        monkeypatch.setattr(server, "_broadcast_session_status", _fake_broadcast_status)
+
+        asyncio.run(server.run_cli_for_session(session_id, "continue"))
+
+        assert any(msg_session == session_id for msg_session, _ in messages)
+        assert any("Final reply" in html for _, html in messages)
+
+    def test_process_session_messages_with_settle_rechecks_running_session(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """A delayed follow-up read should catch later lines in the same send."""
+        info, _ = add_session(temp_jsonl_file)
+        session_id = info.session_id
+
+        class _Tailer:
+            def __init__(self):
+                self.calls = 0
+                self.waiting_for_input = False
+
+            def read_new_lines(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return []
+                if self.calls > 2:
+                    return []
+                return [
+                    {
+                        "type": "assistant",
+                        "timestamp": "2024-12-30T10:00:02.000Z",
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "Settled reply"}
+                            ]
+                        },
+                    }
+                ]
+
+        class _Renderer:
+            def render_message(self, entry):
+                return "<div>Settled reply</div>"
+
+        info.tailer = _Tailer()
+        info.process = object()
+        messages = []
+
+        async def _fake_broadcast_message(session_id_arg: str, html: str):
+            messages.append((session_id_arg, html))
+
+        async def _fake_broadcast_status(session_id_arg: str):
+            return None
+
+        async def _fake_broadcast_usage(session_id_arg: str):
+            return None
+
+        monkeypatch.setattr(server, "get_renderer_for_session", lambda path: _Renderer())
+        monkeypatch.setattr(server, "broadcast_message", _fake_broadcast_message)
+        monkeypatch.setattr(server, "_broadcast_session_status", _fake_broadcast_status)
+        monkeypatch.setattr(
+            server, "_broadcast_session_token_usage_updated", _fake_broadcast_usage
+        )
+
+        asyncio.run(server.process_session_messages_with_settle(session_id, settle_delay=0))
+
+        assert messages == [(session_id, "<div>Settled reply</div>")]
 
     def test_session_status_404_for_unknown(self):
         """Test session status returns 404 for unknown session."""

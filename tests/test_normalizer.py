@@ -727,6 +727,79 @@ class TestNormalizeMessage:
         assert msg is not None
         assert msg.role == "user"
 
+    def test_dispatches_codex_user_message(self):
+        entry = {
+            "type": "response_item",
+            "timestamp": "2026-03-16T15:15:40.200Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello from Codex"}],
+            },
+        }
+        msg = normalize_message(entry, "codex")
+        assert msg is not None
+        assert msg.role == "user"
+        assert msg.blocks[0].type == "text"
+        assert msg.blocks[0].text == "Hello from Codex"
+
+    def test_dispatches_codex_assistant_message(self):
+        entry = {
+            "type": "response_item",
+            "timestamp": "2026-03-16T15:15:43.500Z",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Inspecting the backend notes."}
+                ],
+            },
+        }
+        msg = normalize_message(entry, "codex")
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert msg.blocks[0].type == "text"
+        assert msg.blocks[0].text == "Inspecting the backend notes."
+
+    def test_dispatches_codex_function_call(self):
+        entry = {
+            "type": "response_item",
+            "timestamp": "2026-03-16T15:15:42.000Z",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "arguments": '{"cmd":"rg --files"}',
+                "call_id": "call_123",
+            },
+        }
+        msg = normalize_message(entry, "codex")
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.blocks) == 1
+        assert msg.blocks[0].type == "tool_use"
+        assert msg.blocks[0].tool_name == "exec_command"
+        assert msg.blocks[0].tool_id == "call_123"
+        assert msg.blocks[0].tool_input == {"cmd": "rg --files"}
+
+    def test_dispatches_codex_function_call_output(self):
+        entry = {
+            "type": "response_item",
+            "timestamp": "2026-03-16T15:15:43.000Z",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_123",
+                "output": "src/vibedeck/backends/protocol.py",
+            },
+        }
+        msg = normalize_message(entry, "codex")
+        assert msg is not None
+        assert msg.role == "assistant"
+        assert len(msg.blocks) == 1
+        assert msg.blocks[0].type == "tool_result"
+        assert msg.blocks[0].tool_use_id == "call_123"
+        assert msg.blocks[0].content == "src/vibedeck/backends/protocol.py"
+        assert msg.blocks[0].is_error is False
+
     def test_unknown_backend_returns_none(self):
         entry = {"type": "user", "message": {"content": "Hi"}}
         msg = normalize_message(entry, "unknown_backend")

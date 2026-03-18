@@ -7,6 +7,7 @@ and generate summaries without writing anything back to the session file.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -74,6 +75,34 @@ class Summarizer:
         self.prompt_file = prompt_file
         self.thinking_budget = thinking_budget
 
+    def _build_summary_command(self, session: "SessionInfo", prompt: str) -> tuple[list[str], str | None]:
+        """Build a backend-appropriate non-persistent summary command."""
+        build_send = self.backend.build_send_command
+        kwargs: dict[str, Any] = {
+            "session_id": session.session_id,
+            "message": prompt,
+            "skip_permissions": True,
+        }
+
+        try:
+            signature = inspect.signature(build_send)
+        except (TypeError, ValueError):
+            signature = None
+
+        if signature is not None and "output_format" in signature.parameters:
+            kwargs["output_format"] = "json"
+
+        cmd_spec = build_send(**kwargs)
+        cmd_args = list(cmd_spec.args)
+        cli_command = getattr(self.backend, "cli_command", None)
+
+        if cli_command == "claude":
+            cmd_args.append("--no-session-persistence")
+        elif cli_command == "codex":
+            cmd_args.append("--ephemeral")
+
+        return cmd_args, cmd_spec.stdin
+
     async def summarize(self, session: SessionInfo, model: str | None = None) -> SummaryResult:
         """Generate a summary for a session.
 
@@ -106,15 +135,7 @@ class Summarizer:
             session_started_at=session_started_at,
         )
 
-        # Build resume command with --no-session-persistence
-        # This reads the session for context but doesn't write anything back
-        cmd_spec = self.backend.build_send_command(
-            session_id=session.session_id,
-            message=prompt,
-            skip_permissions=True,
-        )
-        # Add extra flags to the command args
-        cmd_args = cmd_spec.args + ["--no-session-persistence", "--output-format", "json"]
+        cmd_args, cmd_stdin = self._build_summary_command(session, prompt)
 
         # Add model flag if specified
         if model:
@@ -134,7 +155,7 @@ class Summarizer:
                 logger.debug(f"Using thinking budget: {self.thinking_budget}")
 
             # Use PIPE for stdin if we need to pass message content
-            stdin_pipe = asyncio.subprocess.PIPE if cmd_spec.stdin else asyncio.subprocess.DEVNULL
+            stdin_pipe = asyncio.subprocess.PIPE if cmd_stdin else asyncio.subprocess.DEVNULL
 
             process = await asyncio.create_subprocess_exec(
                 *cmd_args,
@@ -146,8 +167,8 @@ class Summarizer:
             )
 
             # Write message to stdin if provided
-            if cmd_spec.stdin:
-                process.stdin.write(cmd_spec.stdin.encode())
+            if cmd_stdin:
+                process.stdin.write(cmd_stdin.encode())
                 await process.stdin.drain()
                 process.stdin.close()
                 await process.stdin.wait_closed()

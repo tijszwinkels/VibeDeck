@@ -147,6 +147,12 @@ export function formatTokenCount(count) {
     return count.toString();
 }
 
+export function formatContextPercent(tokens, limitTokens) {
+    if (!tokens || !limitTokens) return '';
+    const percent = (tokens / limitTokens) * 100;
+    return percent >= 10 ? percent.toFixed(0) + '%' : percent.toFixed(1) + '%';
+}
+
 // Cost formatting
 export function formatCost(cost) {
     if (!cost || cost === 0) return '$0.00';
@@ -190,6 +196,35 @@ export function formatModelName(model) {
         return bare.charAt(0).toUpperCase() + bare.slice(1) + ' (latest)';
     }
     return model;
+}
+
+export function getSessionContextUsageTokens(session) {
+    if (!session) return null;
+
+    const assistantMessages = session.container
+        ? session.container.querySelectorAll('.message.assistant[data-usage-input]')
+        : [];
+    if (assistantMessages.length > 0) {
+        const lastMessage = assistantMessages[assistantMessages.length - 1];
+        const inputTokens = Number(lastMessage.dataset.usageInput || 0);
+        const cacheCreateTokens = Number(lastMessage.dataset.usageCacheCreate || 0);
+        const cacheReadTokens = Number(lastMessage.dataset.usageCacheRead || 0);
+        const totalTokens = inputTokens + cacheCreateTokens + cacheReadTokens;
+        return totalTokens > 0 ? totalTokens : null;
+    }
+
+    return null;
+}
+
+export function getSessionTotalUsedTokens(session) {
+    if (!session || !session.tokenUsage) return null;
+
+    const totalTokens =
+        Number(session.tokenUsage.input_tokens || 0) +
+        Number(session.tokenUsage.output_tokens || 0) +
+        Number(session.tokenUsage.cache_creation_tokens || 0) +
+        Number(session.tokenUsage.cache_read_tokens || 0);
+    return totalTokens > 0 ? totalTokens : null;
 }
 
 // Clipboard operations

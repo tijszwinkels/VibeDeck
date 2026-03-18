@@ -36,6 +36,7 @@ class ServeConfig:
     dangerously_skip_permissions: bool = False
     fork: bool = False
     default_send_backend: str | None = None
+    show_codex_bootstrap_messages: bool = False
     enable_thinking: bool = False
     thinking_budget: int | None = None  # Fixed thinking token budget (overrides keyword detection)
     # Summary options
@@ -131,6 +132,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "dangerously_skip_permissions": False,
         "fork": False,
         "default_send_backend": None,
+        "show_codex_bootstrap_messages": False,
         "enable_thinking": False,
         "thinking_budget": None,
         "summary_log": None,
