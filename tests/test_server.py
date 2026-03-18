@@ -191,6 +191,39 @@ class TestServerEndpoints:
             await gen.aclose()
 
     @pytest.mark.asyncio
+    async def test_json_event_generator_uses_large_json_queue(self):
+        """JSON SSE clients should have enough queue capacity for Codex bursts."""
+
+        captured_queue = None
+        original_add_json_client = server.add_json_client
+
+        def _capture_add_json_client(queue):
+            nonlocal captured_queue
+            captured_queue = queue
+            original_add_json_client(queue)
+
+        class _Request:
+            async def is_disconnected(self):
+                return False
+
+        server.remove_json_client(captured_queue) if captured_queue is not None else None
+
+        try:
+            server.add_json_client = _capture_add_json_client
+            gen = server.json_event_generator(_Request())
+            await anext(gen)
+            await anext(gen)
+            assert captured_queue is not None
+            assert captured_queue.maxsize == server.JSON_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize >= server.HTML_SSE_QUEUE_MAXSIZE
+            assert captured_queue.maxsize > 100
+        finally:
+            server.add_json_client = original_add_json_client
+            if captured_queue is not None:
+                server.remove_json_client(captured_queue)
+            await gen.aclose()
+
+    @pytest.mark.asyncio
     async def test_check_for_new_sessions_does_not_broadcast_transcript_catchup(
         self, temp_jsonl_file, monkeypatch
     ):

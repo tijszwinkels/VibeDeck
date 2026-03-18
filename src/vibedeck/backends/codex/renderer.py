@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import json
 
 from ..shared.rendering import (
     macros,
@@ -13,6 +12,7 @@ from ..shared.rendering import (
     render_markdown_text,
     render_user_text,
 )
+from .response_items import get_function_call_output_state
 
 
 def _render_message_blocks(content: list[dict], role: str) -> str:
@@ -67,12 +67,12 @@ def render_message(entry: dict) -> str:
         )
 
     if payload_type == "function_call_output":
-        output = payload.get("output", "")
+        output, is_error = get_function_call_output_state(payload)
         if is_json_like(output):
-            content_html = macros.tool_result(format_json(output), False)
+            content_html = macros.tool_result(format_json(output), is_error)
         else:
             content_html = macros.tool_result(
-                f"<pre>{html.escape(str(output))}</pre>", False
+                f"<pre>{html.escape(str(output))}</pre>", is_error
             )
         return macros.message(
             "assistant", "Assistant", msg_id, timestamp, content_html, None, None

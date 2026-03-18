@@ -12,6 +12,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from ..codex.response_items import get_function_call_output_state
+
 logger = logging.getLogger(__name__)
 
 
@@ -455,17 +457,7 @@ def _normalize_codex_function_call(payload: dict, timestamp: str) -> NormalizedM
 
 def _normalize_codex_function_call_output(payload: dict, timestamp: str) -> NormalizedMessage:
     """Normalize Codex function_call_output into an assistant tool_result message."""
-    is_error = bool(
-        payload.get("is_error")
-        or payload.get("error")
-        or payload.get("status") in {"error", "failed"}
-    )
-
-    content = payload.get("output")
-    if content is None and payload.get("error") is not None:
-        content = payload.get("error")
-    if content is not None and not isinstance(content, (str, list)):
-        content = json.dumps(content, ensure_ascii=False)
+    content, is_error = get_function_call_output_state(payload)
 
     return NormalizedMessage(
         role="assistant",

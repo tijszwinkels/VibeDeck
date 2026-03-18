@@ -252,6 +252,27 @@ class TestCodexRenderer:
         assert "exec_command" in html
         assert "src/vibedeck/backends/protocol.py" in html
 
+    def test_render_function_call_output_error(self):
+        """Errored tool outputs should render with error styling."""
+        from vibedeck.backends.codex.renderer import CodexRenderer
+
+        renderer = CodexRenderer()
+        html = renderer.render_message(
+            {
+                "timestamp": "2026-03-16T15:15:43.000Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_123",
+                    "error": "Permission denied",
+                    "status": "error",
+                },
+            }
+        )
+
+        assert "tool-error" in html
+        assert "Permission denied" in html
+
 
 class TestCodexBackend:
     """Tests for the Codex backend wrapper."""

@@ -61,6 +61,7 @@ CATCHUP_TIMEOUT = (
     30  # seconds - max time for catchup before telling client to reinitialize
 )
 HTML_SSE_QUEUE_MAXSIZE = 5000  # Large enough for bursty Codex transcript batches
+JSON_SSE_QUEUE_MAXSIZE = 5000  # JSON clients receive the same message bursts
 _send_enabled = True  # Enabled by default, disable with --disable-send CLI flag
 _skip_permissions = False  # Enable with --dangerously-skip-permissions CLI flag
 _fork_enabled = False  # Enable with --fork CLI flag
@@ -1216,7 +1217,7 @@ async def json_event_generator(request: Request) -> AsyncGenerator[dict, None]:
     Same event types as event_generator() but message events contain
     normalized JSON content blocks instead of HTML.
     """
-    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=JSON_SSE_QUEUE_MAXSIZE)
     add_json_client(queue)
 
     try:
