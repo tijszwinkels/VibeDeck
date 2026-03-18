@@ -24,6 +24,7 @@ class GrantPermissionNewSessionRequest(BaseModel):
     cwd: str  # Working directory for the new session
     backend: str | None = None  # Backend to use (optional)
     model_index: int | None = None  # Model index (optional)
+    source_session_id: str | None = None  # Source session for inherited backend/model
 
 
 class NewSessionRequest(BaseModel):
@@ -32,6 +33,7 @@ class NewSessionRequest(BaseModel):
     message: str  # Initial message to send (required)
     cwd: str | None = None  # Working directory (optional)
     backend: str | None = None  # Backend to use (optional, for multi-backend mode)
+    source_session_id: str | None = None  # Source session for inherited backend/model
     model_index: int | None = (
         None  # Model index from /backends/{name}/models (optional)
     )

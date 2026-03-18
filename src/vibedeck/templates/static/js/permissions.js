@@ -239,6 +239,7 @@ function updateModalButtons(allSandbox) {
  * @param {string} data.original_message - The message that triggered the denial
  * @param {string} data.backend - Backend name
  * @param {number|null} data.model_index - Model index if applicable
+ * @param {string|null} data.source_session_id - Source session for inherited backend/model
  */
 export function showPermissionModalForNewSession(data) {
     const { denials } = data;
@@ -267,7 +268,7 @@ export function showPermissionModalForNewSession(data) {
  * Handle grant button click for new sessions.
  */
 async function handleGrantNewSession() {
-    const { cwd, original_message, backend, model_index } = state.pendingPermission;
+    const { cwd, original_message, backend, model_index, source_session_id } = state.pendingPermission;
 
     // Collect selected permissions (for regular permission denials)
     // Note: Query for checked radio directly instead of by name, since forEach index
@@ -311,7 +312,8 @@ async function handleGrantNewSession() {
                 original_message: original_message,
                 cwd: cwd,
                 backend: backend,
-                model_index: model_index
+                model_index: model_index,
+                source_session_id: source_session_id
             })
         });
 

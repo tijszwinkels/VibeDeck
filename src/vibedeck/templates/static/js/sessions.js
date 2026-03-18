@@ -269,7 +269,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
             const session = state.sessions.get(sessionId);
             const model = session ? session.model : null;
             const backend = session ? session.backend : null;
-            createPendingSession(cwd || null, projectName, backend, null, model);
+            createPendingSession(cwd || null, projectName, backend, null, model, sessionId);
         } else {
             // Check if this session is in an archived project
             const session = state.sessions.get(sessionId);

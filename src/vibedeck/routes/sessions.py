@@ -86,6 +86,22 @@ def _get_target_backend(backend_name: str):
     raise HTTPException(status_code=404, detail=f"Backend not found: {backend_name}")
 
 
+def _get_source_session_context(source_session_id: str | None):
+    """Resolve the backend and model from a source session, if provided."""
+    if not source_session_id:
+        return None, None, None
+
+    info = get_session(source_session_id)
+    if info is None:
+        raise HTTPException(
+            status_code=404, detail=f"Source session not found: {source_session_id}"
+        )
+
+    backend = _server_state["get_backend_for_session"](info.path)
+    model = getattr(backend, "get_session_model", lambda path: None)(info.path)
+    return info, backend, model
+
+
 @router.get("/sessions")
 async def list_sessions() -> dict:
     """List all tracked sessions."""
@@ -413,6 +429,7 @@ async def grant_permission_new_session(request: GrantPermissionNewSessionRequest
             message=request.original_message.strip(),
             cwd=str(cwd) if cwd else None,
             backend=request.backend,
+            source_session_id=request.source_session_id,
             model_index=request.model_index,
         )
         return await create_new_session(new_session_request)
@@ -547,11 +564,18 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         )
 
     backend = _server_state["get_server_backend"]()
+    _, source_backend, source_model = _get_source_session_context(
+        request.source_session_id
+    )
 
     # For multi-backend mode, get the specific backend if requested
-    # Fallback order: request.backend -> _default_send_backend -> first available
+    # Fallback order: request.backend -> source session backend -> default backend -> first available
     target_backend = backend
-    requested_backend = request.backend or _server_state["get_default_send_backend"]()
+    requested_backend = (
+        request.backend
+        or (source_backend.name if source_backend is not None else None)
+        or _server_state["get_default_send_backend"]()
+    )
     if requested_backend:
         # Check if this is a MultiBackend with get_backend_by_name method
         get_by_name = getattr(backend, "get_backend_by_name", None)
@@ -588,6 +612,14 @@ async def create_new_session(request: NewSessionRequest) -> dict:
                 detail=f"Invalid model_index: {request.model_index}. "
                 f"Fetch models from /backends/{target_backend.name}/models first.",
             )
+    elif (
+        "model" in sig.parameters
+        and source_backend is not None
+        and source_model
+        and _normalize_backend_name(source_backend.name)
+        == _normalize_backend_name(target_backend.name)
+    ):
+        model = source_model
 
     # Check if CLI is available
     if not target_backend.is_cli_available():
@@ -688,6 +720,7 @@ async def create_new_session(request: NewSessionRequest) -> dict:
                     "original_message": message,
                     "backend": target_backend.name,
                     "model_index": request.model_index,
+                    "source_session_id": request.source_session_id,
                 }
 
             return {"status": "started", "cwd": str(cwd) if cwd else None}

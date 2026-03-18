@@ -254,6 +254,10 @@ async function startPendingSession(pendingSession, message) {
             backend: backend
         };
 
+        if (pendingSession.sourceSessionId) {
+            requestBody.source_session_id = pendingSession.sourceSessionId;
+        }
+
         // Only include model_index if it's set (some backends don't support it)
         if (modelIndex !== null && modelIndex !== undefined) {
             requestBody.model_index = modelIndex;
@@ -422,7 +426,7 @@ async function forkMessage() {
 }
 
 // Create a pending session
-export function createPendingSession(cwd, projectName, backend, modelIndex, modelName) {
+export function createPendingSession(cwd, projectName, backend, modelIndex, modelName, sourceSessionId = null) {
     // Import dynamically to avoid circular dependency issues at load time
     import('./sessions.js').then(({ createSession, switchToSession }) => {
         state.pendingSessionCounter++;
@@ -444,6 +448,7 @@ export function createPendingSession(cwd, projectName, backend, modelIndex, mode
         session.selectedBackend = backend || null;
         session.selectedModelIndex = modelIndex;  // Integer index or null
         session.selectedModelName = modelName || null;  // Model ID string (e.g., "anthropic/claude-sonnet-4-5")
+        session.sourceSessionId = sourceSessionId;
 
         session.sidebarItem.classList.add('pending');
         const backendInfo = backend ? ' using <strong>' + escapeHtml(backend) + '</strong>' : '';

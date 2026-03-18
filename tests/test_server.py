@@ -634,6 +634,123 @@ class TestSendFeature:
         assert response.status_code == 400
         assert "invalid model_index" in response.json()["detail"].lower()
 
+    def test_new_session_inherits_backend_and_model_from_source_session(
+        self, temp_jsonl_file, monkeypatch, tmp_path
+    ):
+        """Derived sessions should reuse the source session's backend and model."""
+        server.set_send_enabled(True)
+        info, _ = add_session(temp_jsonl_file)
+        original_sleep = asyncio.sleep
+
+        calls = []
+
+        class _FakeStdin:
+            def write(self, data):
+                return len(data)
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+            async def wait_closed(self):
+                return None
+
+        class _FakeProcess:
+            def __init__(self):
+                self.returncode = None
+                self.stdin = _FakeStdin()
+                self.stderr = MagicMock()
+
+        class _FakeClaudeBackend:
+            name = "Claude Code"
+
+            def is_cli_available(self):
+                return True
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_cli_install_instructions(self):
+                return "install"
+
+            def build_new_session_command(self, message, skip_permissions=False, model=None, output_format=None, add_dirs=None):
+                calls.append(("claude", model))
+                return CommandSpec(args=["claude"], stdin=message)
+
+        class _FakeCodexBackend:
+            name = "Codex"
+
+            def is_cli_available(self):
+                return True
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_cli_install_instructions(self):
+                return "install"
+
+            def get_session_model(self, session_path):
+                return "gpt-5-codex"
+
+            def build_new_session_command(self, message, skip_permissions=False, model=None, output_format=None, add_dirs=None):
+                calls.append(("codex", model))
+                return CommandSpec(args=["codex"], stdin=message)
+
+        class _FakeMultiBackend:
+            name = "All"
+
+            def __init__(self):
+                self.backends = {
+                    "claude-code": _FakeClaudeBackend(),
+                    "codex": _FakeCodexBackend(),
+                }
+
+            def get_backend_by_name(self, backend_name):
+                normalized = backend_name.lower().replace(" ", "-")
+                return self.backends.get(normalized)
+
+        fake_backend = _FakeMultiBackend()
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeProcess()
+
+        monkeypatch.setattr(
+            server.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+        )
+        monkeypatch.setattr(server.asyncio, "sleep", lambda _: original_sleep(0))
+        configure_session_routes(
+            get_server_backend=lambda: fake_backend,
+            get_backend_for_session=lambda path: fake_backend.get_backend_by_name("codex"),
+            is_send_enabled=server.is_send_enabled,
+            is_fork_enabled=server.is_fork_enabled,
+            is_skip_permissions=server.is_skip_permissions,
+            get_default_send_backend=lambda: "Claude Code",
+            get_allowed_directories=server.get_allowed_directories,
+            add_allowed_directory=server.add_allowed_directory,
+            run_cli_for_session=server.run_cli_for_session,
+            broadcast_session_status=server._broadcast_session_status,
+            summarize_session_async=server._summarize_session_async,
+            get_summarizer=server.get_summarizer,
+            get_idle_summary_model=server.get_idle_summary_model,
+            cached_models=server._cached_models,
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/sessions/new",
+            json={
+                "message": "Hello",
+                "cwd": str(tmp_path),
+                "source_session_id": info.session_id,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "started"
+        assert calls == [("codex", "gpt-5-codex")]
+
 
 class TestDefaultSendBackend:
     """Tests for the default send backend feature."""
