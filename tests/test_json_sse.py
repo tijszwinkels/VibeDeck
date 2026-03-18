@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -235,6 +237,101 @@ class TestJsonMessagesEndpoint:
         client = TestClient(app)
         response = client.get("/sessions/nonexistent-id/messages/json")
         assert response.status_code == 404
+
+    def test_messages_json_returns_codex_messages(self):
+        """Codex sessions should normalize into non-empty JSON messages."""
+        from vibedeck.server import app
+        from vibedeck.sessions import add_session
+        from vibedeck.routes.sessions import configure_session_routes
+        from vibedeck import server, sessions
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            sessions_dir = root / "sessions"
+            history_path = root / "history.jsonl"
+            history_path.write_text("")
+            session_path = sessions_dir / "2026" / "03" / "16" / "rollout-2026-03-16T16-15-40-test.jsonl"
+            session_path.parent.mkdir(parents=True, exist_ok=True)
+
+            entries = [
+                {
+                    "timestamp": "2026-03-16T15:15:40.200Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Read handoff and implement"}],
+                    },
+                },
+                {
+                    "timestamp": "2026-03-16T15:15:42.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": '{"cmd":"rg --files"}',
+                        "call_id": "call_123",
+                    },
+                },
+                {
+                    "timestamp": "2026-03-16T15:15:43.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call_123",
+                        "output": "src/vibedeck/backends/protocol.py",
+                    },
+                },
+                {
+                    "timestamp": "2026-03-16T15:15:43.500Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "Inspecting the backend notes."}],
+                    },
+                },
+            ]
+            session_path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+
+            server.initialize_backend(
+                "codex", sessions_dir=sessions_dir, history_path=history_path
+            )
+            sessions.get_sessions().clear()
+            sessions.get_known_session_files().clear()
+
+            configure_session_routes(
+                get_server_backend=server.get_server_backend,
+                get_backend_for_session=server.get_backend_for_session,
+                is_send_enabled=server.is_send_enabled,
+                is_fork_enabled=server.is_fork_enabled,
+                is_skip_permissions=server.is_skip_permissions,
+                get_default_send_backend=server.get_default_send_backend,
+                get_allowed_directories=server.get_allowed_directories,
+                add_allowed_directory=server.add_allowed_directory,
+                run_cli_for_session=server.run_cli_for_session,
+                broadcast_session_status=server._broadcast_session_status,
+                summarize_session_async=server._summarize_session_async,
+                get_summarizer=server.get_summarizer,
+                get_idle_summary_model=server.get_idle_summary_model,
+                cached_models=server._cached_models,
+            )
+
+            from fastapi.testclient import TestClient
+
+            info, _ = add_session(session_path)
+            client = TestClient(app)
+            response = client.get(f"/sessions/{info.session_id}/messages/json")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["message_count"] > 0
+            assert len(data["messages"]) == 4
+            assert data["messages"][0]["role"] == "user"
+            assert data["messages"][0]["blocks"][0]["type"] == "text"
+            assert data["messages"][1]["blocks"][0]["type"] == "tool_use"
+            assert data["messages"][2]["blocks"][0]["type"] == "tool_result"
+            assert data["messages"][3]["role"] == "assistant"
 
 
 class TestJsonEventEndpointExists:

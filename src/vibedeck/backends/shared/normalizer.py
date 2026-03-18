@@ -7,6 +7,7 @@ the JSON SSE stream, JSON REST endpoints, and the markdown exporter.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -400,6 +401,122 @@ def _extract_opencode_usage(info: dict, parts: list[dict], model_id: str | None)
 # ===== Dispatch =====
 
 
+# ===== Codex normalization =====
+
+
+def _normalize_codex_text_blocks(content: list[dict]) -> list[ContentBlock]:
+    """Normalize Codex message content blocks to text blocks."""
+    blocks: list[ContentBlock] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") not in {"input_text", "output_text"}:
+            continue
+        text = block.get("text", "")
+        if text:
+            blocks.append(ContentBlock(type="text", text=text))
+    return blocks
+
+
+def _parse_codex_tool_input(arguments) -> dict:
+    """Best-effort parsing of Codex function_call arguments."""
+    if isinstance(arguments, dict):
+        return arguments
+    if not arguments:
+        return {}
+    if not isinstance(arguments, str):
+        return {"raw": str(arguments)}
+
+    try:
+        parsed = json.loads(arguments)
+    except json.JSONDecodeError:
+        return {"raw": arguments}
+
+    if isinstance(parsed, dict):
+        return parsed
+    return {"value": parsed}
+
+
+def _normalize_codex_function_call(payload: dict, timestamp: str) -> NormalizedMessage:
+    """Normalize Codex function_call into an assistant tool_use message."""
+    return NormalizedMessage(
+        role="assistant",
+        timestamp=timestamp,
+        blocks=[
+            ContentBlock(
+                type="tool_use",
+                tool_name=str(payload.get("name") or "tool"),
+                tool_id=str(payload.get("call_id") or payload.get("id") or ""),
+                tool_input=_parse_codex_tool_input(payload.get("arguments")),
+            )
+        ],
+    )
+
+
+def _normalize_codex_function_call_output(payload: dict, timestamp: str) -> NormalizedMessage:
+    """Normalize Codex function_call_output into an assistant tool_result message."""
+    is_error = bool(
+        payload.get("is_error")
+        or payload.get("error")
+        or payload.get("status") in {"error", "failed"}
+    )
+
+    content = payload.get("output")
+    if content is None and payload.get("error") is not None:
+        content = payload.get("error")
+    if content is not None and not isinstance(content, (str, list)):
+        content = json.dumps(content, ensure_ascii=False)
+
+    return NormalizedMessage(
+        role="assistant",
+        timestamp=timestamp,
+        blocks=[
+            ContentBlock(
+                type="tool_result",
+                tool_use_id=str(payload.get("call_id") or ""),
+                content=content,
+                is_error=is_error,
+            )
+        ],
+    )
+
+
+def normalize_codex_message(entry: dict) -> NormalizedMessage | None:
+    """Normalize a Codex transcript entry."""
+    if entry.get("type") != "response_item":
+        return None
+
+    payload = entry.get("payload", {})
+    if not isinstance(payload, dict):
+        return None
+
+    payload_type = payload.get("type")
+    timestamp = entry.get("timestamp", "")
+
+    if payload_type == "message":
+        role = payload.get("role")
+        if role not in {"user", "assistant"}:
+            return None
+
+        content = payload.get("content", [])
+        if not isinstance(content, list):
+            return None
+
+        blocks = _normalize_codex_text_blocks(content)
+        if not blocks:
+            return None
+
+        return NormalizedMessage(role=role, timestamp=timestamp, blocks=blocks)
+
+    if payload_type == "function_call":
+        return _normalize_codex_function_call(payload, timestamp)
+
+    if payload_type == "function_call_output":
+        return _normalize_codex_function_call_output(payload, timestamp)
+
+    return None
+
+
 def normalize_message(entry: dict, backend: str) -> NormalizedMessage | None:
     """Dispatch to backend-specific normalizer.
 
@@ -414,4 +531,6 @@ def normalize_message(entry: dict, backend: str) -> NormalizedMessage | None:
         return normalize_claude_code_message(entry)
     elif backend == "opencode":
         return normalize_opencode_message(entry)
+    elif backend == "codex":
+        return normalize_codex_message(entry)
     return None
