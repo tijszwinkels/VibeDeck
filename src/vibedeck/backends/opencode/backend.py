@@ -212,6 +212,13 @@ class OpenCodeBackend:
         """
         return False
 
+    def supports_summarization(self) -> bool:
+        """Whether this backend supports session summarization.
+
+        OpenCode sessions should not be summarized as it clutters the session.
+        """
+        return False
+
     def is_cli_available(self) -> bool:
         """Check if the CLI tool is installed and available."""
         return is_cli_available()
