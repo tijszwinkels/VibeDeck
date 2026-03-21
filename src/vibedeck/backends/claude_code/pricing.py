@@ -120,7 +120,7 @@ def calculate_message_cost(usage: dict, model: str | None = None) -> float:
     cache_read_tokens = usage.get("cache_read_input_tokens", 0)
 
     # Get detailed cache write breakdown if available
-    cache_creation = usage.get("cache_creation", {})
+    cache_creation = usage.get("cache_creation") or {}
     cache_5m_tokens = cache_creation.get("ephemeral_5m_input_tokens", 0)
     cache_1h_tokens = cache_creation.get("ephemeral_1h_input_tokens", 0)
 
