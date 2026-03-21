@@ -115,17 +115,17 @@ def calculate_message_cost(usage: dict, model: str | None = None) -> float:
 
     pricing = get_model_pricing(model) if model else _get_pricing_data().get("default", {})
 
-    input_tokens = usage.get("input_tokens", 0)
-    output_tokens = usage.get("output_tokens", 0)
-    cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+    input_tokens = usage.get("input_tokens") or 0
+    output_tokens = usage.get("output_tokens") or 0
+    cache_read_tokens = usage.get("cache_read_input_tokens") or 0
 
     # Get detailed cache write breakdown if available
     cache_creation = usage.get("cache_creation") or {}
-    cache_5m_tokens = cache_creation.get("ephemeral_5m_input_tokens", 0)
-    cache_1h_tokens = cache_creation.get("ephemeral_1h_input_tokens", 0)
+    cache_5m_tokens = cache_creation.get("ephemeral_5m_input_tokens") or 0
+    cache_1h_tokens = cache_creation.get("ephemeral_1h_input_tokens") or 0
 
     # Fall back to total cache creation tokens if no breakdown
-    total_cache_create = usage.get("cache_creation_input_tokens", 0)
+    total_cache_create = usage.get("cache_creation_input_tokens") or 0
     if cache_5m_tokens == 0 and cache_1h_tokens == 0 and total_cache_create > 0:
         # Assume 5m cache if no breakdown available
         cache_5m_tokens = total_cache_create
