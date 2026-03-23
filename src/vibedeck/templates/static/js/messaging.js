@@ -6,6 +6,7 @@ import {
     escapeHtml,
     formatContextPercent,
     formatTokenCount,
+    formatModelName,
     getSessionContextUsageTokens,
     getSessionTotalUsedTokens
 } from './utils.js';
@@ -452,7 +453,8 @@ export function createPendingSession(cwd, projectName, backend, modelIndex, mode
 
         session.sidebarItem.classList.add('pending');
         const backendInfo = backend ? ' using <strong>' + escapeHtml(backend) + '</strong>' : '';
-        const modelInfo = modelName ? ' (' + escapeHtml(modelName) + ')' : '';
+        const displayModel = modelName ? formatModelName(modelName) || modelName : null;
+        const modelInfo = displayModel ? ' with <strong>' + escapeHtml(displayModel) + '</strong>' : '';
         session.container.innerHTML = '<div class="pending-session-placeholder">' +
             '<p>Type a message below to start this session' +
             (cwd ? ' in <strong>' + escapeHtml(displayProjectName) + '</strong>' : '') +
