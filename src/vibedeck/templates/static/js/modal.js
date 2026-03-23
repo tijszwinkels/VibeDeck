@@ -4,6 +4,66 @@ import { dom, state } from './state.js';
 import { createPendingSession } from './messaging.js';
 import { formatModelName } from './utils.js';
 
+let modalPreferredModelName = '';
+
+function getSavedBackendPreference() {
+    return localStorage.getItem('newSessionBackend') || '';
+}
+
+function getSavedModelPreference(backendName) {
+    if (!backendName) return '';
+    return localStorage.getItem('newSessionModel_' + backendName) || '';
+}
+
+function getActiveSessionModalDefaults() {
+    if (!state.activeSessionId) {
+        return { cwd: '', backend: '', modelName: '' };
+    }
+
+    const activeSession = state.sessions.get(state.activeSessionId);
+    if (!activeSession) {
+        return { cwd: '', backend: '', modelName: '' };
+    }
+
+    return {
+        cwd: activeSession.cwd || '',
+        backend: activeSession.selectedBackend || activeSession.backend || '',
+        modelName: activeSession.selectedModelName || activeSession.model || ''
+    };
+}
+
+function resolvePreferredBackend(preferredBackend) {
+    const preferred = preferredBackend || '';
+    const saved = getSavedBackendPreference();
+    const candidates = [preferred, saved];
+
+    for (const candidate of candidates) {
+        if (candidate && state.availableBackends.some(function(backend) {
+            return backend.name === candidate && backend.cli_available;
+        })) {
+            return candidate;
+        }
+    }
+
+    const firstAvailable = state.availableBackends.find(function(backend) {
+        return backend.cli_available;
+    });
+    return firstAvailable ? firstAvailable.name : '';
+}
+
+function resolvePreferredModel(backendName, models, preferredModelName, currentModelName = '') {
+    const candidates = [
+        currentModelName || '',
+        preferredModelName || '',
+        getSavedModelPreference(backendName),
+        models.length > 0 ? models[0] : ''
+    ];
+
+    return candidates.find(function(candidate) {
+        return candidate && models.includes(candidate);
+    }) || '';
+}
+
 // Load available backends
 async function loadBackends() {
     try {
@@ -39,16 +99,15 @@ async function loadModelsForBackend(backendName) {
 }
 
 // Populate backend select dropdown
-function populateBackendSelect() {
+function populateBackendSelect(preferredBackend = '') {
     dom.modalBackend.innerHTML = '';
 
     if (state.availableBackends.length === 0) {
         dom.modalBackend.innerHTML = '<option value="">No backends available</option>';
-        return;
+        return '';
     }
 
-    // Get saved backend preference
-    const savedBackend = localStorage.getItem('newSessionBackend') || '';
+    const selectedBackend = resolvePreferredBackend(preferredBackend);
 
     state.availableBackends.forEach(function(backend) {
         const option = document.createElement('option');
@@ -58,21 +117,25 @@ function populateBackendSelect() {
             option.textContent += ' (CLI not available)';
             option.disabled = true;
         }
-        if (backend.name === savedBackend || (!savedBackend && backend.cli_available)) {
-            option.selected = true;
-        }
         dom.modalBackend.appendChild(option);
     });
+
+    if (selectedBackend) {
+        dom.modalBackend.value = selectedBackend;
+    }
+
+    return dom.modalBackend.value;
 }
 
 // Populate model select dropdown
-async function populateModelSelect(backendName) {
+async function populateModelSelect(backendName, preferredModelName = '') {
     // Find the backend info
     const backend = state.availableBackends.find(function(b) { return b.name === backendName; });
 
     if (!backend || !backend.supports_models) {
         dom.modalModelField.style.display = 'none';
         state.allModelsForFilter = [];
+        modalPreferredModelName = '';
         return;
     }
 
@@ -82,19 +145,24 @@ async function populateModelSelect(backendName) {
 
     const models = await loadModelsForBackend(backendName);
     state.allModelsForFilter = models;
+    modalPreferredModelName = preferredModelName || '';
 
-    // Get saved model preference for this backend (default to first model if none saved)
-    const savedModel = localStorage.getItem('newSessionModel_' + backendName) || (models.length > 0 ? models[0] : '');
+    const selectedModel = resolvePreferredModel(
+        backendName,
+        models,
+        modalPreferredModelName
+    );
 
     models.forEach(function(model) {
         const option = document.createElement('option');
         option.value = model;
         option.textContent = formatModelName(model);
-        if (model === savedModel) {
-            option.selected = true;
-        }
         dom.modalModel.appendChild(option);
     });
+
+    if (selectedModel) {
+        dom.modalModel.value = selectedModel;
+    }
 }
 
 // Filter models based on search text
@@ -102,21 +170,26 @@ function filterModels(searchText) {
     const search = searchText.toLowerCase();
     dom.modalModel.innerHTML = '';
 
-    const savedBackend = dom.modalBackend.value;
-    // Default to first model if none saved
-    const savedModel = localStorage.getItem('newSessionModel_' + savedBackend) || (state.allModelsForFilter.length > 0 ? state.allModelsForFilter[0] : '');
+    const backendName = dom.modalBackend.value;
+    const selectedModel = resolvePreferredModel(
+        backendName,
+        state.allModelsForFilter,
+        modalPreferredModelName,
+        dom.modalModel.value
+    );
 
     state.allModelsForFilter.forEach(function(model) {
         if (!search || model.toLowerCase().includes(search) || formatModelName(model).toLowerCase().includes(search)) {
             const option = document.createElement('option');
             option.value = model;
             option.textContent = formatModelName(model);
-            if (model === savedModel) {
-                option.selected = true;
-            }
             dom.modalModel.appendChild(option);
         }
     });
+
+    if (selectedModel) {
+        dom.modalModel.value = selectedModel;
+    }
 }
 
 // Open the new session modal
@@ -126,24 +199,16 @@ async function openNewSessionModal() {
         await loadBackends();
     }
 
-    // Get a default directory from active session if available
-    let defaultDir = '';
-    if (state.activeSessionId) {
-        const activeSession = state.sessions.get(state.activeSessionId);
-        if (activeSession && activeSession.cwd) {
-            defaultDir = activeSession.cwd;
-        }
-    }
+    const activeDefaults = getActiveSessionModalDefaults();
 
-    // Load saved cwd or use default
-    const savedCwd = localStorage.getItem('newSessionCwd');
-    dom.modalCwd.value = savedCwd || defaultDir;
+    // Prefer the active session when opening the top-level "+ New" modal.
+    dom.modalCwd.value = activeDefaults.cwd || localStorage.getItem('newSessionCwd') || '';
 
-    // Populate backend select
-    populateBackendSelect();
+    // Populate backend/model based on the active session, with saved preferences as fallback.
+    const selectedBackend = populateBackendSelect(activeDefaults.backend);
 
     // Populate model select for the selected backend
-    await populateModelSelect(dom.modalBackend.value);
+    await populateModelSelect(selectedBackend, activeDefaults.modelName);
 
     // Show modal
     dom.newSessionModal.showModal();
