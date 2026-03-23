@@ -59,6 +59,7 @@ def reset_server_state():
     sessions.get_known_session_files().clear()
     server.set_send_enabled(False)
     server.set_default_send_backend(None)
+    server._suppressed_watch_paths.clear()
 
 
 class TestServerEndpoints:
@@ -773,6 +774,58 @@ class TestDefaultSendBackend:
         finally:
             # Reset for other tests
             server._default_send_backend = None
+
+
+class TestWatchFilters:
+    """Tests for file-watch filtering helpers."""
+
+    def test_watch_filter_ignores_unwatched_opencode_shm_file(self):
+        backend = MagicMock()
+        backend.should_watch_file.side_effect = (
+            lambda path: path.name == "opencode.db-wal"
+        )
+
+        watch_filter = server._build_watch_filter(backend)
+
+        assert watch_filter(None, "/tmp/opencode.db-wal") is True
+        assert watch_filter(None, "/tmp/opencode.db-shm") is False
+
+    def test_watch_filter_temporarily_suppresses_opencode_db_artifacts(
+        self, monkeypatch
+    ):
+        backend = MagicMock()
+        backend.should_watch_file.side_effect = (
+            lambda path: path.name in {"opencode.db", "opencode.db-wal"}
+        )
+
+        current_time = 100.0
+        monkeypatch.setattr(server.time, "monotonic", lambda: current_time)
+
+        server._suppress_related_db_watch_events(Path("/tmp/opencode.db-wal"))
+        watch_filter = server._build_watch_filter(backend)
+
+        assert watch_filter(None, "/tmp/opencode.db-wal") is False
+        assert watch_filter(None, "/tmp/opencode.db-shm") is False
+
+        current_time += server.DB_WATCH_SUPPRESSION_SECONDS + 0.01
+
+        assert watch_filter(None, "/tmp/opencode.db-wal") is True
+
+    def test_opencode_db_batch_is_processed_once(self):
+        backend = MagicMock()
+        backend.get_updated_sessions.return_value = ["ses_123"]
+
+        original_get_sessions = server.get_sessions
+        server.get_sessions = lambda: {"ses_123": object(), "other": object()}
+        try:
+            updated = server._get_updated_sessions_for_db_change(
+                backend, Path("/tmp/opencode.db-wal"), current_time=100.0
+            )
+        finally:
+            server.get_sessions = original_get_sessions
+
+        assert updated == {"ses_123"}
+        backend.get_updated_sessions.assert_called_once_with(["ses_123"], 95.0)
 
     def test_get_default_send_backend_returns_none_initially(self):
         """Test get_default_send_backend returns None when not set."""

@@ -34,3 +34,20 @@ class TestMultiBackendChangedFileRouting:
             "019cf869-7a02-70b3-ba7e-cb16463f966f"
         )
         assert backend.get_backend_for_changed_file(changed) is codex
+
+    def test_get_all_project_dirs_excludes_opencode_db_parent(self):
+        claude = MagicMock()
+        claude.name = "Claude Code"
+        claude.get_projects_dir.return_value = Path("/home/test/.claude/projects")
+
+        opencode = MagicMock()
+        opencode.name = "OpenCode"
+        opencode.get_projects_dir.return_value = Path("/home/test/.local/share/opencode/storage")
+        opencode.get_db_path.return_value = Path("/home/test/.local/share/opencode/opencode.db")
+
+        backend = MultiBackend([claude, opencode])
+
+        assert backend.get_all_project_dirs() == [
+            Path("/home/test/.claude/projects"),
+            Path("/home/test/.local/share/opencode/storage"),
+        ]

@@ -609,6 +609,22 @@ class TestGetSessionModel:
         model = get_session_model(path)
         assert model == "claude-opus-4-5-20251101"
 
+    def test_strips_provider_prefix_from_first_assistant_model(self):
+        """Should normalize provider-prefixed model IDs for CLI reuse."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Hi"}],
+                    "model": "anthropic/claude-4.6-sonnet-20260217"
+                }
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_session_model(path)
+        assert model == "claude-4.6-sonnet-20260217"
+
     def test_returns_none_for_session_without_model(self):
         """Should return None if no model field in assistant messages."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:

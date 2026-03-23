@@ -164,6 +164,9 @@ def get_session_model(session_path: Path) -> str | None:
                         message = entry.get("message", {})
                         model = message.get("model")
                         if model:
+                            # Strip provider prefix (e.g. "anthropic/claude-..." -> "claude-...")
+                            if "/" in model:
+                                model = model.split("/", 1)[1]
                             return model
                 except json.JSONDecodeError:
                     continue

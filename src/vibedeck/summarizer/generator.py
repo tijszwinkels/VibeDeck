@@ -194,10 +194,14 @@ class Summarizer:
 
             # Parse the JSON output
             raw_response = stdout.decode()
+            stderr_output = stderr.decode() if stderr else ""
             parsed = self._parse_response(raw_response)
 
             if parsed is None:
-                logger.error(f"Failed to parse summary for session {session.session_id}")
+                logger.error(
+                    f"Failed to parse summary for session {session.session_id}. "
+                    f"stderr: {stderr_output!r}"
+                )
                 return SummaryResult(success=False, error="Failed to parse response")
 
             summary = parsed.summary
@@ -258,7 +262,9 @@ class Summarizer:
                     continue
 
             if not response_text:
-                logger.warning(f"No result found in response: {raw_response[:500]}")
+                logger.warning(
+                    f"No result found in response ({len(lines)} line(s)): {raw_response[:1000]!r}"
+                )
                 return None
 
             # Parse the JSON from the response (might be wrapped in markdown code blocks)

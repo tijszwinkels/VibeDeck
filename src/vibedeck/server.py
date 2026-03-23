@@ -76,9 +76,14 @@ _include_subagents = False  # Enable with --include-subagents CLI flag
 _enable_thinking = False  # Enable with --enable-thinking CLI flag
 _thinking_budget: int | None = None  # Fixed budget with --thinking-budget CLI flag
 _terminal_enabled = True  # Enabled by default, disable with --disable-terminal CLI flag
+DB_WATCH_SUPPRESSION_SECONDS = 0.5
+DB_POLL_INTERVAL_SECONDS = 2.0
+DB_NEW_SESSION_POLL_INTERVAL_SECONDS = 10.0
 
 # Global state for server (not session-related)
 _watch_task: asyncio.Task | None = None
+_db_poll_task: asyncio.Task | None = None
+_suppressed_watch_paths: dict[Path, float] = {}
 
 # Summarization state
 _summarizer: "Summarizer | None" = None
@@ -280,7 +285,6 @@ def _reset_summarization_state() -> None:
     _summarize_after_idle_for = None
     _idle_summary_model = "haiku"
     _summary_after_long_running = None
-
 
 def configure_summarization(
     backend: CodingToolBackend,
@@ -994,6 +998,91 @@ async def check_for_new_sessions() -> None:
 # Watch loop
 
 
+def _prune_expired_watch_suppressions(now: float | None = None) -> None:
+    """Drop expired temporary watch suppressions."""
+    if now is None:
+        now = time.monotonic()
+
+    expired = [path for path, expires_at in _suppressed_watch_paths.items() if expires_at <= now]
+    for path in expired:
+        _suppressed_watch_paths.pop(path, None)
+
+
+def _suppress_related_db_watch_events(changed_path: Path) -> None:
+    """Temporarily ignore follow-up SQLite artifact events caused by our own reads."""
+    db_base = changed_path
+    if changed_path.name.endswith("-wal") or changed_path.name.endswith("-shm"):
+        db_base = changed_path.with_name(changed_path.name.rsplit("-", 1)[0])
+
+    expires_at = time.monotonic() + DB_WATCH_SUPPRESSION_SECONDS
+    for suffix in ("", "-wal", "-shm"):
+        artifact = db_base.with_name(f"{db_base.name}{suffix}")
+        _suppressed_watch_paths[artifact] = expires_at
+
+
+def _build_watch_filter(backend: CodingToolBackend):
+    """Build a watchfiles filter that matches backend watch rules."""
+
+    def watch_filter(change, path_str: str) -> bool:
+        del change
+        _prune_expired_watch_suppressions()
+        path = Path(path_str)
+        if path in _suppressed_watch_paths:
+            return False
+        return backend.should_watch_file(path)
+
+    return watch_filter
+
+
+def _get_updated_sessions_for_db_change(
+    backend: CodingToolBackend,
+    changed_path: Path,
+    current_time: float | None = None,
+    suppress_watch_events: bool = True,
+) -> set[str]:
+    """Resolve a SQLite watch event into updated OpenCode session IDs."""
+    if suppress_watch_events:
+        _suppress_related_db_watch_events(changed_path)
+
+    if current_time is None:
+        current_time = time.time()
+
+    tracked_sessions = get_sessions()
+    if not tracked_sessions:
+        return set()
+
+    tracked_ids = list(tracked_sessions.keys())
+    synthetic_ids = [sid for sid in tracked_ids if sid.startswith("ses_")]
+    if not synthetic_ids:
+        return set()
+
+    get_updated = getattr(backend, "get_updated_sessions", None)
+    if not get_updated:
+        return set()
+
+    updated_ids = get_updated(synthetic_ids, current_time - 5)
+    logger.debug("SQLite change detected, %d sessions updated", len(updated_ids))
+    return set(updated_ids)
+
+
+def _backend_has_db_polling(backend: CodingToolBackend) -> bool:
+    """Whether the backend stack includes an OpenCode-style SQLite source."""
+    backends = [backend]
+    get_backends = getattr(backend, "get_backends", None)
+    if get_backends:
+        backends = get_backends()
+
+    for candidate in backends:
+        get_db_path = getattr(candidate, "get_db_path", None)
+        get_updated = getattr(candidate, "get_updated_sessions", None)
+        if not get_db_path or not get_updated:
+            continue
+        db_path = get_db_path()
+        if db_path and db_path.exists():
+            return True
+    return False
+
+
 def _get_watch_directories() -> list[Path]:
     """Get all directories to watch based on the current backend.
 
@@ -1036,12 +1125,15 @@ async def watch_loop() -> None:
     logger.info(f"Starting watch loop for {len(watch_dirs)} directories: {watch_dirs}")
 
     try:
-        async for changes in watchfiles.awatch(*watch_dirs):
+        async for changes in watchfiles.awatch(
+            *watch_dirs, watch_filter=_build_watch_filter(backend)
+        ):
             # Collect sessions to process and whether to check for new sessions
             # This minimizes lock contention by batching operations
             sessions_to_process: set[str] = set()
             sessions_with_summary_updates: set[str] = set()
             need_new_session_check = False
+            db_changed_path: Path | None = None
 
             for change_type, changed_path in changes:
                 changed_path = Path(changed_path)
@@ -1053,31 +1145,8 @@ async def watch_loop() -> None:
                 # Check if this is a SQLite database file change
                 is_db_file = getattr(backend, "is_db_file", None)
                 if is_db_file and is_db_file(changed_path):
-                    # For SQLite changes, check all tracked OpenCode sessions for updates
-                    import time
-
-                    current_time = time.time()
-                    # Get tracked session IDs
-                    tracked_sessions = get_sessions()
-                    if tracked_sessions:
-                        tracked_ids = list(tracked_sessions.keys())
-                        # Filter to only OpenCode session IDs (start with "ses_")
-                        synthetic_ids = [
-                            sid for sid in tracked_ids if sid.startswith("ses_")
-                        ]
-                        if synthetic_ids:
-                            get_updated = getattr(backend, "get_updated_sessions", None)
-                            if get_updated:
-                                # Use current_time - 5 to catch recent changes
-                                # (SQLite writes may not be immediately visible)
-                                check_time = current_time - 5
-                                updated_ids = get_updated(synthetic_ids, check_time)
-                                for sid in updated_ids:
-                                    sessions_to_process.add(sid)
-                                logger.debug(
-                                    f"SQLite change detected, {len(updated_ids)} sessions updated"
-                                )
-                    # Also check for new sessions
+                    if db_changed_path is None:
+                        db_changed_path = changed_path
                     need_new_session_check = True
                     continue
 
@@ -1122,6 +1191,11 @@ async def watch_loop() -> None:
                     )
                     need_new_session_check = True
 
+            if db_changed_path is not None:
+                sessions_to_process.update(
+                    _get_updated_sessions_for_db_change(backend, db_changed_path)
+                )
+
             # Check for new sessions (needs lock, but only once per batch)
             if need_new_session_check:
                 await check_for_new_sessions()
@@ -1144,13 +1218,48 @@ async def watch_loop() -> None:
         logger.error(f"Watch loop error: {e}")
 
 
+async def db_poll_loop() -> None:
+    """Poll SQLite-backed backends for updates without watching WAL files."""
+    backend = get_server_backend()
+    last_new_session_poll = 0.0
+
+    try:
+        while True:
+            await asyncio.sleep(DB_POLL_INTERVAL_SECONDS)
+
+            current_time = time.time()
+            sessions_to_process = _get_updated_sessions_for_db_change(
+                backend,
+                Path("opencode.db"),
+                current_time=current_time,
+                suppress_watch_events=False,
+            )
+
+            for session_id in sessions_to_process:
+                await process_session_messages_with_settle(session_id)
+                if _idle_tracker is not None:
+                    _idle_tracker.on_session_activity(session_id)
+
+            if (
+                current_time - last_new_session_poll
+                >= DB_NEW_SESSION_POLL_INTERVAL_SECONDS
+            ):
+                await check_for_new_sessions()
+                last_new_session_poll = current_time
+    except asyncio.CancelledError:
+        logger.info("DB poll loop cancelled")
+        raise
+    except Exception as e:
+        logger.error(f"DB poll loop error: {e}")
+
+
 # FastAPI app setup
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage server lifecycle - start/stop file watcher."""
-    global _watch_task
+    global _watch_task, _db_poll_task
 
     backend = get_server_backend()
 
@@ -1188,6 +1297,8 @@ async def lifespan(app: FastAPI):
 
     # Start watching for changes
     _watch_task = asyncio.create_task(watch_loop())
+    if _backend_has_db_polling(backend):
+        _db_poll_task = asyncio.create_task(db_poll_loop())
 
     # Start idle tracker if configured
     if _idle_tracker is not None:
@@ -1204,6 +1315,13 @@ async def lifespan(app: FastAPI):
         _watch_task.cancel()
         try:
             await _watch_task
+        except asyncio.CancelledError:
+            pass
+
+    if _db_poll_task:
+        _db_poll_task.cancel()
+        try:
+            await _db_poll_task
         except asyncio.CancelledError:
             pass
 

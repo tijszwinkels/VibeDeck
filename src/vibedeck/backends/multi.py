@@ -206,19 +206,13 @@ class MultiBackend:
         """Get all project directories to watch.
 
         Returns:
-            List of directories and database files from all backends.
+            List of project directories from all backends.
         """
         dirs = []
         for backend in self._backends:
             d = backend.get_projects_dir()
             if d not in dirs:
                 dirs.append(d)
-            # Also include SQLite database file if backend has one
-            db_path = getattr(backend, "get_db_path", None)
-            if db_path:
-                db = db_path()
-                if db and db.exists() and db not in dirs:
-                    dirs.append(db.parent)
         return dirs
 
     # ===== Session Metadata =====
