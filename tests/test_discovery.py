@@ -16,7 +16,11 @@ from vibedeck.backends.claude_code.discovery import (
     get_session_id_from_summary_file,
     _decode_path_greedy,
 )
-from vibedeck.backends.claude_code.pricing import get_session_model
+from vibedeck.backends.claude_code.cli import build_send_command
+from vibedeck.backends.claude_code.pricing import (
+    get_latest_session_model,
+    get_session_model,
+)
 from vibedeck.backends.claude_code.tailer import is_warmup_session
 
 
@@ -659,3 +663,52 @@ class TestGetSessionModel:
 
         model = get_session_model(path)
         assert model is None
+
+
+class TestGetLatestSessionModel:
+    """Tests for get_latest_session_model function."""
+
+    def test_gets_latest_assistant_model(self):
+        """Should extract the most recent assistant model."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "First"}],
+                    "model": "claude-opus-4-6"
+                }
+            }) + "\n")
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Second"}],
+                    "model": "anthropic/claude-sonnet-4-6"
+                }
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_latest_session_model(path)
+        assert model == "claude-sonnet-4-6"
+
+
+class TestClaudeCodeCLI:
+    """Tests for Claude Code CLI utilities."""
+
+    def test_build_send_command_with_model(self):
+        """Resume commands should preserve the selected model when provided."""
+        cmd_spec = build_send_command(
+            "session-123",
+            "continue",
+            model="claude-opus-4-6",
+        )
+
+        assert cmd_spec.args == [
+            "claude",
+            "-p",
+            "--model",
+            "claude-opus-4-6",
+            "--resume",
+            "session-123",
+        ]
+        assert cmd_spec.stdin == "continue"

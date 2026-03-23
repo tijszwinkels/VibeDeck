@@ -1,6 +1,7 @@
 """FastAPI server with SSE endpoint for live transcript updates."""
 
 import asyncio
+import inspect
 import json
 import logging
 import os
@@ -672,10 +673,35 @@ async def run_cli_for_session(
         # Build command using session-specific backend
         output_format = "stream-json" if use_permission_detection else None
         add_dirs = get_allowed_directories() or None
+        build_cmd = backend.build_fork_command if fork else backend.build_send_command
+        build_sig = inspect.signature(build_cmd)
+        resume_model = None
+        if "model" in build_sig.parameters:
+            get_resume_model = getattr(backend, "get_resume_model", None)
+            if callable(get_resume_model):
+                resume_model = get_resume_model(info.path)
 
-        if fork:
+        if fork and resume_model:
+            cmd_spec = backend.build_fork_command(
+                session_id,
+                message,
+                _skip_permissions,
+                model=resume_model,
+                output_format=output_format,
+                add_dirs=add_dirs,
+            )
+        elif fork:
             cmd_spec = backend.build_fork_command(
                 session_id, message, _skip_permissions, output_format, add_dirs
+            )
+        elif resume_model:
+            cmd_spec = backend.build_send_command(
+                session_id,
+                message,
+                _skip_permissions,
+                model=resume_model,
+                output_format=output_format,
+                add_dirs=add_dirs,
             )
         else:
             cmd_spec = backend.build_send_command(

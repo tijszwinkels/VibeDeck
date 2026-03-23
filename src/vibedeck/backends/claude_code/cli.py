@@ -42,6 +42,7 @@ def build_send_command(
     session_id: str,
     message: str,
     skip_permissions: bool = False,
+    model: str | None = None,
     output_format: str | None = None,
     add_dirs: list[str] | None = None,
 ) -> CommandSpec:
@@ -51,6 +52,7 @@ def build_send_command(
         session_id: Session to send to.
         message: Message text.
         skip_permissions: Skip permission prompts.
+        model: Model to pin on resume (e.g., "claude-opus-4-6").
         output_format: Output format (e.g., "stream-json" for permission detection).
         add_dirs: Additional directories to allow access to.
 
@@ -58,10 +60,13 @@ def build_send_command(
         CommandSpec with args and message as stdin.
     """
     # Use stdin for message to avoid issues with messages starting with '-'
-    cmd = [CLI_COMMAND, "-p", "--resume", session_id]
+    cmd = [CLI_COMMAND, "-p"]
     if add_dirs:
         for d in add_dirs:
             cmd.extend(["--add-dir", d])
+    if model:
+        cmd.extend(["--model", model])
+    cmd.extend(["--resume", session_id])
     if output_format:
         # --verbose is required when using --output-format with -p
         cmd.extend(["--output-format", output_format, "--verbose"])
@@ -74,6 +79,7 @@ def build_fork_command(
     session_id: str,
     message: str,
     skip_permissions: bool = False,
+    model: str | None = None,
     output_format: str | None = None,
     add_dirs: list[str] | None = None,
 ) -> CommandSpec:
@@ -83,6 +89,7 @@ def build_fork_command(
         session_id: Session to fork from.
         message: Initial message for forked session.
         skip_permissions: Skip permission prompts.
+        model: Model to pin on resume before forking.
         output_format: Output format (e.g., "stream-json" for permission detection).
         add_dirs: Additional directories to allow access to.
 
@@ -90,10 +97,13 @@ def build_fork_command(
         CommandSpec with args and message as stdin.
     """
     # Use stdin for message to avoid issues with messages starting with '-'
-    cmd = [CLI_COMMAND, "-p", "--resume", session_id, "--fork-session"]
+    cmd = [CLI_COMMAND, "-p"]
     if add_dirs:
         for d in add_dirs:
             cmd.extend(["--add-dir", d])
+    if model:
+        cmd.extend(["--model", model])
+    cmd.extend(["--resume", session_id, "--fork-session"])
     if output_format:
         # --verbose is required when using --output-format with -p
         cmd.extend(["--output-format", output_format, "--verbose"])

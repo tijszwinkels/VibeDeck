@@ -28,7 +28,11 @@ from .discovery import (
     get_session_id_from_summary_file,
     DEFAULT_PROJECTS_DIR,
 )
-from .pricing import get_session_token_usage, get_session_model
+from .pricing import (
+    get_latest_session_model,
+    get_session_token_usage,
+    get_session_model,
+)
 from ..shared.context_window import get_claude_context_limit_tokens
 from .cli import (
     CLI_COMMAND,
@@ -244,6 +248,7 @@ class ClaudeCodeBackend:
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
         output_format: str | None = None,
         add_dirs: list[str] | None = None,
     ) -> CommandSpec:
@@ -253,19 +258,28 @@ class ClaudeCodeBackend:
             session_id: Session to send to.
             message: Message text.
             skip_permissions: Skip permission prompts.
+            model: Model to pin on resume (e.g., "claude-opus-4-6").
             output_format: Output format (e.g., "stream-json" for permission detection).
             add_dirs: Additional directories to allow access to.
 
         Returns:
             CommandSpec with args and stdin content.
         """
-        return build_send_command(session_id, message, skip_permissions, output_format, add_dirs)
+        return build_send_command(
+            session_id,
+            message,
+            skip_permissions,
+            model=model,
+            output_format=output_format,
+            add_dirs=add_dirs,
+        )
 
     def build_fork_command(
         self,
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
         output_format: str | None = None,
         add_dirs: list[str] | None = None,
     ) -> CommandSpec:
@@ -275,13 +289,21 @@ class ClaudeCodeBackend:
             session_id: Session to fork from.
             message: Initial message for forked session.
             skip_permissions: Skip permission prompts.
+            model: Model to pin on resume before forking.
             output_format: Output format (e.g., "stream-json" for permission detection).
             add_dirs: Additional directories to allow access to.
 
         Returns:
             CommandSpec with args and stdin content.
         """
-        return build_fork_command(session_id, message, skip_permissions, output_format, add_dirs)
+        return build_fork_command(
+            session_id,
+            message,
+            skip_permissions,
+            model=model,
+            output_format=output_format,
+            add_dirs=add_dirs,
+        )
 
     def build_new_session_command(
         self,
@@ -312,6 +334,10 @@ class ClaudeCodeBackend:
             session_id: Session to index.
         """
         ensure_session_indexed(session_id)
+
+    def get_resume_model(self, session_path: Path) -> str | None:
+        """Get the latest observed model for follow-up resume commands."""
+        return get_latest_session_model(session_path)
 
     # ===== Rendering =====
 

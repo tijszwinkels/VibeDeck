@@ -17,6 +17,15 @@ logger = logging.getLogger(__name__)
 CHARS_PER_TOKEN = 3.5
 
 
+def _normalize_model_id(model: str | None) -> str | None:
+    """Normalize provider-prefixed model IDs for CLI reuse."""
+    if not model:
+        return None
+    if "/" in model:
+        return model.split("/", 1)[1]
+    return model
+
+
 def estimate_output_tokens_from_content(content: list | str) -> int:
     """Estimate output tokens from message content.
 
@@ -162,17 +171,38 @@ def get_session_model(session_path: Path) -> str | None:
                     entry = json.loads(line)
                     if entry.get("type") == "assistant":
                         message = entry.get("message", {})
-                        model = message.get("model")
+                        model = _normalize_model_id(message.get("model"))
                         if model:
-                            # Strip provider prefix (e.g. "anthropic/claude-..." -> "claude-...")
-                            if "/" in model:
-                                model = model.split("/", 1)[1]
                             return model
                 except json.JSONDecodeError:
                     continue
     except (FileNotFoundError, IOError):
         pass
     return None
+
+
+def get_latest_session_model(session_path: Path) -> str | None:
+    """Get the most recently observed assistant model in a session."""
+    latest_model = None
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "assistant":
+                    continue
+                message = entry.get("message", {})
+                model = _normalize_model_id(message.get("model"))
+                if model:
+                    latest_model = model
+    except (FileNotFoundError, IOError):
+        return None
+    return latest_model
 
 
 def get_session_token_usage(session_path: Path) -> TokenUsage:

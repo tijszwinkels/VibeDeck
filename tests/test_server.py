@@ -500,6 +500,62 @@ class TestSendFeature:
         assert any(msg_session == session_id for msg_session, _ in messages)
         assert any("Final reply" in html for _, html in messages)
 
+    def test_run_cli_for_session_passes_resume_model_when_supported(
+        self, temp_jsonl_file, monkeypatch
+    ):
+        """Claude-style backends should resume with the latest observed model."""
+        info, _ = add_session(temp_jsonl_file)
+        session_id = info.session_id
+
+        class _FakeProcess:
+            def __init__(self):
+                self.returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+        captured = {}
+
+        class _FakeBackend:
+            name = "Claude Code"
+
+            def ensure_session_indexed(self, session_id_arg):
+                return None
+
+            def build_send_command(
+                self,
+                session_id_arg,
+                message,
+                skip_permissions=False,
+                output_format=None,
+                add_dirs=None,
+                model=None,
+            ):
+                captured["model"] = model
+                return CommandSpec(args=["fake-cli"], stdin=message)
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_resume_model(self, session_path):
+                return "claude-opus-4-6"
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeProcess()
+
+        async def _fake_broadcast_status(session_id_arg: str):
+            return None
+
+        monkeypatch.setattr(
+            server.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+        )
+        monkeypatch.setattr(server, "get_backend_for_session", lambda path: _FakeBackend())
+        monkeypatch.setattr(server, "_broadcast_session_status", _fake_broadcast_status)
+
+        asyncio.run(server.run_cli_for_session(session_id, "continue"))
+
+        assert captured["model"] == "claude-opus-4-6"
+
     def test_process_session_messages_with_settle_rechecks_running_session(
         self, temp_jsonl_file, monkeypatch
     ):
