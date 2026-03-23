@@ -134,10 +134,14 @@ no_open = true
 max_sessions = 50
 fork = true
 dangerously_skip_permissions = true
+disable_auto_summarization = false
+summarize_new_sessions = true
 summary_log = "~/logs/session-summaries.jsonl"
 summary_after_long_running = 120  # 2 minutes (default)
 summarize_after_idle_for = 180    # 3 minutes (default)
 ```
+
+Set `summarize_new_sessions = false` to disable the first automatic summary for new sessions. Set `summary_after_long_running = "off"` or `summarize_after_idle_for = "off"` to disable those specific automatic triggers while keeping manual summaries available.
 
 ## Development
 

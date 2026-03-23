@@ -36,6 +36,13 @@ class TestDefaultConfig:
         """Default config should have md section."""
         assert "md" in DEFAULT_CONFIG
 
+    def test_has_auto_summarization_default(self):
+        """Auto-summarization should be enabled by default."""
+        assert DEFAULT_CONFIG["serve"]["disable_auto_summarization"] is False
+        assert DEFAULT_CONFIG["serve"]["summarize_new_sessions"] is True
+        assert DEFAULT_CONFIG["serve"]["summarize_after_idle_for"] == 180
+        assert DEFAULT_CONFIG["serve"]["summary_after_long_running"] == 120
+
 
 class TestLoadConfig:
     """Test config file loading."""
@@ -130,6 +137,46 @@ fork = true
         config = load_config(config_paths=[config_file])
         assert config.serve.disable_send is True
         assert config.serve.fork is True
+
+    def test_disable_auto_summarization_in_serve(self, tmp_path):
+        """Should support disabling auto-summarization in config."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("""
+[serve]
+disable_auto_summarization = true
+""")
+        config = load_config(config_paths=[config_file])
+        assert config.serve.disable_auto_summarization is True
+
+    def test_summarize_new_sessions_in_serve(self, tmp_path):
+        """Should support disabling new-session summaries in config."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("""
+[serve]
+summarize_new_sessions = false
+""")
+        config = load_config(config_paths=[config_file])
+        assert config.serve.summarize_new_sessions is False
+
+    def test_summarize_after_idle_for_accepts_off(self, tmp_path):
+        """Idle summarization should accept 'off' in config."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("""
+[serve]
+summarize_after_idle_for = "off"
+""")
+        config = load_config(config_paths=[config_file])
+        assert config.serve.summarize_after_idle_for is None
+
+    def test_summary_after_long_running_accepts_off(self, tmp_path):
+        """Long-running summarization should accept 'off' in config."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text("""
+[serve]
+summary_after_long_running = "off"
+""")
+        config = load_config(config_paths=[config_file])
+        assert config.serve.summary_after_long_running is None
 
 
 class TestConfigIntegration:

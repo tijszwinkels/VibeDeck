@@ -83,6 +83,7 @@ _watch_task: asyncio.Task | None = None
 # Summarization state
 _summarizer: "Summarizer | None" = None
 _idle_tracker: "IdleTracker | None" = None
+_summarize_new_sessions = True
 _summarize_after_idle_for: int | None = None
 _idle_summary_model: str = "haiku"  # Model to use for idle summarization
 _summary_after_long_running: int | None = (
@@ -260,8 +261,30 @@ def load_allowed_directories_from_config() -> None:
 # Summarization configuration
 
 
+def _reset_summarization_state() -> None:
+    """Clear summarization state and stop any existing idle tracker."""
+    global \
+        _summarizer, \
+        _idle_tracker, \
+        _summarize_new_sessions, \
+        _summarize_after_idle_for, \
+        _idle_summary_model, \
+        _summary_after_long_running
+
+    if _idle_tracker is not None:
+        _idle_tracker.shutdown()
+
+    _summarizer = None
+    _idle_tracker = None
+    _summarize_new_sessions = True
+    _summarize_after_idle_for = None
+    _idle_summary_model = "haiku"
+    _summary_after_long_running = None
+
+
 def configure_summarization(
     backend: CodingToolBackend,
+    summarize_new_sessions: bool = True,
     summary_log: "Path | None" = None,
     summarize_after_idle_for: int | None = None,
     idle_summary_model: str = "haiku",
@@ -274,6 +297,7 @@ def configure_summarization(
 
     Args:
         backend: The backend to use for CLI commands.
+        summarize_new_sessions: Whether to summarize sessions lacking a summary.
         summary_log: Path to JSONL log file for summaries.
         summarize_after_idle_for: Seconds of idle before re-summarizing.
         idle_summary_model: Model to use for idle summarization (default: haiku).
@@ -282,12 +306,7 @@ def configure_summarization(
         summary_prompt_file: Path to prompt template file.
         summary_log_keys: Keys to include in JSONL log.
     """
-    global \
-        _summarizer, \
-        _idle_tracker, \
-        _summarize_after_idle_for, \
-        _idle_summary_model, \
-        _summary_after_long_running
+    _reset_summarization_state()
 
     # Create log writer
     log_writer = LogWriter(
@@ -305,6 +324,7 @@ def configure_summarization(
     )
 
     # Store settings for later use
+    _summarize_new_sessions = summarize_new_sessions
     _summarize_after_idle_for = summarize_after_idle_for
     _idle_summary_model = idle_summary_model
     _summary_after_long_running = summary_after_long_running
@@ -565,7 +585,7 @@ async def _monitor_attached_process(info: SessionInfo) -> None:
             should_summarize = False
             summary_reason = ""
 
-            if not info.get_summary_path().exists():
+            if _summarize_new_sessions and not info.get_summary_path().exists():
                 should_summarize = True
                 summary_reason = "new session"
             elif (
@@ -765,7 +785,7 @@ async def run_cli_for_session(
             summary_reason = ""
 
             if _summarizer is not None:
-                if not info.get_summary_path().exists():
+                if _summarize_new_sessions and not info.get_summary_path().exists():
                     should_summarize = True
                     summary_reason = "new session"
                 elif (

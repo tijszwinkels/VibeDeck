@@ -17,10 +17,14 @@
 # include_subagents = false      # Include subagent sessions in list
 
 # Summarization options
+# disable_auto_summarization = false  # Master switch: disable all automatic summary triggers
+# summarize_new_sessions = true       # Summarize sessions that do not yet have a summary
 # summary_log = "~/logs/session-summaries.jsonl"  # Append summaries to JSONL file
 # summarize_after_idle_for = 180  # Re-summarize after N seconds idle (default: 180 = 3 min)
+# summarize_after_idle_for = "off"  # Disable idle re-summarization
 # idle_summary_model = "haiku"    # Model for idle summarization (default: haiku). Immediate summaries use the conversation's model.
 # summary_after_long_running = 120  # Summarize if CLI runs longer than N seconds (default: 120 = 2 min)
+# summary_after_long_running = "off"  # Disable long-running prompt summarization
 # summary_prompt_file = "~/.config/vibedeck/prompt.txt"  # Custom prompt template file
 # summary_log_keys = ["title", "short_summary", "summary_generated_at", "session_id", "path"]  # Keys to include in log
 

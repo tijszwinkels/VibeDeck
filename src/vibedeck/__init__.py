@@ -141,10 +141,27 @@ def main() -> None:
     help="Fixed thinking token budget (overrides keyword detection)",
 )
 @click.option(
+    "--disable-auto-summarization",
+    is_flag=True,
+    default=None,
+    help="Disable automatic session summarization",
+)
+@click.option(
+    "--summarize-new-sessions/--no-summarize-new-sessions",
+    default=None,
+    help="Enable or disable summarization for sessions that do not yet have a summary",
+)
+@click.option(
     "--summary-log",
     type=click.Path(path_type=Path),
     default=None,
     help="Path to JSONL file for appending session summaries",
+)
+@click.option(
+    "--disable-idle-summarization",
+    is_flag=True,
+    default=None,
+    help="Disable idle-triggered re-summarization",
 )
 @click.option(
     "--summarize-after-idle-for",
@@ -163,6 +180,12 @@ def main() -> None:
     type=int,
     default=None,
     help="Summarize if CLI runs longer than N seconds (uses conversation's model for warm cache)",
+)
+@click.option(
+    "--disable-long-running-summarization",
+    is_flag=True,
+    default=None,
+    help="Disable long-running prompt summarization",
 )
 @click.option(
     "--summary-prompt",
@@ -195,10 +218,14 @@ def serve(
     include_subagents: bool | None,
     enable_thinking: bool | None,
     thinking_budget: int | None,
+    disable_auto_summarization: bool | None,
+    summarize_new_sessions: bool | None,
     summary_log: Path | None,
+    disable_idle_summarization: bool | None,
     summarize_after_idle_for: int | None,
     idle_summary_model: str | None,
     summary_after_long_running: int | None,
+    disable_long_running_summarization: bool | None,
     summary_prompt: str | None,
     summary_prompt_file: Path | None,
 ) -> None:
@@ -211,6 +238,9 @@ def serve(
     ~/.claude/projects/. Use --session to add a specific session file.
     """
     # Load config from explicit file or use auto-loaded config
+    cli_idle_threshold_set = summarize_after_idle_for is not None
+    cli_long_running_threshold_set = summary_after_long_running is not None
+
     if config_file:
         config = load_config([config_file])
         cfg = config.serve
@@ -230,9 +260,13 @@ def serve(
     show_codex_bootstrap_messages = cfg.show_codex_bootstrap_messages
     enable_thinking = enable_thinking if enable_thinking is not None else cfg.enable_thinking
     thinking_budget = thinking_budget if thinking_budget is not None else cfg.thinking_budget
+    disable_auto_summarization = disable_auto_summarization if disable_auto_summarization is not None else cfg.disable_auto_summarization
+    summarize_new_sessions = summarize_new_sessions if summarize_new_sessions is not None else cfg.summarize_new_sessions
     idle_summary_model = idle_summary_model if idle_summary_model is not None else cfg.idle_summary_model
     summarize_after_idle_for = summarize_after_idle_for if summarize_after_idle_for is not None else cfg.summarize_after_idle_for
     summary_after_long_running = summary_after_long_running if summary_after_long_running is not None else cfg.summary_after_long_running
+    disable_idle_summarization = bool(disable_idle_summarization)
+    disable_long_running_summarization = bool(disable_long_running_summarization)
     summary_prompt = summary_prompt if summary_prompt is not None else cfg.summary_prompt
     # Handle summary_log and summary_prompt_file (need Path conversion from config string)
     if summary_log is None and cfg.summary_log:
@@ -267,6 +301,30 @@ def serve(
     if default_send_backend and not enable_send:
         click.echo("Error: --default-send-backend requires send to be enabled (don't use --disable-send)", err=True)
         raise SystemExit(1)
+
+    if disable_idle_summarization and cli_idle_threshold_set:
+        click.echo(
+            "Error: --disable-idle-summarization cannot be combined with --summarize-after-idle-for",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if disable_long_running_summarization and cli_long_running_threshold_set:
+        click.echo(
+            "Error: --disable-long-running-summarization cannot be combined with --summary-after-long-running",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    if disable_auto_summarization:
+        summarize_new_sessions = False
+        summarize_after_idle_for = None
+        summary_after_long_running = None
+    else:
+        if disable_idle_summarization:
+            summarize_after_idle_for = None
+        if disable_long_running_summarization:
+            summary_after_long_running = None
 
     # Initialize backend
     from . import server
@@ -309,6 +367,7 @@ def serve(
     # Configure summarization
     server.configure_summarization(
         backend=backend_instance,
+        summarize_new_sessions=summarize_new_sessions,
         summary_log=summary_log,
         summarize_after_idle_for=summarize_after_idle_for,
         idle_summary_model=idle_summary_model,
@@ -319,7 +378,9 @@ def serve(
 
     if summary_log:
         click.echo(f"Summary log: {summary_log}")
-    if summarize_after_idle_for:
+    if disable_auto_summarization:
+        click.echo("Auto-summarization disabled")
+    elif summarize_after_idle_for:
         click.echo(f"Summarize after idle: {summarize_after_idle_for}s")
 
     if disable_send:

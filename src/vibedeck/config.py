@@ -40,10 +40,12 @@ class ServeConfig:
     enable_thinking: bool = False
     thinking_budget: int | None = None  # Fixed thinking token budget (overrides keyword detection)
     # Summary options
+    disable_auto_summarization: bool = False
+    summarize_new_sessions: bool = True
     summary_log: str | None = None  # Path to JSONL log file
-    summarize_after_idle_for: int = 180  # Seconds of idle before re-summarizing (3 min)
+    summarize_after_idle_for: int | None = 180  # Seconds of idle before re-summarizing (3 min)
     idle_summary_model: str = "haiku"  # Model to use for idle summarization
-    summary_after_long_running: int = 120  # Summarize if CLI runs longer than N seconds (2 min)
+    summary_after_long_running: int | None = 120  # Summarize if CLI runs longer than N seconds (2 min)
     summary_prompt: str | None = None  # Custom prompt template
     summary_prompt_file: str | None = None  # Path to prompt template file
     summary_log_keys: list[str] | None = None  # Keys to include in JSONL log
@@ -86,7 +88,7 @@ class Config:
         Returns:
             Config instance with values from dict, defaults for missing.
         """
-        serve_data = data.get("serve", {})
+        serve_data = _normalize_serve_data(data.get("serve", {}))
         html_data = data.get("html", {})
         md_data = data.get("md", {})
 
@@ -135,6 +137,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "show_codex_bootstrap_messages": False,
         "enable_thinking": False,
         "thinking_budget": None,
+        "disable_auto_summarization": False,
+        "summarize_new_sessions": True,
         "summary_log": None,
         "summarize_after_idle_for": 180,
         "idle_summary_model": "haiku",
@@ -155,6 +159,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "output": None,
     },
 }
+
+
+def _normalize_summary_threshold(value: Any) -> int | None | Any:
+    """Normalize config thresholds, allowing string sentinels like 'off'."""
+    if isinstance(value, str) and value.strip().lower() in {"off", "none", "disabled"}:
+        return None
+    return value
+
+
+def _normalize_serve_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize serve config values before dataclass construction."""
+    normalized = dict(data)
+    for key in ("summarize_after_idle_for", "summary_after_long_running"):
+        if key in normalized:
+            normalized[key] = _normalize_summary_threshold(normalized[key])
+    return normalized
 
 
 
