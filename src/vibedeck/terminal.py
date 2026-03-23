@@ -175,7 +175,9 @@ class TerminalManager:
                     pass
             logger.debug(f"PTY read loop ended, exit status: {proc.exitstatus}")
 
-    async def handle_websocket(self, websocket: WebSocket, cwd: str | None = None) -> None:
+    async def handle_websocket(
+        self, websocket: WebSocket, cwd: str | None = None, motd_file: str | None = None
+    ) -> None:
         """Handle a WebSocket connection for terminal I/O.
 
         Protocol:
@@ -201,6 +203,18 @@ class TerminalManager:
             await websocket.close()
             del self.sessions[ws_id]
             return
+
+        # Send MOTD if configured
+        if motd_file:
+            motd_path = Path(motd_file).expanduser()
+            if motd_path.is_file():
+                try:
+                    motd_content = motd_path.read_text(errors="replace").replace("\n", "\r\n")
+                    await websocket.send_json({"type": "output", "data": motd_content})
+                except Exception as e:
+                    logger.warning(f"Failed to read MOTD file {motd_file}: {e}")
+            else:
+                logger.warning(f"MOTD file not found: {motd_file}")
 
         # Start output reader task
         session.read_task = asyncio.create_task(self._read_pty_output(session))

@@ -77,6 +77,7 @@ _include_subagents = False  # Enable with --include-subagents CLI flag
 _enable_thinking = False  # Enable with --enable-thinking CLI flag
 _thinking_budget: int | None = None  # Fixed budget with --thinking-budget CLI flag
 _terminal_enabled = True  # Enabled by default, disable with --disable-terminal CLI flag
+_terminal_motd_file: str | None = None  # Path to MOTD file shown on terminal open
 DB_WATCH_SUPPRESSION_SECONDS = 0.5
 DB_POLL_INTERVAL_SECONDS = 2.0
 DB_NEW_SESSION_POLL_INTERVAL_SECONDS = 10.0
@@ -190,6 +191,17 @@ def set_terminal_enabled(enabled: bool) -> None:
 def is_terminal_enabled() -> bool:
     """Check if terminal feature is enabled."""
     return _terminal_enabled
+
+
+def set_terminal_motd_file(path: str | None) -> None:
+    """Set the MOTD file path to display when a terminal opens."""
+    global _terminal_motd_file
+    _terminal_motd_file = path
+
+
+def get_terminal_motd_file() -> str | None:
+    """Get the configured MOTD file path."""
+    return _terminal_motd_file
 
 
 # Allowed directories management
@@ -1547,4 +1559,4 @@ async def terminal_websocket(websocket: WebSocket, cwd: str | None = None) -> No
         await websocket.close(code=4003, reason="ptyprocess not installed")
         return
 
-    await terminal_manager.handle_websocket(websocket, cwd)
+    await terminal_manager.handle_websocket(websocket, cwd, motd_file=_terminal_motd_file)

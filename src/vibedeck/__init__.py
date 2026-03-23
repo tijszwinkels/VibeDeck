@@ -353,9 +353,13 @@ def serve(
         backend_instance = server.initialize_backend(backend, **backend_kwargs)
         click.echo(f"Using backend: {backend_instance.name}")
 
+    # Terminal MOTD (TOML-only config)
+    terminal_motd_file = cfg.terminal_motd_file
+
     # Configure server features
     server.set_send_enabled(enable_send)
     server.set_terminal_enabled(enable_terminal)
+    server.set_terminal_motd_file(terminal_motd_file)
     server.set_skip_permissions(dangerously_skip_permissions)
     server.set_fork_enabled(fork)
     server.set_include_subagents(include_subagents)

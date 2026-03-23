@@ -39,6 +39,8 @@ class ServeConfig:
     show_codex_bootstrap_messages: bool = False
     enable_thinking: bool = False
     thinking_budget: int | None = None  # Fixed thinking token budget (overrides keyword detection)
+    # Terminal options
+    terminal_motd_file: str | None = None  # Path to MOTD file shown on terminal open
     # Summary options
     disable_auto_summarization: bool = False
     summarize_new_sessions: bool = True
@@ -131,6 +133,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "backend": "all",
         "include_subagents": False,
         "disable_send": False,  # Send enabled by default
+        "terminal_motd_file": None,
         "dangerously_skip_permissions": False,
         "fork": False,
         "default_send_backend": None,
