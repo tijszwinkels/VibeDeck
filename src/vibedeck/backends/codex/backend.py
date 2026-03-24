@@ -153,7 +153,7 @@ class CodexBackend:
         return False
 
     def supports_summarization(self) -> bool:
-        return False
+        return True
 
     def is_cli_available(self) -> bool:
         return is_cli_available()

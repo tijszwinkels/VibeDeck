@@ -412,19 +412,28 @@ class TestSummarizerCommandBuilding:
     """Tests for backend-specific summary CLI arguments."""
 
     @pytest.mark.asyncio
-    async def test_codex_summary_uses_ephemeral_json_flags(self, tmp_path):
-        """Codex summaries should use --json and --ephemeral, not Claude flags."""
+    async def test_codex_summary_uses_new_session_not_resume(self, tmp_path):
+        """Codex summaries should use a fresh ephemeral session, not resume."""
         from vibedeck.backends.protocol import CommandSpec
 
         backend = MagicMock()
         backend.cli_command = "codex"
-        backend.build_send_command.return_value = CommandSpec(
-            args=["codex", "exec", "resume", "test-id", "-", "--json"],
-            stdin="summary prompt",
+        backend.build_new_session_command.return_value = CommandSpec(
+            args=["codex", "exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "-"],
+            stdin="summary prompt with transcript",
         )
 
-        session_file = tmp_path / "test-session.jsonl"
-        session_file.write_text('{"type": "user", "message": "hello"}')
+        # Create a Codex-format session file
+        session_file = tmp_path / "rollout-2026-01-15T12-00-00-test-id.jsonl"
+        entries = [
+            {"type": "response_item", "timestamp": "2026-01-15T12:00:01Z",
+             "payload": {"type": "message", "role": "user",
+                         "content": [{"type": "input_text", "text": "hello codex"}]}},
+            {"type": "response_item", "timestamp": "2026-01-15T12:00:02Z",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "hi there"}]}},
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
 
         session = MagicMock()
         session.session_id = "test-id"
@@ -461,8 +470,81 @@ class TestSummarizerCommandBuilding:
             result = await summarizer.summarize(session, model="gpt-5.4")
 
         assert result.success is True
+        # Should use build_new_session_command, NOT build_send_command
+        backend.build_new_session_command.assert_called_once()
+        backend.build_send_command.assert_not_called()
+        # Should NOT have "resume" in command args
+        assert "resume" not in captured["args"]
         assert "--ephemeral" in captured["args"]
         assert "--json" in captured["args"]
         assert "--no-session-persistence" not in captured["args"]
-        assert "--output-format" not in captured["args"]
         assert captured["args"][-2:] == ["--model", "gpt-5.4"]
+
+    @pytest.mark.asyncio
+    async def test_codex_summary_includes_transcript_in_prompt(self, tmp_path):
+        """Codex summaries should include the session transcript in the prompt."""
+        from vibedeck.backends.protocol import CommandSpec
+
+        backend = MagicMock()
+        backend.cli_command = "codex"
+
+        # Capture the message passed to build_new_session_command
+        captured_message = {}
+
+        def fake_build_new(message, **kwargs):
+            captured_message["message"] = message
+            return CommandSpec(
+                args=["codex", "exec", "--json", "-"],
+                stdin=message,
+            )
+
+        backend.build_new_session_command.side_effect = fake_build_new
+
+        # Create a Codex-format session with recognizable content
+        session_file = tmp_path / "rollout-2026-01-15T12-00-00-test-id.jsonl"
+        entries = [
+            {"type": "response_item", "timestamp": "2026-01-15T12:00:01Z",
+             "payload": {"type": "message", "role": "user",
+                         "content": [{"type": "input_text", "text": "implement the frobnicator"}]}},
+            {"type": "response_item", "timestamp": "2026-01-15T12:00:02Z",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "I'll create the frobnicator now."}]}},
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        session = MagicMock()
+        session.session_id = "test-id"
+        session.project_path = str(tmp_path)
+        session.path = session_file
+        session.tailer.get_first_timestamp.return_value = "2026-01-15T12:00:00"
+
+        class _Proc:
+            returncode = 0
+
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+
+            async def communicate(self):
+                return (
+                    b'{"type":"result","result":"{\\"title\\":\\"Test\\"}"}',
+                    b"",
+                )
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _Proc()
+
+        summarizer = Summarizer(backend=backend)
+
+        with patch("asyncio.create_subprocess_exec", _fake_create_subprocess_exec):
+            await summarizer.summarize(session)
+
+        # The prompt should contain the transcript text
+        msg = captured_message["message"]
+        assert "implement the frobnicator" in msg
+        assert "Codex Transcript" in msg
+        # And still contain the summary instructions
+        assert "Summarize this coding session" in msg
