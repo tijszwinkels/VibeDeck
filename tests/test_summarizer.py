@@ -361,6 +361,26 @@ class TestSummarizer:
         assert result.summary["title"] == "Test"
 
     @pytest.mark.asyncio
+    async def test_parse_response_extracts_codex_format(self, mock_backend):
+        """_parse_response extracts summary from Codex CLI item.completed output."""
+        summarizer = Summarizer(backend=mock_backend)
+
+        # Codex --json output: multiple JSONL lines, response in item.completed
+        raw_response = (
+            '{"type":"thread.started","thread_id":"abc123"}\n'
+            '{"type":"turn.started"}\n'
+            '{"type":"item.completed","item":{"id":"item_0","type":"agent_message",'
+            '"text":"{\\"title\\": \\"Codex Test\\", \\"short_summary\\": \\"A test\\"}"}}\n'
+            '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}'
+        )
+
+        result = summarizer._parse_response(raw_response)
+
+        assert result is not None
+        assert result.summary["title"] == "Codex Test"
+        assert result.summary["short_summary"] == "A test"
+
+    @pytest.mark.asyncio
     async def test_parse_response_returns_none_for_invalid(self, mock_backend):
         """_parse_response returns None for invalid response."""
         summarizer = Summarizer(backend=mock_backend)

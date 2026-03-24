@@ -291,8 +291,15 @@ class Summarizer:
                     # Handle both formats: JSON Lines (dict per line) or array
                     items = data if isinstance(data, list) else [data]
                     for item in items:
-                        if isinstance(item, dict) and item.get("type") == "result":
+                        if not isinstance(item, dict):
+                            continue
+                        # Claude Code format: {"type": "result", "result": "..."}
+                        if item.get("type") == "result":
                             response_text = item.get("result", "")
+                            break
+                        # Codex format: {"type": "item.completed", "item": {"text": "..."}}
+                        if item.get("type") == "item.completed":
+                            response_text = item.get("item", {}).get("text", "")
                             break
                     if response_text:
                         break
