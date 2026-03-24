@@ -498,7 +498,11 @@ class TestSummarizerCommandBuilding:
         assert "--ephemeral" in captured["args"]
         assert "--json" in captured["args"]
         assert "--no-session-persistence" not in captured["args"]
-        assert captured["args"][-2:] == ["--model", "gpt-5.4"]
+        # Model should always be overridden to gpt-5.4-mini for Codex,
+        # regardless of what was passed (e.g. "haiku" from Claude config)
+        assert "--model" in captured["args"]
+        model_idx = captured["args"].index("--model")
+        assert captured["args"][model_idx + 1] == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
     async def test_codex_summary_includes_transcript_in_prompt(self, tmp_path):

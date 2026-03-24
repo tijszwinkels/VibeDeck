@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Timeout for the Claude CLI subprocess (seconds)
 SUBPROCESS_TIMEOUT = 300  # 5 minutes
 
+# Model to use for Codex summarization (cheap and fast)
+CODEX_SUMMARY_MODEL = "gpt-5.4-mini"
+
 
 @dataclass
 class ParsedResponse:
@@ -176,6 +179,10 @@ class Summarizer:
         cmd_args, cmd_stdin = self._build_summary_command(session, prompt)
 
         # Add model flag if specified
+        # Codex uses OpenAI models — override Claude model names
+        cli_command = getattr(self.backend, "cli_command", None)
+        if cli_command == "codex":
+            model = CODEX_SUMMARY_MODEL
         if model:
             cmd_args.extend(["--model", model])
 
