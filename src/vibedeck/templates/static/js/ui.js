@@ -2,6 +2,7 @@
 
 import { dom, state, dateCategoryLabels } from './state.js';
 import { isMobile, escapeHtml, formatTimestamp, formatTokenCount, formatCost, formatModelName, getDateCategory, getSessionCategoryTimestamp } from './utils.js';
+import { buildDateCategoryCostBreakdown } from './date-category-tooltip.js';
 import { updateTerminalTheme } from './terminal.js';
 
 // Sidebar state management
@@ -423,9 +424,7 @@ export function showDateCategoryTooltip(projectName, category, e) {
     if (state.tooltipTimeout) clearTimeout(state.tooltipTimeout);
 
     state.tooltipTimeout = setTimeout(function() {
-        // Aggregate stats for sessions in this date category
-        let totalInput = 0, totalOutput = 0, totalCacheCreate = 0, totalCacheRead = 0, totalCost = 0;
-        let sessionCount = 0;
+        const matchingSessions = [];
 
         if (project) {
             // Project mode: aggregate within this project
@@ -434,15 +433,7 @@ export function showDateCategoryTooltip(projectName, category, e) {
                 if (!session) return;
                 const sessionCategory = getDateCategory(getSessionCategoryTimestamp(session, state.sortBy));
                 if (sessionCategory !== category) return;
-
-                sessionCount++;
-                if (session.tokenUsage) {
-                    totalInput += session.tokenUsage.input_tokens || 0;
-                    totalOutput += session.tokenUsage.output_tokens || 0;
-                    totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
-                    totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
-                    totalCost += session.tokenUsage.cost || 0;
-                }
+                matchingSessions.push(session);
             });
         } else {
             // Session mode: aggregate across all non-archived sessions
@@ -456,43 +447,69 @@ export function showDateCategoryTooltip(projectName, category, e) {
                     if (sessionCategory !== category) return;
                 }
 
-                sessionCount++;
-                if (session.tokenUsage) {
-                    totalInput += session.tokenUsage.input_tokens || 0;
-                    totalOutput += session.tokenUsage.output_tokens || 0;
-                    totalCacheCreate += session.tokenUsage.cache_creation_tokens || 0;
-                    totalCacheRead += session.tokenUsage.cache_read_tokens || 0;
-                    totalCost += session.tokenUsage.cost || 0;
-                }
+                matchingSessions.push(session);
             });
         }
 
+        const sessionCount = matchingSessions.length;
         if (sessionCount === 0) {
             hideTooltip();
             return;
         }
 
+        const breakdown = buildDateCategoryCostBreakdown(matchingSessions);
         const categoryLabel = dateCategoryLabels[category] || category;
         const headerLabel = projectName
             ? `${escapeHtml(categoryLabel)} - ${escapeHtml(projectName)}`
             : escapeHtml(categoryLabel);
+        const backendBreakdownHtml = renderTooltipBreakdown(
+            breakdown.byBackend,
+            function(label) { return label; },
+        );
+        const modelBreakdownHtml = renderTooltipBreakdown(
+            breakdown.byModel,
+            function(label) { return label === 'Multiple models' ? label : formatModelName(label); },
+        );
 
         dom.sessionTooltip.innerHTML = `
             <div class="tooltip-label">${headerLabel}</div>
             <div class="tooltip-value">${sessionCount} session${sessionCount !== 1 ? 's' : ''}</div>
+            <div class="tooltip-label">Estimated Cost</div>
+            <div class="tooltip-value tooltip-cost">${formatCost(breakdown.totalCost)}</div>
+            ${backendBreakdownHtml ? `
+                <div class="tooltip-label">By Backend</div>
+                <div class="tooltip-value tooltip-breakdown">${backendBreakdownHtml}</div>
+            ` : ''}
+            ${modelBreakdownHtml ? `
+                <div class="tooltip-label">By Model</div>
+                <div class="tooltip-value tooltip-breakdown">${modelBreakdownHtml}</div>
+            ` : ''}
             <div class="tooltip-label">Token Usage</div>
             <div class="tooltip-value tooltip-usage">
-                <span class="usage-item">In: ${formatTokenCount(totalInput)}</span>
-                <span class="usage-item">Out (est): ${formatTokenCount(totalOutput)}</span>
-                <span class="usage-item">Cache&uarr;: ${formatTokenCount(totalCacheCreate)}</span>
-                <span class="usage-item">Cache&darr;: ${formatTokenCount(totalCacheRead)}</span>
+                <span class="usage-item">In: ${formatTokenCount(breakdown.totalInput)}</span>
+                <span class="usage-item">Out (est): ${formatTokenCount(breakdown.totalOutput)}</span>
+                <span class="usage-item">Cache&uarr;: ${formatTokenCount(breakdown.totalCacheCreate)}</span>
+                <span class="usage-item">Cache&darr;: ${formatTokenCount(breakdown.totalCacheRead)}</span>
             </div>
-            <div class="tooltip-label">Estimated Cost</div>
-            <div class="tooltip-value tooltip-cost">${formatCost(totalCost)}</div>
         `;
         dom.sessionTooltip.style.display = 'block';
         positionTooltip(e);
     }, 300);
+}
+
+function renderTooltipBreakdown(entries, formatLabel) {
+    if (!entries || entries.length === 0) return '';
+
+    return entries.map(function(entry) {
+        const countLabel = `${entry.sessionCount} session${entry.sessionCount !== 1 ? 's' : ''}`;
+        return `
+            <div class="tooltip-breakdown-row">
+                <span class="tooltip-breakdown-name">${escapeHtml(formatLabel(entry.label))}</span>
+                <span class="tooltip-breakdown-meta">${escapeHtml(countLabel)}</span>
+                <span class="tooltip-breakdown-cost">${formatCost(entry.cost)}</span>
+            </div>
+        `;
+    }).join('');
 }
 
 export function positionTooltip(e) {

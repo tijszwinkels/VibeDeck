@@ -233,7 +233,7 @@ class TestCodexUsage:
         assert usage.cache_read_tokens == 300
         assert usage.cache_creation_tokens == 0
         assert usage.message_count == 4
-        assert usage.cost == 0.0
+        assert usage.cost == pytest.approx(0.009075)
         assert usage.models == ["gpt-5.4"]
 
 
