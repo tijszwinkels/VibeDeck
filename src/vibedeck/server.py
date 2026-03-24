@@ -323,6 +323,14 @@ def configure_summarization(
         summary_prompt_file: Path to prompt template file.
         summary_log_keys: Keys to include in JSONL log.
     """
+    global \
+        _summarizer, \
+        _summarize_new_sessions, \
+        _summarize_after_idle_for, \
+        _idle_summary_model, \
+        _summary_after_long_running, \
+        _idle_tracker
+
     _reset_summarization_state()
 
     # Create log writer
