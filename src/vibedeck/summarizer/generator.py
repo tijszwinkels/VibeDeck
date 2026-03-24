@@ -224,9 +224,12 @@ class Summarizer:
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
+                stdout_preview = stdout.decode()[:500] if stdout else "(empty)"
                 logger.error(
                     f"Summary command failed for session {session.session_id}: "
-                    f"exit code {process.returncode}, stderr: {error_msg}"
+                    f"exit code {process.returncode}, "
+                    f"cmd: {' '.join(cmd_args)}, "
+                    f"stderr: {error_msg}, stdout: {stdout_preview}"
                 )
                 return SummaryResult(success=False, error=error_msg)
 
