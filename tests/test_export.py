@@ -649,3 +649,95 @@ class TestCodexExportHtml:
 
         page_content = (output_dir / "page-001.html").read_text()
         assert "Hello from Codex!" in page_content
+
+
+class TestCodexAnalyzeConversation:
+    """Tests for analyze_conversation with Codex entries."""
+
+    def test_counts_codex_tool_calls(self):
+        """Should count function_call entries as tool usage."""
+        from vibedeck.export import analyze_conversation
+
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:01:01.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell",
+                    "call_id": "call_001",
+                    "arguments": '{"command": ["ls"]}',
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:02:00.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell",
+                    "call_id": "call_002",
+                    "arguments": '{"command": ["cat", "foo.py"]}',
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:03:00.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "file_edit",
+                    "call_id": "call_003",
+                    "arguments": '{"path": "foo.py"}',
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert result["tool_counts"]["Shell"] == 2
+        assert result["tool_counts"]["File_edit"] == 1
+
+    def test_detects_commits_in_function_call_output(self):
+        """Should find git commits in function_call_output entries."""
+        from vibedeck.export import analyze_conversation
+
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:01:02.000Z",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_001",
+                    "output": "[main abc1234] feat: add dark mode\n 3 files changed",
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert len(result["commits"]) == 1
+        assert result["commits"][0][0] == "abc1234"
+        assert "dark mode" in result["commits"][0][1]
+
+    def test_finds_long_texts_in_codex_messages(self):
+        """Should detect long text blocks in Codex message content."""
+        from vibedeck.export import analyze_conversation, LONG_TEXT_THRESHOLD
+
+        long_text = "x" * LONG_TEXT_THRESHOLD
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:00:05.000Z",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": long_text}],
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert len(result["long_texts"]) == 1
+
+    def test_empty_codex_entries(self):
+        """Should handle empty Codex entry list gracefully."""
+        from vibedeck.export import analyze_conversation
+
+        result = analyze_conversation([], backend="codex")
+        assert result["tool_counts"] == {}
+        assert result["long_texts"] == []
+        assert result["commits"] == []

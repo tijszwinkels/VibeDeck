@@ -456,6 +456,31 @@ def analyze_conversation(
                     if len(text) >= LONG_TEXT_THRESHOLD:
                         long_texts.append(text)
 
+        elif backend == "codex":
+            payload = entry.get("payload", {})
+            payload_type = payload.get("type", "")
+            timestamp = entry.get("timestamp", "")
+
+            if payload_type == "function_call":
+                tool_name = (payload.get("name") or "Unknown").capitalize()
+                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+
+            elif payload_type == "function_call_output":
+                output = payload.get("output", "")
+                if isinstance(output, str):
+                    for match in COMMIT_PATTERN.finditer(output):
+                        commits.append((match.group(1), match.group(2), timestamp))
+
+            elif payload_type == "message":
+                content = payload.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        text = block.get("text", "")
+                        if text and len(text) >= LONG_TEXT_THRESHOLD:
+                            long_texts.append(text)
+
         else:  # opencode
             timestamp = get_entry_timestamp(entry, backend)
             parts = entry.get("parts", [])
