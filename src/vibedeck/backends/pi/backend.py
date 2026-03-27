@@ -176,7 +176,7 @@ class PiBackend:
 
     # ===== File Watching =====
 
-    def should_watch_file(self, path: Path, include_subagents: bool = True) -> bool:
+    def should_watch_file(self, path: Path) -> bool:
         return should_watch_file(path)
 
     def get_session_id_from_changed_file(self, path: Path) -> str | None:

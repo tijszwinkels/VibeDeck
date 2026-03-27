@@ -173,6 +173,28 @@ class PiRenderer:
                 "system", "System", msg_id, timestamp, content_html, None, None
             )
 
+        if entry_type == "custom_message":
+            display = entry.get("display", False)
+            if not display:
+                return ""
+            custom_type = entry.get("customType", "extension")
+            content = entry.get("content", "")
+            if isinstance(content, str):
+                content_html = render_markdown_text(content)
+            elif isinstance(content, list):
+                parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        parts.append(render_markdown_text(block.get("text", "")))
+                content_html = "".join(parts)
+            else:
+                content_html = format_json(content)
+            timestamp = entry.get("timestamp", "")
+            msg_id = make_msg_id(timestamp)
+            return macros.message(
+                "system", custom_type, msg_id, timestamp, content_html, None, None
+            )
+
         if entry_type != "message":
             return ""
 

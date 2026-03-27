@@ -458,6 +458,28 @@ def normalize_pi_message(entry: dict) -> NormalizedMessage | None:
             blocks=[ContentBlock(type="text", text=text)],
         )
 
+    # Handle custom_message entries (extension-injected, displayed)
+    if entry_type == "custom_message":
+        if not entry.get("display", False):
+            return None
+        content = entry.get("content", "")
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            text = "\n".join(parts)
+        if not text:
+            return None
+        return NormalizedMessage(
+            role="system",
+            timestamp=entry.get("timestamp", ""),
+            blocks=[ContentBlock(type="text", text=text)],
+        )
+
     if entry_type != "message":
         return None
 

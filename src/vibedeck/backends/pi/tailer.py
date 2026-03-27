@@ -16,7 +16,7 @@ from ..base import JsonlTailer
 logger = logging.getLogger(__name__)
 
 # Entry types to include in display output
-_DISPLAYABLE_ENTRY_TYPES = {"message", "compaction", "branch_summary"}
+_DISPLAYABLE_ENTRY_TYPES = {"message", "compaction", "branch_summary", "custom_message"}
 
 # Non-displayable entry types (filtered out)
 _SKIP_ENTRY_TYPES = {
@@ -26,7 +26,6 @@ _SKIP_ENTRY_TYPES = {
     "session_info",
     "model_change",
     "thinking_level_change",
-    "custom_message",
 }
 
 

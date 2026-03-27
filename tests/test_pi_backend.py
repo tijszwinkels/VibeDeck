@@ -412,6 +412,42 @@ class TestRenderer:
         html = renderer.render_message(entry)
         assert html == ""
 
+    def test_render_custom_message_displayed(self):
+        """custom_message entries with display=true should be rendered."""
+        from vibedeck.backends.pi.renderer import PiRenderer
+
+        renderer = PiRenderer()
+        entry = {
+            "type": "custom_message",
+            "id": "cm1",
+            "parentId": "prev",
+            "timestamp": "2026-03-27T12:00:06.000Z",
+            "customType": "my-extension",
+            "content": "Injected context from extension",
+            "display": True,
+            "details": {},
+        }
+        html = renderer.render_message(entry)
+        assert "Injected context from extension" in html
+        assert "my-extension" in html
+
+    def test_render_custom_message_hidden(self):
+        """custom_message entries with display=false should be skipped."""
+        from vibedeck.backends.pi.renderer import PiRenderer
+
+        renderer = PiRenderer()
+        entry = {
+            "type": "custom_message",
+            "id": "cm2",
+            "parentId": "prev",
+            "timestamp": "2026-03-27T12:00:07.000Z",
+            "customType": "my-extension",
+            "content": "Hidden context",
+            "display": False,
+        }
+        html = renderer.render_message(entry)
+        assert html == ""
+
     def test_render_user_string_content(self):
         """User content can be a plain string instead of array."""
         from vibedeck.backends.pi.renderer import PiRenderer
@@ -687,6 +723,38 @@ class TestNormalizer:
             "id": "mc1",
             "parentId": None,
             "timestamp": "2026-03-27T12:00:00.000Z",
+        }
+        msg = normalize_message(entry, "pi")
+        assert msg is None
+
+    def test_normalize_custom_message_displayed(self):
+        from vibedeck.backends.shared.normalizer import normalize_message
+
+        entry = {
+            "type": "custom_message",
+            "id": "cm1",
+            "parentId": "prev",
+            "timestamp": "2026-03-27T12:00:06.000Z",
+            "customType": "my-extension",
+            "content": "Extension context",
+            "display": True,
+        }
+        msg = normalize_message(entry, "pi")
+        assert msg is not None
+        assert msg.role == "system"
+        assert msg.blocks[0].text == "Extension context"
+
+    def test_normalize_custom_message_hidden(self):
+        from vibedeck.backends.shared.normalizer import normalize_message
+
+        entry = {
+            "type": "custom_message",
+            "id": "cm2",
+            "parentId": "prev",
+            "timestamp": "2026-03-27T12:00:07.000Z",
+            "customType": "my-extension",
+            "content": "Hidden",
+            "display": False,
         }
         msg = normalize_message(entry, "pi")
         assert msg is None
