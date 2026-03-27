@@ -523,8 +523,8 @@ class TestPiBackend:
         from vibedeck.backends.pi.backend import PiBackend
 
         backend = PiBackend()
-        assert backend.supports_send_message() is False
-        assert backend.supports_fork_session() is False
+        assert backend.supports_send_message() is True
+        assert backend.supports_fork_session() is True
         assert backend.supports_permission_detection() is False
 
     def test_backend_session_operations(self):
@@ -774,3 +774,149 @@ class TestNormalizer:
         assert msg is not None
         assert msg.role == "system"
         assert "Summary of conversation" in msg.blocks[0].text
+
+
+# ===== CLI Tests =====
+
+
+class TestCli:
+    """Test Pi CLI command building."""
+
+    def test_build_new_session_command_basic(self):
+        from vibedeck.backends.pi.cli import build_new_session_command
+
+        spec = build_new_session_command("Hello world")
+        assert spec.args == ["pi", "-p"]
+        assert spec.stdin == "Hello world"
+
+    def test_build_new_session_command_with_model(self):
+        from vibedeck.backends.pi.cli import build_new_session_command
+
+        spec = build_new_session_command("Hello", model="google-gemini-cli/gemini-2.5-pro")
+        assert spec.args == ["pi", "-p", "--model", "google-gemini-cli/gemini-2.5-pro"]
+        assert spec.stdin == "Hello"
+
+    def test_build_send_command(self):
+        from vibedeck.backends.pi.cli import build_send_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_dir = Path(tmpdir)
+            project_dir = sessions_dir / "--home-claude-tmp--"
+            project_dir.mkdir(parents=True)
+            session_file = project_dir / "2026-03-27T12-10-22-476Z_317fbeae.jsonl"
+            session_file.write_text(SIMPLE_SESSION.read_text())
+
+            spec = build_send_command(
+                "317fbeae", "Continue please", sessions_dir=sessions_dir
+            )
+            assert spec.args[0] == "pi"
+            assert "-p" in spec.args
+            assert "--session" in spec.args
+            assert str(session_file) in spec.args
+            assert spec.stdin == "Continue please"
+
+    def test_build_send_command_with_model(self):
+        from vibedeck.backends.pi.cli import build_send_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_dir = Path(tmpdir)
+            project_dir = sessions_dir / "--home-claude-tmp--"
+            project_dir.mkdir(parents=True)
+            session_file = project_dir / "2026-03-27T12-10-22-476Z_317fbeae.jsonl"
+            session_file.write_text(SIMPLE_SESSION.read_text())
+
+            spec = build_send_command(
+                "317fbeae", "Hello", model="openai/gpt-5.4", sessions_dir=sessions_dir
+            )
+            assert "--model" in spec.args
+            assert "openai/gpt-5.4" in spec.args
+
+    def test_build_send_command_not_found(self):
+        from vibedeck.backends.pi.cli import build_send_command
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with pytest.raises(FileNotFoundError, match="Cannot find Pi session"):
+                build_send_command(
+                    "nonexistent-id", "Hello", sessions_dir=Path(tmpdir)
+                )
+
+    def test_build_fork_command(self):
+        from vibedeck.backends.pi.cli import build_fork_command
+
+        spec = build_fork_command("317fbeae", "Fork message")
+        assert spec.args == ["pi", "-p", "--fork", "317fbeae"]
+        assert spec.stdin == "Fork message"
+
+    def test_build_fork_command_with_model(self):
+        from vibedeck.backends.pi.cli import build_fork_command
+
+        spec = build_fork_command("317fbeae", "Fork", model="openai/gpt-5.4")
+        assert spec.args == ["pi", "-p", "--fork", "317fbeae", "--model", "openai/gpt-5.4"]
+        assert spec.stdin == "Fork"
+
+    def test_find_session_file(self):
+        from vibedeck.backends.pi.cli import find_session_file
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sessions_dir = Path(tmpdir)
+            project_dir = sessions_dir / "--home-claude-tmp--"
+            project_dir.mkdir(parents=True)
+            session_file = project_dir / "2026-03-27T12-10-22-476Z_317fbeae.jsonl"
+            session_file.write_text("test")
+
+            result = find_session_file("317fbeae", sessions_dir)
+            assert result == session_file
+
+    def test_find_session_file_not_found(self):
+        from vibedeck.backends.pi.cli import find_session_file
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = find_session_file("nonexistent", Path(tmpdir))
+            assert result is None
+
+    def test_parse_list_models_output(self):
+        from vibedeck.backends.pi.cli import _parse_list_models_output
+
+        output = """provider           model             context  max-out  thinking  images
+google-gemini-cli  gemini-2.5-flash  1.0M     65.5K    yes       yes
+google-gemini-cli  gemini-2.5-pro    1.0M     65.5K    yes       yes
+openai             gpt-5.4           272K     128K     yes       yes
+"""
+        models = _parse_list_models_output(output)
+        assert models == [
+            "google-gemini-cli/gemini-2.5-flash",
+            "google-gemini-cli/gemini-2.5-pro",
+            "openai/gpt-5.4",
+        ]
+
+    def test_parse_list_models_empty(self):
+        from vibedeck.backends.pi.cli import _parse_list_models_output
+
+        assert _parse_list_models_output("") == []
+        assert _parse_list_models_output("header only\n") == []
+
+    def test_backend_get_models(self, monkeypatch):
+        """Test that PiBackend.get_models() delegates to get_available_models."""
+        from vibedeck.backends.pi import backend as backend_mod
+        from vibedeck.backends.pi.backend import PiBackend
+
+        monkeypatch.setattr(
+            backend_mod,
+            "get_available_models",
+            lambda: ["google-gemini-cli/gemini-2.5-pro", "openai/gpt-5.4"],
+        )
+        backend = PiBackend()
+        models = backend.get_models()
+        assert "google-gemini-cli/gemini-2.5-pro" in models
+        assert "openai/gpt-5.4" in models
+
+    def test_backend_build_new_session_with_model(self):
+        from vibedeck.backends.pi.backend import PiBackend
+
+        backend = PiBackend()
+        spec = backend.build_new_session_command(
+            "Hello", model="openai/gpt-5.4"
+        )
+        assert "--model" in spec.args
+        assert "openai/gpt-5.4" in spec.args
+        assert spec.stdin == "Hello"

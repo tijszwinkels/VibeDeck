@@ -1,12 +1,11 @@
 """Pi Coding Agent backend implementation.
 
-Read-only backend for pi-coding-agent sessions. No CLI interaction
-(send/fork/new session) is supported in this initial implementation.
+Backend for pi-coding-agent sessions. Supports session discovery, reading,
+and CLI interaction (send, fork, new session) with model selection.
 """
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from ..protocol import (
@@ -28,6 +27,14 @@ from .discovery import (
     should_watch_file,
     get_session_id_from_changed_file,
 )
+from .cli import (
+    is_cli_available,
+    build_send_command,
+    build_fork_command,
+    build_new_session_command,
+    get_available_models,
+    CLI_INSTALL_INSTRUCTIONS,
+)
 from .tailer import PiTailer
 from .pricing import get_session_token_usage, get_session_model
 from .renderer import PiRenderer
@@ -36,8 +43,9 @@ from .renderer import PiRenderer
 class PiBackend:
     """Backend implementation for Pi Coding Agent.
 
-    Read-only: discovers and displays pi sessions stored as JSONL files
-    in ~/.pi/agent/sessions/.
+    Discovers and displays pi sessions stored as JSONL files in
+    ~/.pi/agent/sessions/. Supports creating new sessions, sending
+    messages, and forking via the Pi CLI.
     """
 
     def __init__(self, sessions_dir: Path | None = None):
@@ -120,51 +128,71 @@ class PiBackend:
     def get_context_limit_tokens(self, session_path: Path) -> int | None:
         return None  # Pi doesn't expose context limits
 
-    # ===== CLI Interaction (not supported) =====
+    # ===== Model Selection =====
+
+    def get_models(self) -> list[str]:
+        """Get available models by querying the Pi CLI.
+
+        Returns models in "provider/model" format (e.g.,
+        "google-gemini-cli/gemini-2.5-pro", "openai/gpt-5.4").
+        """
+        return get_available_models()
+
+    # ===== CLI Interaction =====
 
     def supports_send_message(self) -> bool:
-        return False
+        return True
 
     def supports_fork_session(self) -> bool:
-        return False
+        return True
 
     def supports_permission_detection(self) -> bool:
         return False
 
     def is_cli_available(self) -> bool:
-        return shutil.which("pi") is not None
+        return is_cli_available()
 
     def get_cli_install_instructions(self) -> str:
-        return "Install with: npm install -g @mariozechner/pi-coding-agent"
+        return CLI_INSTALL_INSTRUCTIONS
 
     def build_send_command(
         self,
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
         output_format: str | None = None,
         add_dirs: list[str] | None = None,
     ) -> CommandSpec:
-        raise NotImplementedError("Pi backend does not support sending messages")
+        return build_send_command(
+            session_id, message, skip_permissions,
+            model=model, sessions_dir=self._sessions_dir,
+        )
 
     def build_fork_command(
         self,
         session_id: str,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
         output_format: str | None = None,
         add_dirs: list[str] | None = None,
     ) -> CommandSpec:
-        raise NotImplementedError("Pi backend does not support forking sessions")
+        return build_fork_command(
+            session_id, message, skip_permissions, model=model,
+        )
 
     def build_new_session_command(
         self,
         message: str,
         skip_permissions: bool = False,
+        model: str | None = None,
         output_format: str | None = None,
         add_dirs: list[str] | None = None,
     ) -> CommandSpec:
-        raise NotImplementedError("Pi backend does not support new sessions")
+        return build_new_session_command(
+            message, skip_permissions, model=model,
+        )
 
     def ensure_session_indexed(self, session_id: str) -> None:
         pass  # Not needed for Pi
