@@ -442,3 +442,302 @@ class TestExtractTextFromContent:
 
         result = extract_text_from_content(None)
         assert result == ""
+
+
+# --- Codex export fixtures and tests ---
+
+
+@pytest.fixture
+def sample_codex_session(tmp_path):
+    """Create a sample Codex rollout JSONL session file."""
+    session_file = tmp_path / "rollout-2025-03-01T10-00-00-abcd1234.jsonl"
+    entries = [
+        {
+            "type": "session_meta",
+            "timestamp": "2025-03-01T10:00:00.000Z",
+            "payload": {"timestamp": "2025-03-01T10:00:00.000Z"},
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:00:01.000Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Hello from Codex!"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:00:05.000Z",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Hi! I'm Codex, ready to help."}
+                ],
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:01:00.000Z",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "List the files"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:01:01.000Z",
+            "payload": {
+                "type": "function_call",
+                "name": "shell",
+                "call_id": "call_001",
+                "arguments": '{"command": ["ls", "-la"]}',
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:01:02.000Z",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_001",
+                "output": "file1.py\nfile2.py\n",
+            },
+        },
+        {
+            "type": "response_item",
+            "timestamp": "2025-03-01T10:01:03.000Z",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": "Here are the files in the directory."}
+                ],
+            },
+        },
+    ]
+    with open(session_file, "w") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+    return session_file
+
+
+class TestCodexDetectSessionBackend:
+    """Tests for Codex backend detection."""
+
+    def test_detects_codex_rollout_jsonl(self, sample_codex_session):
+        """Should detect Codex backend from rollout JSONL file."""
+        from vibedeck.export import detect_session_backend
+
+        backend = detect_session_backend(sample_codex_session)
+        assert backend == "codex"
+
+    def test_detects_claude_code_not_codex(self, sample_claude_code_session):
+        """Claude Code JSONL should still be detected as claude_code, not codex."""
+        from vibedeck.export import detect_session_backend
+
+        backend = detect_session_backend(sample_claude_code_session)
+        assert backend == "claude_code"
+
+
+class TestCodexParseSessionEntries:
+    """Tests for Codex entry parsing through export."""
+
+    def test_parses_codex_entries(self, sample_codex_session):
+        """Should parse Codex session and return entries with codex backend."""
+        from vibedeck.export import parse_session_entries
+
+        entries, backend = parse_session_entries(sample_codex_session)
+        assert backend == "codex"
+        assert len(entries) > 0
+
+    def test_codex_entries_include_messages_and_tools(self, sample_codex_session):
+        """Should include user messages, assistant messages, and tool calls."""
+        from vibedeck.export import parse_session_entries
+
+        entries, backend = parse_session_entries(sample_codex_session)
+        payload_types = [e.get("payload", {}).get("type") for e in entries]
+        assert "message" in payload_types
+        assert "function_call" in payload_types
+        assert "function_call_output" in payload_types
+
+
+class TestCodexExportMarkdown:
+    """Tests for Codex markdown export."""
+
+    def test_markdown_contains_user_text(self, sample_codex_session):
+        """Should include Codex user messages in markdown."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None)
+        assert "Hello from Codex!" in result
+
+    def test_markdown_contains_assistant_text(self, sample_codex_session):
+        """Should include Codex assistant messages in markdown."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None)
+        assert "ready to help" in result
+
+    def test_markdown_has_codex_title(self, sample_codex_session):
+        """Should have 'Codex Transcript' in the title."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None)
+        assert "# Codex Transcript" in result
+
+    def test_markdown_contains_tool_usage(self, sample_codex_session):
+        """Should include tool calls in markdown."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None)
+        assert "shell" in result.lower() or "Shell" in result
+
+    def test_markdown_hides_tools_when_requested(self, sample_codex_session):
+        """Should hide tool calls when hide_tools=True."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None, hide_tools=True)
+        assert "### Tool:" not in result
+        # But conversation text should still be there
+        assert "Hello from Codex!" in result
+        assert "ready to help" in result
+
+    def test_markdown_has_prompt_headers(self, sample_codex_session):
+        """Should have numbered prompt headers."""
+        from vibedeck.export import export_markdown
+
+        result = export_markdown(sample_codex_session, None)
+        assert "## Prompt 1" in result
+        assert "## Prompt 2" in result
+
+
+class TestCodexExportHtml:
+    """Tests for Codex HTML export."""
+
+    def test_generates_html_for_codex(self, sample_codex_session, tmp_path):
+        """Should generate HTML files for Codex sessions."""
+        from vibedeck.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_codex_session, output_dir)
+
+        assert (output_dir / "index.html").exists()
+        assert (output_dir / "page-001.html").exists()
+
+    def test_html_title_reflects_codex_backend(self, sample_codex_session, tmp_path):
+        """Should show 'Codex' in title for Codex sessions."""
+        from vibedeck.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_codex_session, output_dir)
+
+        index_content = (output_dir / "index.html").read_text()
+        page_content = (output_dir / "page-001.html").read_text()
+
+        assert "<h1>Codex transcript</h1>" in index_content
+        assert "Codex transcript - Index" in index_content
+        assert "Codex transcript</a> - page 1/" in page_content
+
+    def test_html_contains_codex_messages(self, sample_codex_session, tmp_path):
+        """Should include Codex conversation content in HTML."""
+        from vibedeck.export import generate_html
+
+        output_dir = tmp_path / "output"
+        generate_html(sample_codex_session, output_dir)
+
+        page_content = (output_dir / "page-001.html").read_text()
+        assert "Hello from Codex!" in page_content
+
+
+class TestCodexAnalyzeConversation:
+    """Tests for analyze_conversation with Codex entries."""
+
+    def test_counts_codex_tool_calls(self):
+        """Should count function_call entries as tool usage."""
+        from vibedeck.export import analyze_conversation
+
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:01:01.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell",
+                    "call_id": "call_001",
+                    "arguments": '{"command": ["ls"]}',
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:02:00.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "shell",
+                    "call_id": "call_002",
+                    "arguments": '{"command": ["cat", "foo.py"]}',
+                },
+            },
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:03:00.000Z",
+                "payload": {
+                    "type": "function_call",
+                    "name": "file_edit",
+                    "call_id": "call_003",
+                    "arguments": '{"path": "foo.py"}',
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert result["tool_counts"]["Shell"] == 2
+        assert result["tool_counts"]["File_edit"] == 1
+
+    def test_detects_commits_in_function_call_output(self):
+        """Should find git commits in function_call_output entries."""
+        from vibedeck.export import analyze_conversation
+
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:01:02.000Z",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "call_001",
+                    "output": "[main abc1234] feat: add dark mode\n 3 files changed",
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert len(result["commits"]) == 1
+        assert result["commits"][0][0] == "abc1234"
+        assert "dark mode" in result["commits"][0][1]
+
+    def test_finds_long_texts_in_codex_messages(self):
+        """Should detect long text blocks in Codex message content."""
+        from vibedeck.export import analyze_conversation, LONG_TEXT_THRESHOLD
+
+        long_text = "x" * LONG_TEXT_THRESHOLD
+        entries = [
+            {
+                "type": "response_item",
+                "timestamp": "2025-03-01T10:00:05.000Z",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": long_text}],
+                },
+            },
+        ]
+        result = analyze_conversation(entries, backend="codex")
+        assert len(result["long_texts"]) == 1
+
+    def test_empty_codex_entries(self):
+        """Should handle empty Codex entry list gracefully."""
+        from vibedeck.export import analyze_conversation
+
+        result = analyze_conversation([], backend="codex")
+        assert result["tool_counts"] == {}
+        assert result["long_texts"] == []
+        assert result["commits"] == []

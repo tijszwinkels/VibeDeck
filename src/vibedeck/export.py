@@ -34,11 +34,13 @@ from .backends.shared.rendering import (
 )
 from .backends.claude_code.renderer import render_message as claude_render_message
 from .backends.claude_code.tailer import ClaudeCodeTailer
+from .backends.codex.renderer import render_message as codex_render_message
+from .backends.codex.tailer import CodexTailer
 from .backends.opencode.renderer import render_message as opencode_render_message
 from .backends.opencode.tailer import OpenCodeTailer
 
 # Type alias for session backends
-SessionBackend = Literal["claude_code", "opencode"]
+SessionBackend = Literal["claude_code", "opencode", "codex"]
 
 # Constants
 PROMPTS_PER_PAGE = 5
@@ -454,6 +456,31 @@ def analyze_conversation(
                     if len(text) >= LONG_TEXT_THRESHOLD:
                         long_texts.append(text)
 
+        elif backend == "codex":
+            payload = entry.get("payload", {})
+            payload_type = payload.get("type", "")
+            timestamp = entry.get("timestamp", "")
+
+            if payload_type == "function_call":
+                tool_name = (payload.get("name") or "Unknown").capitalize()
+                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+
+            elif payload_type == "function_call_output":
+                output = payload.get("output", "")
+                if isinstance(output, str):
+                    for match in COMMIT_PATTERN.finditer(output):
+                        commits.append((match.group(1), match.group(2), timestamp))
+
+            elif payload_type == "message":
+                content = payload.get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if not isinstance(block, dict):
+                            continue
+                        text = block.get("text", "")
+                        if text and len(text) >= LONG_TEXT_THRESHOLD:
+                            long_texts.append(text)
+
         else:  # opencode
             timestamp = get_entry_timestamp(entry, backend)
             parts = entry.get("parts", [])
@@ -534,8 +561,10 @@ def detect_session_backend(session_path: Path) -> SessionBackend:
     Raises:
         ValueError if session type cannot be determined
     """
-    # Check if it's a JSONL file (Claude Code)
+    # Check if it's a JSONL file (Claude Code or Codex)
     if session_path.suffix == ".jsonl" and session_path.is_file():
+        if _is_codex_jsonl(session_path):
+            return "codex"
         return "claude_code"
 
     # Check if it's an OpenCode session ID (directory-based storage)
@@ -562,6 +591,43 @@ def detect_session_backend(session_path: Path) -> SessionBackend:
 def get_opencode_storage_dir() -> Path:
     """Get the OpenCode storage directory."""
     return Path.home() / ".local" / "share" / "opencode" / "storage"
+
+
+def _is_codex_jsonl(session_path: Path) -> bool:
+    """Check whether a JSONL file is a Codex rollout transcript.
+
+    Codex rollout files use ``response_item`` or ``session_meta`` as entry
+    types, whereas Claude Code uses ``user`` / ``assistant``.  We peek at
+    the first few non-empty lines to decide.
+    """
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                entry_type = entry.get("type", "")
+                if entry_type in ("response_item", "session_meta"):
+                    return True
+                if entry_type in ("user", "assistant", "system"):
+                    return False
+    except OSError:
+        pass
+    return False
+
+
+def parse_codex_entries(session_path: Path) -> list[dict]:
+    """Parse a Codex rollout JSONL file and return transcript entries.
+
+    Uses the CodexTailer which already filters for relevant entry types
+    (messages, function_call, function_call_output).
+    """
+    tailer = CodexTailer(session_path)
+    return tailer.read_all()
 
 
 def parse_claude_code_entries(session_path: Path) -> list[dict]:
@@ -609,7 +675,10 @@ def parse_session_entries(
     if backend is None:
         backend = detect_session_backend(session_path)
 
-    if backend == "claude_code":
+    if backend == "codex":
+        entries = parse_codex_entries(session_path)
+        return entries, backend
+    elif backend == "claude_code":
         entries = parse_claude_code_entries(session_path)
     else:  # opencode
         # session_path might be a full path or just session ID
@@ -632,7 +701,17 @@ def parse_session_entries(
 
 def get_entry_user_text(entry: dict, backend: SessionBackend) -> str | None:
     """Extract user text from an entry based on backend type."""
-    if backend == "claude_code":
+    if backend == "codex":
+        payload = entry.get("payload", {})
+        if payload.get("type") != "message" or payload.get("role") != "user":
+            return None
+        for block in payload.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "input_text":
+                text = block.get("text", "").strip()
+                if text:
+                    return text
+        return None
+    elif backend == "claude_code":
         message_data = entry.get("message", {})
         content = message_data.get("content", "")
         # Check if this is actual user text (not tool result)
@@ -655,7 +734,7 @@ def get_entry_user_text(entry: dict, backend: SessionBackend) -> str | None:
 
 def get_entry_timestamp(entry: dict, backend: SessionBackend) -> str:
     """Get timestamp from an entry based on backend type."""
-    if backend == "claude_code":
+    if backend in ("claude_code", "codex"):
         return entry.get("timestamp", "")
     else:  # opencode
         info = entry.get("info", {})
@@ -674,7 +753,16 @@ def get_entry_timestamp(entry: dict, backend: SessionBackend) -> str:
 
 def get_entry_role(entry: dict, backend: SessionBackend) -> str:
     """Get role (user/assistant) from an entry based on backend type."""
-    if backend == "claude_code":
+    if backend == "codex":
+        payload = entry.get("payload", {})
+        payload_type = payload.get("type")
+        if payload_type == "message":
+            return payload.get("role", "")
+        # function_call entries are assistant actions
+        if payload_type in ("function_call", "function_call_output"):
+            return "assistant"
+        return ""
+    elif backend == "claude_code":
         return entry.get("type", "")
     else:  # opencode
         info = entry.get("info", {})
@@ -697,7 +785,9 @@ def render_entry(entry: dict, backend: SessionBackend, hide_tools: bool = False)
         if entry is None:
             return ""
 
-    if backend == "claude_code":
+    if backend == "codex":
+        return codex_render_message(entry)
+    elif backend == "claude_code":
         return claude_render_message(entry)
     else:  # opencode
         return opencode_render_message(entry)
@@ -713,7 +803,9 @@ def filter_entry_tools(entry: dict, backend: SessionBackend) -> dict | None:
     Returns:
         Filtered entry, or None if entry should be skipped entirely
     """
-    if backend == "claude_code":
+    if backend == "codex":
+        return _filter_codex_entry(entry)
+    elif backend == "claude_code":
         return _filter_claude_code_entry(entry)
     else:
         return _filter_opencode_entry(entry)
@@ -771,6 +863,19 @@ def _filter_opencode_entry(entry: dict) -> dict | None:
     filtered_entry = dict(entry)
     filtered_entry["parts"] = filtered_parts
     return filtered_entry
+
+
+def _filter_codex_entry(entry: dict) -> dict | None:
+    """Filter tool content from Codex entry.
+
+    Codex tool calls are separate entries (function_call / function_call_output),
+    so we skip those entirely.  Message entries pass through as-is.
+    """
+    payload = entry.get("payload", {})
+    payload_type = payload.get("type")
+    if payload_type in ("function_call", "function_call_output"):
+        return None
+    return entry
 
 
 def generate_html(
@@ -1192,9 +1297,12 @@ def format_session_as_markdown(
     lines = []
 
     # Header
-    title = (
-        "Claude Code Transcript" if backend == "claude_code" else "OpenCode Transcript"
-    )
+    _titles = {
+        "claude_code": "Claude Code Transcript",
+        "opencode": "OpenCode Transcript",
+        "codex": "Codex Transcript",
+    }
+    title = _titles.get(backend, "Transcript")
     lines.append(f"# {title}")
     lines.append("")
     lines.append(f"**Session:** {session_path.stem}")

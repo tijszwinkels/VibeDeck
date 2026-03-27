@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Timeout for the Claude CLI subprocess (seconds)
 SUBPROCESS_TIMEOUT = 300  # 5 minutes
 
+# Model to use for Codex summarization (cheap and fast)
+CODEX_SUMMARY_MODEL = "gpt-5.4-mini"
+
 
 @dataclass
 class ParsedResponse:
@@ -77,6 +80,11 @@ class Summarizer:
 
     def _build_summary_command(self, session: "SessionInfo", prompt: str) -> tuple[list[str], str | None]:
         """Build a backend-appropriate non-persistent summary command."""
+        cli_command = getattr(self.backend, "cli_command", None)
+
+        if cli_command == "codex":
+            return self._build_codex_summary_command(session, prompt)
+
         build_send = self.backend.build_send_command
         kwargs: dict[str, Any] = {
             "session_id": session.session_id,
@@ -94,14 +102,47 @@ class Summarizer:
 
         cmd_spec = build_send(**kwargs)
         cmd_args = list(cmd_spec.args)
-        cli_command = getattr(self.backend, "cli_command", None)
 
         if cli_command == "claude":
             cmd_args.append("--no-session-persistence")
-        elif cli_command == "codex":
-            cmd_args.append("--ephemeral")
 
         return cmd_args, cmd_spec.stdin
+
+    def _build_codex_summary_command(
+        self, session: "SessionInfo", prompt: str
+    ) -> tuple[list[str], str | None]:
+        """Build a transcript-fed summary command for Codex.
+
+        Instead of resuming the session (which would pollute it), we:
+        1. Generate a compact markdown transcript of the session
+        2. Embed it in the prompt
+        3. Run a fresh ephemeral Codex execution
+        """
+        transcript = self._generate_codex_transcript(session)
+
+        full_prompt = (
+            "Here is the session transcript to summarize:\n\n"
+            f"{transcript}\n\n---\n\n{prompt}"
+        )
+
+        cmd_spec = self.backend.build_new_session_command(
+            message=full_prompt,
+            skip_permissions=True,
+            output_format="json",
+        )
+        cmd_args = list(cmd_spec.args)
+        cmd_args.append("--ephemeral")
+
+        return cmd_args, cmd_spec.stdin
+
+    def _generate_codex_transcript(self, session: "SessionInfo") -> str:
+        """Generate a compact markdown transcript for a Codex session."""
+        from ..export import format_session_as_markdown, parse_codex_entries
+
+        entries = parse_codex_entries(session.path)
+        return format_session_as_markdown(
+            entries, session.path, backend="codex", hide_tools=True
+        )
 
     async def summarize(self, session: SessionInfo, model: str | None = None) -> SummaryResult:
         """Generate a summary for a session.
@@ -138,6 +179,10 @@ class Summarizer:
         cmd_args, cmd_stdin = self._build_summary_command(session, prompt)
 
         # Add model flag if specified
+        # Codex uses OpenAI models — override Claude model names
+        cli_command = getattr(self.backend, "cli_command", None)
+        if cli_command == "codex":
+            model = CODEX_SUMMARY_MODEL
         if model:
             cmd_args.extend(["--model", model])
 
@@ -186,9 +231,12 @@ class Summarizer:
 
             if process.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
+                stdout_preview = stdout.decode()[:500] if stdout else "(empty)"
                 logger.error(
                     f"Summary command failed for session {session.session_id}: "
-                    f"exit code {process.returncode}, stderr: {error_msg}"
+                    f"exit code {process.returncode}, "
+                    f"cmd: {' '.join(cmd_args)}, "
+                    f"stderr: {error_msg}, stdout: {stdout_preview}"
                 )
                 return SummaryResult(success=False, error=error_msg)
 
@@ -253,8 +301,15 @@ class Summarizer:
                     # Handle both formats: JSON Lines (dict per line) or array
                     items = data if isinstance(data, list) else [data]
                     for item in items:
-                        if isinstance(item, dict) and item.get("type") == "result":
+                        if not isinstance(item, dict):
+                            continue
+                        # Claude Code format: {"type": "result", "result": "..."}
+                        if item.get("type") == "result":
                             response_text = item.get("result", "")
+                            break
+                        # Codex format: {"type": "item.completed", "item": {"text": "..."}}
+                        if item.get("type") == "item.completed":
+                            response_text = item.get("item", {}).get("text", "")
                             break
                     if response_text:
                         break
