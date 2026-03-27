@@ -400,6 +400,174 @@ def _extract_opencode_usage(info: dict, parts: list[dict], model_id: str | None)
     return usage
 
 
+# ===== Pi normalization =====
+
+
+def _normalize_pi_content_block(block: dict) -> ContentBlock | None:
+    """Normalize a single Pi content block."""
+    if not isinstance(block, dict):
+        return None
+
+    block_type = block.get("type", "")
+
+    if block_type == "text":
+        return ContentBlock(type="text", text=block.get("text", ""))
+    elif block_type == "thinking":
+        return ContentBlock(type="thinking", text=block.get("thinking", ""))
+    elif block_type == "toolCall":
+        return ContentBlock(
+            type="tool_use",
+            tool_name=block.get("name", ""),
+            tool_id=block.get("id", ""),
+            tool_input=block.get("arguments", {}),
+        )
+    elif block_type == "image":
+        return ContentBlock(
+            type="image",
+            media_type=block.get("mimeType", "image/png"),
+            data=block.get("data", ""),
+        )
+    return None
+
+
+def normalize_pi_message(entry: dict) -> NormalizedMessage | None:
+    """Normalize a Pi JSONL entry.
+
+    Returns None for entries that should be skipped.
+    """
+    entry_type = entry.get("type")
+
+    # Handle compaction entries
+    if entry_type == "compaction":
+        summary = entry.get("summary", "")
+        tokens_before = entry.get("tokensBefore", 0)
+        text = f"Context compacted ({tokens_before:,} tokens): {summary}"
+        return NormalizedMessage(
+            role="system",
+            timestamp=entry.get("timestamp", ""),
+            blocks=[ContentBlock(type="text", text=text)],
+        )
+
+    # Handle branch_summary entries
+    if entry_type == "branch_summary":
+        summary = entry.get("summary", "")
+        text = f"Branch summary: {summary}"
+        return NormalizedMessage(
+            role="system",
+            timestamp=entry.get("timestamp", ""),
+            blocks=[ContentBlock(type="text", text=text)],
+        )
+
+    if entry_type != "message":
+        return None
+
+    msg = entry.get("message", {})
+    if not msg:
+        return None
+
+    role = msg.get("role", "")
+    timestamp = entry.get("timestamp", "")
+
+    if role == "user":
+        content = msg.get("content", "")
+        blocks: list[ContentBlock] = []
+        if isinstance(content, str):
+            if content.strip():
+                blocks.append(ContentBlock(type="text", text=content))
+        elif isinstance(content, list):
+            for raw_block in content:
+                normalized = _normalize_pi_content_block(raw_block)
+                if normalized:
+                    blocks.append(normalized)
+        if not blocks:
+            return None
+        return NormalizedMessage(role="user", timestamp=timestamp, blocks=blocks)
+
+    elif role == "assistant":
+        content = msg.get("content", [])
+        blocks = []
+        if isinstance(content, list):
+            for raw_block in content:
+                normalized = _normalize_pi_content_block(raw_block)
+                if normalized:
+                    blocks.append(normalized)
+        if not blocks:
+            return None
+
+        # Extract usage
+        usage = None
+        raw_usage = msg.get("usage")
+        if raw_usage:
+            cost = raw_usage.get("cost", {})
+            cost_total = cost.get("total", 0) if isinstance(cost, dict) else cost
+            usage = {
+                "input_tokens": raw_usage.get("input", 0),
+                "output_tokens": raw_usage.get("output", 0),
+                "cache_read_tokens": raw_usage.get("cacheRead", 0),
+                "cache_creation_tokens": raw_usage.get("cacheWrite", 0),
+                "cost": cost_total,
+            }
+
+        return NormalizedMessage(
+            role="assistant",
+            timestamp=timestamp,
+            blocks=blocks,
+            model=msg.get("model"),
+            stop_reason=msg.get("stopReason"),
+            usage=usage,
+        )
+
+    elif role == "toolResult":
+        content = msg.get("content", [])
+        tool_content = ""
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(item.get("text", ""))
+            tool_content = "\n".join(parts)
+        elif isinstance(content, str):
+            tool_content = content
+
+        return NormalizedMessage(
+            role="assistant",
+            timestamp=timestamp,
+            blocks=[
+                ContentBlock(
+                    type="tool_result",
+                    tool_use_id=msg.get("toolCallId", ""),
+                    content=tool_content,
+                    is_error=msg.get("isError", False),
+                )
+            ],
+        )
+
+    elif role == "bashExecution":
+        command = msg.get("command", "")
+        output = msg.get("output", "")
+        exit_code = msg.get("exitCode", 0)
+        return NormalizedMessage(
+            role="assistant",
+            timestamp=timestamp,
+            blocks=[
+                ContentBlock(
+                    type="tool_use",
+                    tool_name="bash",
+                    tool_id=f"bash-{entry.get('id', '')}",
+                    tool_input={"command": command},
+                ),
+                ContentBlock(
+                    type="tool_result",
+                    tool_use_id=f"bash-{entry.get('id', '')}",
+                    content=output,
+                    is_error=exit_code != 0,
+                ),
+            ],
+        )
+
+    return None
+
+
 # ===== Dispatch =====
 
 
@@ -514,7 +682,7 @@ def normalize_message(entry: dict, backend: str) -> NormalizedMessage | None:
 
     Args:
         entry: Raw message entry (backend-specific format).
-        backend: Backend name ("claude_code" or "opencode").
+        backend: Backend name ("claude_code", "opencode", "codex", or "pi").
 
     Returns:
         NormalizedMessage or None if entry should be skipped.
@@ -525,4 +693,6 @@ def normalize_message(entry: dict, backend: str) -> NormalizedMessage | None:
         return normalize_opencode_message(entry)
     elif backend == "codex":
         return normalize_codex_message(entry)
+    elif backend == "pi":
+        return normalize_pi_message(entry)
     return None

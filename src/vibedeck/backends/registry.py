@@ -153,3 +153,13 @@ def ensure_backends_registered() -> None:
         import logging
 
         logging.getLogger(__name__).warning(f"Codex backend not available: {e}")
+
+    # Register Pi backend
+    try:
+        from .pi import PiBackend
+
+        register_backend("pi", PiBackend)
+    except ImportError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"Pi backend not available: {e}")
