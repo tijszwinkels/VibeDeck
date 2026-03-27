@@ -37,3 +37,6 @@ claude-code-transcripts/
 
 # MCP server data
 .playwright-mcp/
+
+# Handover docs
+HANDOVER-*.md
