@@ -9,7 +9,7 @@ import logging
 import os
 import shutil
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -77,6 +77,29 @@ class TerminalManager:
 
         return shells
 
+    def _build_terminal_env(self) -> dict[str, str]:
+        """Build a clean environment for the embedded terminal PTY."""
+        env = dict(os.environ)
+        removed_keys = []
+
+        for key in ("TMUX", "TMUX_PANE", "TERM_PROGRAM"):
+            if key in env:
+                removed_keys.append(key)
+                env.pop(key, None)
+
+        env.update(
+            {
+                "TERM": "xterm-256color",
+                "COLORTERM": "truecolor",
+                "VIBEDECK_EMBEDDED_TERMINAL": "1",
+            }
+        )
+
+        if removed_keys:
+            logger.info("Sanitized terminal environment, removed inherited keys: %s", ", ".join(removed_keys))
+
+        return env
+
     async def spawn_pty(
         self, session: TerminalSession, rows: int = 24, cols: int = 80
     ) -> bool:
@@ -99,14 +122,10 @@ class TerminalManager:
         try:
             logger.info(f"Spawning shell: {shell} in {cwd or 'home'}")
             proc = ptyprocess.PtyProcess.spawn(
-                [shell, "-l"],  # Login shell for proper environment
+                [shell],  # Interactive PTY shell without login/profile side effects (e.g. auto-tmux)
                 cwd=cwd,
                 dimensions=(rows, cols),
-                env={
-                    **os.environ,
-                    "TERM": "xterm-256color",
-                    "COLORTERM": "truecolor",
-                },
+                env=self._build_terminal_env(),
             )
             session.process = proc
             return True

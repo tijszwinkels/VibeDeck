@@ -138,6 +138,52 @@ class TestSpawnPty:
                 assert session.process is mock_proc
 
     @pytest.mark.asyncio
+    async def test_spawn_uses_non_login_shell(self, tmp_path):
+        mgr = TerminalManager()
+        ws = AsyncMock()
+        session = TerminalSession(websocket=ws, cwd=str(tmp_path))
+
+        mock_proc = MagicMock()
+        with patch("vibedeck.terminal.PTYPROCESS_AVAILABLE", True):
+            with patch.object(mgr, "_get_shell", return_value="/bin/bash"):
+                with patch("vibedeck.terminal.ptyprocess") as mock_pty:
+                    mock_pty.PtyProcess.spawn.return_value = mock_proc
+                    result = await mgr.spawn_pty(session)
+                    assert result is True
+                    call_args = mock_pty.PtyProcess.spawn.call_args.args[0]
+                    assert call_args == ["/bin/bash"]
+
+    @pytest.mark.asyncio
+    async def test_spawn_sanitizes_tmux_environment(self, tmp_path):
+        mgr = TerminalManager()
+        ws = AsyncMock()
+        session = TerminalSession(websocket=ws, cwd=str(tmp_path))
+
+        mock_proc = MagicMock()
+        with patch("vibedeck.terminal.PTYPROCESS_AVAILABLE", True):
+            with patch.object(mgr, "_get_shell", return_value="/bin/bash"):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "TMUX": "/tmp/tmux.sock,123,0",
+                        "TMUX_PANE": "%1",
+                        "TERM_PROGRAM": "tmux",
+                    },
+                    clear=False,
+                ):
+                    with patch("vibedeck.terminal.ptyprocess") as mock_pty:
+                        mock_pty.PtyProcess.spawn.return_value = mock_proc
+                        result = await mgr.spawn_pty(session)
+                        assert result is True
+                        env = mock_pty.PtyProcess.spawn.call_args.kwargs["env"]
+                        assert env["VIBEDECK_EMBEDDED_TERMINAL"] == "1"
+                        assert env["TERM"] == "xterm-256color"
+                        assert env["COLORTERM"] == "truecolor"
+                        assert "TMUX" not in env
+                        assert "TMUX_PANE" not in env
+                        assert "TERM_PROGRAM" not in env
+
+    @pytest.mark.asyncio
     async def test_spawn_exception(self, tmp_path):
         mgr = TerminalManager()
         ws = AsyncMock()

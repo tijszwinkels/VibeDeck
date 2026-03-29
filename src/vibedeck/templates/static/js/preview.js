@@ -3,6 +3,7 @@ import { dom, state } from './state.js';
 import { isMobile, copyToClipboard } from './utils.js';
 import { openRightPane, syncTreeToFile, loadFileTree } from './filetree.js';
 import { updateRightPaneLayout } from './terminal.js';
+import { isTerminalKeyboardEventTarget } from './terminal-keyboard.js';
 import { showFlash } from './ui.js';
 import { startFileWatch, stopFileWatch } from './filewatch.js';
 
@@ -95,7 +96,7 @@ export function initPreviewPane() {
 
     // Escape key to close preview pane
     document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && state.previewPaneOpen) {
+        if (e.key === 'Escape' && state.previewPaneOpen && !isTerminalKeyboardEventTarget(e.target)) {
             closePreviewPane();
         }
     });

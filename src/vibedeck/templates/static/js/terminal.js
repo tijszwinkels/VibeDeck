@@ -11,12 +11,20 @@
  */
 
 import { dom, state } from './state.js';
+import {
+    createKittyKeyboardState,
+    resetKittyKeyboardState,
+    getKittyKeyboardFlags,
+    processKittyKeyboardProtocolOutput,
+    encodeKittyKeyEvent,
+} from './terminal-keyboard.js';
 
 // Terminal state
 let terminal = null;
 let fitAddon = null;
 let webSocket = null;
 let terminalEnabled = false;
+const kittyKeyboardState = createKittyKeyboardState();
 
 /**
  * Initialize the terminal module.
@@ -180,6 +188,25 @@ async function openTerminal() {
         // Focus terminal when clicking on container
         container.addEventListener('click', () => terminal.focus());
 
+        terminal.attachCustomKeyEventHandler((event) => {
+            if (event.type !== 'keydown') {
+                return true;
+            }
+
+            const kittySequence = encodeKittyKeyEvent(event, getKittyKeyboardFlags(kittyKeyboardState));
+            if (!kittySequence) {
+                return true;
+            }
+
+            if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                event.preventDefault();
+                webSocket.send(JSON.stringify({ type: 'input', data: kittySequence }));
+                return false;
+            }
+
+            return true;
+        });
+
         // Handle terminal input -> WebSocket
         terminal.onData(data => {
             if (webSocket && webSocket.readyState === WebSocket.OPEN) {
@@ -208,6 +235,7 @@ async function openTerminal() {
         panel.style.height = `${state.terminalHeight}px`;
     }
 
+    resetKittyKeyboardState(kittyKeyboardState);
     connectWebSocket();
 
     // Focus terminal after layout settles
@@ -262,6 +290,7 @@ function connectWebSocket() {
     }
     let url = wsUrl.href;
 
+    resetKittyKeyboardState(kittyKeyboardState);
     webSocket = new WebSocket(url);
 
     webSocket.onopen = () => {
@@ -277,8 +306,17 @@ function connectWebSocket() {
         try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'output' && terminal) {
-                terminal.write(msg.data);
+                const { output, responses } = processKittyKeyboardProtocolOutput(kittyKeyboardState, msg.data);
+                for (const response of responses) {
+                    if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                        webSocket.send(JSON.stringify({ type: 'input', data: response }));
+                    }
+                }
+                if (output) {
+                    terminal.write(output);
+                }
             } else if (msg.type === 'exit') {
+                resetKittyKeyboardState(kittyKeyboardState);
                 terminal?.write('\r\n[Process exited]\r\n');
             } else if (msg.type === 'error') {
                 console.error('Terminal error:', msg.message);
@@ -310,6 +348,7 @@ function connectWebSocket() {
  * Close terminal and disconnect WebSocket.
  */
 function closeTerminal() {
+    resetKittyKeyboardState(kittyKeyboardState);
     if (webSocket) {
         webSocket.close(1000, 'User closed terminal');
         webSocket = null;
