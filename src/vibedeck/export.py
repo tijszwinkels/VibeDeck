@@ -38,9 +38,11 @@ from .backends.codex.renderer import render_message as codex_render_message
 from .backends.codex.tailer import CodexTailer
 from .backends.opencode.renderer import render_message as opencode_render_message
 from .backends.opencode.tailer import OpenCodeTailer
+from .backends.pi.renderer import PiRenderer
+from .backends.pi.tailer import PiTailer
 
 # Type alias for session backends
-SessionBackend = Literal["claude_code", "opencode", "codex"]
+SessionBackend = Literal["claude_code", "opencode", "codex", "pi"]
 
 # Constants
 PROMPTS_PER_PAGE = 5
@@ -481,6 +483,50 @@ def analyze_conversation(
                         if text and len(text) >= LONG_TEXT_THRESHOLD:
                             long_texts.append(text)
 
+        elif backend == "pi":
+            timestamp = entry.get("timestamp", "")
+            entry_type = entry.get("type", "")
+
+            if entry_type == "message":
+                message_data = entry.get("message", {})
+                role = message_data.get("role", "")
+
+                if role == "assistant":
+                    content = message_data.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if not isinstance(block, dict):
+                                continue
+                            block_type = block.get("type", "")
+                            if block_type == "toolCall":
+                                tool_name = block.get("name", "Unknown")
+                                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + 1
+                            elif block_type == "text":
+                                text = block.get("text", "")
+                                if text and len(text) >= LONG_TEXT_THRESHOLD:
+                                    long_texts.append(text)
+
+                elif role == "toolResult":
+                    content = message_data.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if not isinstance(block, dict) or block.get("type") != "text":
+                                continue
+                            text = block.get("text", "")
+                            for match in COMMIT_PATTERN.finditer(text):
+                                commits.append((match.group(1), match.group(2), timestamp))
+
+                elif role == "bashExecution":
+                    output = message_data.get("output", "")
+                    if isinstance(output, str):
+                        for match in COMMIT_PATTERN.finditer(output):
+                            commits.append((match.group(1), match.group(2), timestamp))
+
+            elif entry_type in {"compaction", "branch_summary", "custom_message"}:
+                text = extract_text_from_content(entry.get("content", "")) or entry.get("summary", "")
+                if text and len(text) >= LONG_TEXT_THRESHOLD:
+                    long_texts.append(text)
+
         else:  # opencode
             timestamp = get_entry_timestamp(entry, backend)
             parts = entry.get("parts", [])
@@ -556,15 +602,17 @@ def detect_session_backend(session_path: Path) -> SessionBackend:
         session_path: Path to session file or OpenCode session ID
 
     Returns:
-        'claude_code' or 'opencode'
+        'claude_code', 'codex', 'pi', or 'opencode'
 
     Raises:
         ValueError if session type cannot be determined
     """
-    # Check if it's a JSONL file (Claude Code or Codex)
+    # Check if it's a JSONL file (Claude Code, Codex, or Pi)
     if session_path.suffix == ".jsonl" and session_path.is_file():
         if _is_codex_jsonl(session_path):
             return "codex"
+        if _is_pi_jsonl(session_path):
+            return "pi"
         return "claude_code"
 
     # Check if it's an OpenCode session ID (directory-based storage)
@@ -620,6 +668,38 @@ def _is_codex_jsonl(session_path: Path) -> bool:
     return False
 
 
+def _is_pi_jsonl(session_path: Path) -> bool:
+    """Check whether a JSONL file is a Pi session transcript."""
+    pi_entry_types = {
+        "session",
+        "message",
+        "compaction",
+        "branch_summary",
+        "custom_message",
+        "model_change",
+        "thinking_level_change",
+    }
+
+    try:
+        with open(session_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                entry_type = entry.get("type", "")
+                if entry_type in pi_entry_types:
+                    return True
+                if entry_type in ("user", "assistant", "system", "response_item", "session_meta"):
+                    return False
+    except OSError:
+        pass
+    return False
+
+
 def parse_codex_entries(session_path: Path) -> list[dict]:
     """Parse a Codex rollout JSONL file and return transcript entries.
 
@@ -627,6 +707,12 @@ def parse_codex_entries(session_path: Path) -> list[dict]:
     (messages, function_call, function_call_output).
     """
     tailer = CodexTailer(session_path)
+    return tailer.read_all()
+
+
+def parse_pi_entries(session_path: Path) -> list[dict]:
+    """Parse a Pi JSONL file and return displayable transcript entries."""
+    tailer = PiTailer(session_path)
     return tailer.read_all()
 
 
@@ -678,6 +764,9 @@ def parse_session_entries(
     if backend == "codex":
         entries = parse_codex_entries(session_path)
         return entries, backend
+    elif backend == "pi":
+        entries = parse_pi_entries(session_path)
+        return entries, backend
     elif backend == "claude_code":
         entries = parse_claude_code_entries(session_path)
     else:  # opencode
@@ -719,6 +808,13 @@ def get_entry_user_text(entry: dict, backend: SessionBackend) -> str | None:
             if isinstance(content[0], dict) and content[0].get("type") == "tool_result":
                 return None
         return extract_text_from_content(content) or None
+    elif backend == "pi":
+        if entry.get("type") != "message":
+            return None
+        message_data = entry.get("message", {})
+        if message_data.get("role") != "user":
+            return None
+        return extract_text_from_content(message_data.get("content", "")) or None
     else:  # opencode
         info = entry.get("info", {})
         parts = entry.get("parts", [])
@@ -734,7 +830,7 @@ def get_entry_user_text(entry: dict, backend: SessionBackend) -> str | None:
 
 def get_entry_timestamp(entry: dict, backend: SessionBackend) -> str:
     """Get timestamp from an entry based on backend type."""
-    if backend in ("claude_code", "codex"):
+    if backend in ("claude_code", "codex", "pi"):
         return entry.get("timestamp", "")
     else:  # opencode
         info = entry.get("info", {})
@@ -764,6 +860,10 @@ def get_entry_role(entry: dict, backend: SessionBackend) -> str:
         return ""
     elif backend == "claude_code":
         return entry.get("type", "")
+    elif backend == "pi":
+        if entry.get("type") != "message":
+            return "assistant"
+        return "user" if entry.get("message", {}).get("role") == "user" else "assistant"
     else:  # opencode
         info = entry.get("info", {})
         return info.get("role", "")
@@ -789,6 +889,8 @@ def render_entry(entry: dict, backend: SessionBackend, hide_tools: bool = False)
         return codex_render_message(entry)
     elif backend == "claude_code":
         return claude_render_message(entry)
+    elif backend == "pi":
+        return PiRenderer().render_message(entry)
     else:  # opencode
         return opencode_render_message(entry)
 
@@ -807,6 +909,8 @@ def filter_entry_tools(entry: dict, backend: SessionBackend) -> dict | None:
         return _filter_codex_entry(entry)
     elif backend == "claude_code":
         return _filter_claude_code_entry(entry)
+    elif backend == "pi":
+        return _filter_pi_entry(entry)
     else:
         return _filter_opencode_entry(entry)
 
@@ -863,6 +967,46 @@ def _filter_opencode_entry(entry: dict) -> dict | None:
     filtered_entry = dict(entry)
     filtered_entry["parts"] = filtered_parts
     return filtered_entry
+
+
+def _filter_pi_entry(entry: dict) -> dict | None:
+    """Filter tool content from Pi entry."""
+    entry_type = entry.get("type", "")
+    if entry_type != "message":
+        return entry
+
+    message_data = entry.get("message", {})
+    role = message_data.get("role", "")
+
+    if role in {"toolResult", "bashExecution"}:
+        return None
+
+    if role == "assistant":
+        content = message_data.get("content", [])
+        if not isinstance(content, list):
+            return entry
+
+        filtered_content = [
+            block for block in content
+            if not isinstance(block, dict) or block.get("type") != "toolCall"
+        ]
+        if not filtered_content:
+            return None
+
+        has_visible_content = any(
+            not isinstance(block, dict)
+            or block.get("type") in {"text", "thinking", "image"}
+            for block in filtered_content
+        )
+        if not has_visible_content:
+            return None
+
+        filtered_entry = dict(entry)
+        filtered_entry["message"] = dict(message_data)
+        filtered_entry["message"]["content"] = filtered_content
+        return filtered_entry
+
+    return entry
 
 
 def _filter_codex_entry(entry: dict) -> dict | None:

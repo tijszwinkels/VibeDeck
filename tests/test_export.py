@@ -8,6 +8,9 @@ from unittest.mock import patch
 import pytest
 
 
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
 # --- Fixtures ---
 
 
@@ -96,6 +99,12 @@ def sample_opencode_session(tmp_path):
     return storage_dir, session_id
 
 
+@pytest.fixture
+def sample_pi_session():
+    """Return a checked-in Pi session fixture."""
+    return FIXTURES_DIR / "pi_session_simple.jsonl"
+
+
 # --- Tests for detect_session_backend ---
 
 
@@ -122,6 +131,13 @@ class TestDetectSessionBackend:
 
         backend = detect_session_backend(Path(session_id))
         assert backend == "opencode"
+
+    def test_detects_pi_jsonl(self, sample_pi_session):
+        """Should detect Pi backend from Pi JSONL files."""
+        from vibedeck.export import detect_session_backend
+
+        backend = detect_session_backend(sample_pi_session)
+        assert backend == "pi"
 
     def test_raises_on_invalid_session(self, tmp_path):
         """Should raise ValueError for invalid session path."""
@@ -561,6 +577,20 @@ class TestCodexParseSessionEntries:
         assert "message" in payload_types
         assert "function_call" in payload_types
         assert "function_call_output" in payload_types
+
+
+class TestPiParseSessionEntries:
+    """Tests for Pi entry parsing through export."""
+
+    def test_parses_pi_entries(self, sample_pi_session):
+        """Should parse Pi sessions through the export pipeline."""
+        from vibedeck.export import parse_session_entries
+
+        entries, backend = parse_session_entries(sample_pi_session)
+        assert backend == "pi"
+        assert len(entries) > 0
+        assert any(entry.get("message", {}).get("role") == "user" for entry in entries)
+        assert any(entry.get("message", {}).get("role") == "assistant" for entry in entries)
 
 
 class TestCodexExportMarkdown:
