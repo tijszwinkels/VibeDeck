@@ -7,7 +7,14 @@ from unittest.mock import patch, MagicMock
 import pytest
 from click.testing import CliRunner
 
-from vibedeck import main
+from vibedeck import main, _config
+
+
+@pytest.fixture(autouse=True)
+def reset_summary_defaults(monkeypatch):
+    """Keep CLI summary defaults deterministic for these startup tests."""
+    monkeypatch.setattr(_config.serve, "summarize_after_idle_for", 180)
+    monkeypatch.setattr(_config.serve, "summary_after_long_running", 120)
 
 
 class TestEmptySessionsStartup:

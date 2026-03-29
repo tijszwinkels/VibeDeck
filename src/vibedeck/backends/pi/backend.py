@@ -33,6 +33,7 @@ from .cli import (
     build_fork_command,
     build_new_session_command,
     get_available_models,
+    resolve_summary_model,
     CLI_INSTALL_INSTRUCTIONS,
 )
 from .tailer import PiTailer
@@ -137,6 +138,10 @@ class PiBackend:
         "google-gemini-cli/gemini-2.5-pro", "openai/gpt-5.4").
         """
         return get_available_models()
+
+    def resolve_summary_model(self, requested_model: str | None) -> str | None:
+        """Resolve VibeDeck summary defaults to an exact Pi model when needed."""
+        return resolve_summary_model(requested_model)
 
     # ===== CLI Interaction =====
 

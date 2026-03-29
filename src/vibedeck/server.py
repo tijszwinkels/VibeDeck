@@ -410,6 +410,11 @@ async def _summarize_session_async(
 
     # Use idle model by default (for idle tracker callbacks)
     effective_model = model if model is not None else _idle_summary_model
+    resolve_summary_model = getattr(session_backend, "resolve_summary_model", None)
+    if callable(resolve_summary_model):
+        resolved_model = resolve_summary_model(effective_model)
+        if resolved_model:
+            effective_model = resolved_model
     result = await session_summarizer.summarize(session, model=effective_model)
 
     # If summary was successful, broadcast the update and notify idle tracker

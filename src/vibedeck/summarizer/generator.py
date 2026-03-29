@@ -84,6 +84,8 @@ class Summarizer:
 
         if cli_command == "codex":
             return self._build_codex_summary_command(session, prompt)
+        if cli_command == "pi":
+            return self._build_pi_summary_command(session, prompt)
 
         build_send = self.backend.build_send_command
         kwargs: dict[str, Any] = {
@@ -143,6 +145,34 @@ class Summarizer:
         return format_session_as_markdown(
             entries, session.path, backend="codex", hide_tools=True
         )
+
+    def _build_pi_summary_command(
+        self, session: "SessionInfo", prompt: str
+    ) -> tuple[list[str], str | None]:
+        """Build an ephemeral transcript-fed summary command for Pi."""
+        transcript = self._generate_pi_transcript(session)
+
+        full_prompt = (
+            "Here is the session transcript to summarize:\n\n"
+            f"{transcript}\n\n---\n\n{prompt}"
+        )
+
+        cmd_spec = self.backend.build_new_session_command(
+            message=full_prompt,
+            skip_permissions=True,
+        )
+        cmd_args = list(cmd_spec.args)
+        cmd_args.extend(["--no-session", "--mode", "json", "--no-tools"])
+
+        return cmd_args, cmd_spec.stdin
+
+    def _generate_pi_transcript(self, session: "SessionInfo") -> str:
+        """Generate a compact markdown transcript for a Pi session."""
+        from ..backends.pi.tailer import PiTailer
+        from ..export import format_session_as_markdown
+
+        entries = PiTailer(session.path).read_all()
+        return format_session_as_markdown(entries, session.path, backend="pi", hide_tools=True)
 
     async def summarize(self, session: SessionInfo, model: str | None = None) -> SummaryResult:
         """Generate a summary for a session.
@@ -279,55 +309,28 @@ class Summarizer:
             return SummaryResult(success=False, error=str(e))
 
     def _parse_response(self, raw_response: str) -> ParsedResponse | None:
-        """Parse Claude's JSON response.
+        """Parse CLI JSON output containing a summary response.
 
         The LLM outputs the full summary JSON directly, which we pass through.
 
         Args:
-            raw_response: Raw stdout from Claude CLI.
+            raw_response: Raw stdout from the CLI.
 
         Returns:
             ParsedResponse with summary dict, or None if parsing failed.
         """
         try:
-            # Claude CLI with --output-format json outputs JSON lines
-            # Find the assistant's response
             lines = raw_response.strip().split("\n")
-            response_text = None
-
-            for line in lines:
-                try:
-                    data = json.loads(line)
-                    # Handle both formats: JSON Lines (dict per line) or array
-                    items = data if isinstance(data, list) else [data]
-                    for item in items:
-                        if not isinstance(item, dict):
-                            continue
-                        # Claude Code format: {"type": "result", "result": "..."}
-                        if item.get("type") == "result":
-                            response_text = item.get("result", "")
-                            break
-                        # Codex format: {"type": "item.completed", "item": {"text": "..."}}
-                        if item.get("type") == "item.completed":
-                            response_text = item.get("item", {}).get("text", "")
-                            break
-                    if response_text:
-                        break
-                except json.JSONDecodeError:
-                    continue
+            if self._looks_like_pi_json_mode_output(lines):
+                response_text = self._parse_pi_json_mode_response(lines, raw_response)
+            else:
+                response_text = self._parse_claude_or_codex_response(lines, raw_response)
 
             if not response_text:
-                logger.warning(
-                    f"No result found in response ({len(lines)} line(s)): {raw_response[:1000]!r}"
-                )
                 return None
 
-            # Parse the JSON from the response (might be wrapped in markdown code blocks)
-            json_start = response_text.find("{")
-            json_end = response_text.rfind("}") + 1
-            if json_start >= 0 and json_end > json_start:
-                json_str = response_text[json_start:json_end]
-                summary = json.loads(json_str)
+            summary = self._parse_first_json_object(response_text)
+            if summary is not None:
                 return ParsedResponse(summary=summary)
 
             logger.warning("Could not find JSON in response")
@@ -339,6 +342,140 @@ class Summarizer:
         except Exception as e:
             logger.exception(f"Error parsing response: {e}")
             return None
+
+    def _looks_like_pi_json_mode_output(self, lines: list[str]) -> bool:
+        """Detect Pi JSON mode output."""
+        for line in lines:
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict) and data.get("type") in {
+                "agent_start",
+                "agent_end",
+                "turn_start",
+                "turn_end",
+                "message_start",
+                "message_update",
+                "message_end",
+                "tool_execution_start",
+                "tool_execution_update",
+                "tool_execution_end",
+            }:
+                return True
+        return False
+
+    def _parse_claude_or_codex_response(self, lines: list[str], raw_response: str) -> str | None:
+        """Parse response text from Claude or Codex JSON output."""
+        response_text = None
+
+        for line in lines:
+            try:
+                data = json.loads(line)
+                # Handle both formats: JSON Lines (dict per line) or array
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    # Claude Code format: {"type": "result", "result": "..."}
+                    if item.get("type") == "result":
+                        response_text = item.get("result", "")
+                        break
+                    # Codex format: {"type": "item.completed", "item": {"text": "..."}}
+                    if item.get("type") == "item.completed":
+                        response_text = item.get("item", {}).get("text", "")
+                        break
+                if response_text:
+                    break
+            except json.JSONDecodeError:
+                continue
+
+        if not response_text:
+            logger.warning(
+                f"No result found in response ({len(lines)} line(s)): {raw_response[:1000]!r}"
+            )
+            return None
+
+        return response_text
+
+    def _parse_pi_json_mode_response(self, lines: list[str], raw_response: str) -> str | None:
+        """Parse response text from Pi JSON mode output."""
+        response_text = None
+
+        for line in lines:
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            event_type = data.get("type")
+            if event_type in {"turn_end", "message_end"}:
+                message = data.get("message", {})
+                if isinstance(message, dict) and message.get("role") == "assistant":
+                    response_text = self._extract_pi_message_text(message)
+            elif event_type == "agent_end":
+                messages = data.get("messages", [])
+                if isinstance(messages, list):
+                    for message in reversed(messages):
+                        if isinstance(message, dict) and message.get("role") == "assistant":
+                            response_text = self._extract_pi_message_text(message)
+                            if response_text:
+                                break
+            if response_text:
+                break
+
+        if not response_text:
+            logger.warning(
+                f"No result found in response ({len(lines)} line(s)): {raw_response[:1000]!r}"
+            )
+            return None
+
+        return response_text
+
+    def _extract_pi_message_text(self, message: dict) -> str | None:
+        """Extract plain assistant text from a Pi message.
+
+        Only include final text blocks. Thinking blocks may contain JSON-like
+        signatures that are not part of the answer and break summary parsing.
+        """
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+            return text or None
+        if not isinstance(content, list):
+            return None
+
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                text = block.get("text") or ""
+                if text:
+                    parts.append(text)
+        text = "\n".join(parts).strip()
+        return text or None
+
+    def _parse_first_json_object(self, response_text: str) -> dict[str, Any] | None:
+        """Parse the first JSON object from model response text.
+
+        Handles wrapped content (markdown fences or trailing commentary) by
+        decoding from the first object start and ignoring trailing data.
+        """
+        json_start = response_text.find("{")
+        if json_start < 0:
+            return None
+
+        decoder = json.JSONDecoder()
+        try:
+            summary, _ = decoder.raw_decode(response_text[json_start:])
+            if isinstance(summary, dict):
+                return summary
+        except json.JSONDecodeError:
+            return None
+        return None
 
     def _write_summary_json(
         self, session: SessionInfo, summary: dict[str, Any], raw_response: str

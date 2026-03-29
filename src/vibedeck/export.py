@@ -1301,6 +1301,7 @@ def format_session_as_markdown(
         "claude_code": "Claude Code Transcript",
         "opencode": "OpenCode Transcript",
         "codex": "Codex Transcript",
+        "pi": "Pi Transcript",
     }
     title = _titles.get(backend, "Transcript")
     lines.append(f"# {title}")

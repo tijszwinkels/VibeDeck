@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 CLI_COMMAND = "pi"
 CLI_INSTALL_INSTRUCTIONS = "Install with: npm install -g @mariozechner/pi-coding-agent"
+PREFERRED_SUMMARY_MODELS = (
+    "openai-codex/gpt-5.4-mini",
+    "openai/gpt-5.4-mini",
+)
+
+# Prefer stable providers when resolving bare model IDs (e.g., "gpt-5.4")
+# to avoid matching providers that are configured but missing credentials.
+PREFERRED_MODEL_PROVIDERS = (
+    "openai",
+    "google-gemini-cli",
+    "anthropic",
+)
 
 
 def is_cli_available() -> bool:
@@ -181,6 +193,69 @@ def get_available_models() -> list[str]:
     except Exception as exc:
         logger.warning("Failed to get Pi models: %s", exc)
         return []
+
+
+def resolve_summary_model(
+    requested_model: str | None, available_models: list[str] | None = None
+) -> str | None:
+    """Resolve a summary model alias to an exact Pi model ID.
+
+    Pi accepts model patterns, but VibeDeck's summary defaults use Claude-style
+    aliases like ``haiku``. For Pi we prefer an exact, known-small model to
+    avoid ambiguous or unsupported matches.
+
+    Priority:
+    1. Keep the requested model if it is already an exact available model.
+    2. For the ``haiku`` alias, prefer hard-coded small-model fallbacks.
+    3. Otherwise return the original requested model unchanged.
+    """
+    if not requested_model:
+        return requested_model
+
+    base_model = requested_model.split(":", 1)[0]
+    models = available_models if available_models is not None else get_available_models()
+    if not models:
+        return requested_model
+
+    # For summarization, prefer known-good small models whenever the request is
+    # a bare alias/model ID (e.g. "haiku", "gpt-5.4") or any Haiku variant.
+    # This avoids provider-pattern ambiguity and deprecated Haiku IDs.
+    is_qualified_model = "/" in base_model
+    is_haiku_request = "haiku" in base_model.lower()
+    should_prefer_small_model = (not is_qualified_model) or is_haiku_request
+
+    if should_prefer_small_model:
+        for model in PREFERRED_SUMMARY_MODELS:
+            if model in models:
+                return model
+
+    if requested_model in models:
+        return requested_model
+    if base_model in models:
+        return base_model
+
+    # Resolve bare model IDs (e.g. "gpt-5.4") to an exact provider/model.
+    # This avoids ambiguous pattern matching selecting a provider without creds.
+    suffix_matches = [m for m in models if m.endswith(f"/{base_model}")]
+    if suffix_matches:
+        for provider in PREFERRED_MODEL_PROVIDERS:
+            for match in suffix_matches:
+                if match.startswith(f"{provider}/"):
+                    return match
+        return suffix_matches[0]
+
+    if not is_haiku_request:
+        return requested_model
+
+    for model in PREFERRED_SUMMARY_MODELS:
+        if model in models:
+            return model
+
+    for model in models:
+        if "haiku" in model.lower():
+            return model
+
+    return requested_model
 
 
 def _parse_list_models_output(output: str) -> list[str]:

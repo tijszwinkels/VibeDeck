@@ -920,3 +920,97 @@ openai             gpt-5.4           272K     128K     yes       yes
         assert "--model" in spec.args
         assert "openai/gpt-5.4" in spec.args
         assert spec.stdin == "Hello"
+
+    def test_resolve_summary_model_prefers_openai_codex_gpt_5_4_mini_for_haiku(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "haiku",
+            available_models=[
+                "openai-codex/gpt-5.4-mini",
+                "openai/gpt-5.4-mini",
+                "anthropic/claude-haiku-4-5",
+                "google-gemini-cli/gemini-2.5-flash",
+            ],
+        )
+
+        assert resolved == "openai-codex/gpt-5.4-mini"
+
+    def test_resolve_summary_model_maps_specific_haiku_id_to_preferred_small_model(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "claude-3-5-haiku-20241022",
+            available_models=[
+                "openai/gpt-5.4-mini",
+                "anthropic/claude-3-5-haiku-20241022",
+            ],
+        )
+
+        assert resolved == "openai/gpt-5.4-mini"
+
+    def test_resolve_summary_model_falls_back_to_available_haiku(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "haiku",
+            available_models=[
+                "anthropic/claude-sonnet-4-5",
+                "anthropic/claude-haiku-4-5",
+            ],
+        )
+
+        assert resolved == "anthropic/claude-haiku-4-5"
+
+    def test_resolve_summary_model_prefers_small_summary_model_for_bare_model_id(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "gpt-5.4",
+            available_models=[
+                "azure-openai-responses/gpt-5.4",
+                "openai/gpt-5.4",
+                "openai-codex/gpt-5.4-mini",
+            ],
+        )
+
+        assert resolved == "openai-codex/gpt-5.4-mini"
+
+    def test_resolve_summary_model_prefers_openai_for_bare_model_id_when_no_small_model_available(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "gpt-5.4",
+            available_models=[
+                "azure-openai-responses/gpt-5.4",
+                "openai/gpt-5.4",
+            ],
+        )
+
+        assert resolved == "openai/gpt-5.4"
+
+    def test_resolve_summary_model_uses_first_suffix_match_when_no_preferred_provider(self):
+        from vibedeck.backends.pi.cli import resolve_summary_model
+
+        resolved = resolve_summary_model(
+            "gpt-5.4",
+            available_models=[
+                "custom-provider-a/gpt-5.4",
+                "custom-provider-b/gpt-5.4",
+            ],
+        )
+
+        assert resolved == "custom-provider-a/gpt-5.4"
+
+    def test_backend_resolve_summary_model_delegates(self, monkeypatch):
+        from vibedeck.backends.pi import backend as backend_mod
+        from vibedeck.backends.pi.backend import PiBackend
+
+        monkeypatch.setattr(
+            backend_mod,
+            "resolve_summary_model",
+            lambda model: "openai/gpt-5.4-mini",
+        )
+
+        backend = PiBackend()
+        assert backend.resolve_summary_model("haiku") == "openai/gpt-5.4-mini"
