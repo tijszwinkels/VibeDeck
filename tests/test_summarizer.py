@@ -361,6 +361,20 @@ class TestSummarizer:
         assert result.summary["title"] == "Test"
 
     @pytest.mark.asyncio
+    async def test_parse_response_handles_trailing_text_after_json(self, mock_backend):
+        """_parse_response should parse first JSON object when text trails after it."""
+        summarizer = Summarizer(backend=mock_backend)
+
+        raw_response = (
+            '{"type": "result", "result": "{\\"title\\": \\\"Test\\\"}\\nNote: trailing commentary"}'
+        )
+
+        result = summarizer._parse_response(raw_response)
+
+        assert result is not None
+        assert result.summary["title"] == "Test"
+
+    @pytest.mark.asyncio
     async def test_parse_response_extracts_codex_format(self, mock_backend):
         """_parse_response extracts summary from Codex CLI item.completed output."""
         summarizer = Summarizer(backend=mock_backend)
@@ -379,6 +393,61 @@ class TestSummarizer:
         assert result is not None
         assert result.summary["title"] == "Codex Test"
         assert result.summary["short_summary"] == "A test"
+
+    @pytest.mark.asyncio
+    async def test_parse_response_extracts_pi_json_mode(self, mock_backend):
+        """_parse_response extracts summary from Pi JSON mode output."""
+        mock_backend.cli_command = "pi"
+        summarizer = Summarizer(backend=mock_backend)
+
+        raw_response = (
+            '{"type":"session","version":3,"id":"abc123","timestamp":"2026-01-15T12:00:00.000Z","cwd":"/tmp"}\n'
+            '{"type":"agent_start"}\n'
+            '{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"{\\"title\\":\\"Pi Test\\",\\"short_summary\\":\\"A test\\"}"}]}}\n'
+        )
+
+        result = summarizer._parse_response(raw_response)
+
+        assert result is not None
+        assert result.summary["title"] == "Pi Test"
+        assert result.summary["short_summary"] == "A test"
+
+    @pytest.mark.asyncio
+    async def test_parse_response_pi_ignores_thinking_signature_json(self, mock_backend):
+        """Pi parser should ignore thinking blocks containing JSON-like signatures."""
+        mock_backend.cli_command = "pi"
+        summarizer = Summarizer(backend=mock_backend)
+
+        raw_response = (
+            '{"type":"session","version":3,"id":"abc123","timestamp":"2026-01-15T12:00:00.000Z","cwd":"/tmp"}\n'
+            '{"type":"turn_end","message":{"role":"assistant","content":['
+            '{"type":"thinking","thinking":"","thinkingSignature":"{\\"id\\":\\"sig\\",\\"summary\\":[]}"},'
+            '{"type":"text","text":"{\\"title\\":\\"Pi Test\\",\\"short_summary\\":\\"A test\\"}"}]}}\n'
+        )
+
+        result = summarizer._parse_response(raw_response)
+
+        assert result is not None
+        assert result.summary["title"] == "Pi Test"
+        assert result.summary["short_summary"] == "A test"
+
+    @pytest.mark.asyncio
+    async def test_parse_response_pi_skips_user_turn_end_messages(self, mock_backend):
+        """Pi parser should not treat user turn_end payloads as the summary response."""
+        mock_backend.cli_command = "pi"
+        summarizer = Summarizer(backend=mock_backend)
+
+        raw_response = (
+            '{"type":"session","version":3,"id":"abc123","timestamp":"2026-01-15T12:00:00.000Z","cwd":"/tmp"}\n'
+            '{"type":"turn_end","message":{"role":"user","content":[{"type":"text","text":"{\\"title\\":\\"short title here\\"}"}]}}\n'
+            '{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"{\\"title\\":\\"Real Title\\",\\"short_summary\\":\\"Real summary\\"}"}]}}\n'
+        )
+
+        result = summarizer._parse_response(raw_response)
+
+        assert result is not None
+        assert result.summary["title"] == "Real Title"
+        assert result.summary["short_summary"] == "Real summary"
 
     @pytest.mark.asyncio
     async def test_parse_response_returns_none_for_invalid(self, mock_backend):
@@ -572,3 +641,73 @@ class TestSummarizerCommandBuilding:
         assert "Codex Transcript" in msg
         # And still contain the summary instructions
         assert "Summarize this coding session" in msg
+
+    @pytest.mark.asyncio
+    async def test_pi_summary_uses_ephemeral_json_mode_with_transcript(self, tmp_path):
+        """Pi summaries should use an ephemeral JSON session and embed the transcript."""
+        from vibedeck.backends.protocol import CommandSpec
+
+        backend = MagicMock()
+        backend.cli_command = "pi"
+
+        captured_message = {}
+
+        def fake_build_new(message, **kwargs):
+            captured_message["message"] = message
+            captured_message["kwargs"] = kwargs
+            return CommandSpec(args=["pi", "-p"], stdin=message)
+
+        backend.build_new_session_command.side_effect = fake_build_new
+
+        session_file = tmp_path / "2026-03-27T12-10-22-476Z_test-id.jsonl"
+        entries = [
+            {"type": "session", "version": 3, "id": "test-id", "timestamp": "2026-03-27T12:00:00.000Z", "cwd": "/tmp"},
+            {"type": "message", "id": "m1", "parentId": None, "timestamp": "2026-03-27T12:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "summarize me"}]}},
+            {"type": "message", "id": "m2", "parentId": "m1", "timestamp": "2026-03-27T12:00:02.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "sure"}], "model": "openai/gpt-5.4-mini", "stopReason": "stop"}},
+        ]
+        session_file.write_text("\n".join(json.dumps(e) for e in entries))
+
+        session = MagicMock()
+        session.session_id = "test-id"
+        session.project_path = str(tmp_path)
+        session.path = session_file
+        session.tailer.get_first_timestamp.return_value = "2026-03-27T12:00:00"
+
+        class _Proc:
+            returncode = 0
+
+            def __init__(self):
+                self.stdin = MagicMock()
+                self.stdin.write = MagicMock()
+                self.stdin.drain = AsyncMock()
+                self.stdin.close = MagicMock()
+                self.stdin.wait_closed = AsyncMock()
+
+            async def communicate(self):
+                return (
+                    b'{"type":"session","version":3,"id":"abc","timestamp":"2026-03-27T12:00:00.000Z","cwd":"/tmp"}\n'
+                    b'{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"{\\"title\\":\\"Pi Summary\\",\\"short_summary\\":\\"ok\\"}"}]}]}\n',
+                    b"",
+                )
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            captured_message["args"] = list(args)
+            captured_message["process_kwargs"] = kwargs
+            return _Proc()
+
+        summarizer = Summarizer(backend=backend)
+
+        with patch("asyncio.create_subprocess_exec", _fake_create_subprocess_exec):
+            result = await summarizer.summarize(session, model="openai/gpt-5.4-mini")
+
+        assert result.success is True
+        backend.build_new_session_command.assert_called_once()
+        assert "--session" not in captured_message["args"]
+        assert "--no-session" in captured_message["args"]
+        assert "--mode" in captured_message["args"]
+        mode_idx = captured_message["args"].index("--mode")
+        assert captured_message["args"][mode_idx + 1] == "json"
+        assert "--no-tools" in captured_message["args"]
+        msg = captured_message["message"]
+        assert "summarize me" in msg
+        assert "Pi Transcript" in msg

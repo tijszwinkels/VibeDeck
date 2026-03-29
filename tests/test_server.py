@@ -160,6 +160,50 @@ class TestServerEndpoints:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_summarize_session_async_resolves_pi_haiku_to_supported_model(self, monkeypatch):
+        """Pi summaries should resolve the default haiku alias to an available exact model."""
+        session = MagicMock()
+        session.session_id = "pi-session"
+        session.path = Path("/tmp/pi-session.jsonl")
+
+        pi_backend = MagicMock()
+        pi_backend.name = "Pi"
+        pi_backend.supports_summarization.return_value = True
+        pi_backend.resolve_summary_model.return_value = "openai/gpt-5.4-mini"
+
+        captured = {}
+
+        class FakeSummarizer:
+            def __init__(self, backend, log_writer, prompt, prompt_file, thinking_budget):
+                captured["backend"] = backend
+
+            async def summarize(self, session_info, model=None):
+                captured["session"] = session_info
+                captured["model"] = model
+                return MagicMock(success=True)
+
+        monkeypatch.setattr(server, "Summarizer", FakeSummarizer)
+        monkeypatch.setattr(server, "get_backend_for_session", lambda path: pi_backend)
+        monkeypatch.setattr(server, "_broadcast_session_summary_updated", lambda session_id: asyncio.sleep(0))
+        server._summarizer = MagicMock(
+            log_writer=MagicMock(),
+            prompt=None,
+            prompt_file=None,
+            thinking_budget=None,
+        )
+        server._idle_tracker = None
+        server._idle_summary_model = "haiku"
+
+        try:
+            result = await server._summarize_session_async(session)
+        finally:
+            server._summarizer = None
+
+        assert result is True
+        pi_backend.resolve_summary_model.assert_called_once_with("haiku")
+        assert captured["model"] == "openai/gpt-5.4-mini"
+
+    @pytest.mark.asyncio
     async def test_event_generator_uses_large_html_queue(self):
         """HTML SSE clients should have enough queue capacity for Codex bursts."""
 
