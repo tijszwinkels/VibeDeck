@@ -301,7 +301,16 @@ class Summarizer:
             return SummaryResult(success=True, summary=summary)
 
         except FileNotFoundError:
-            error_msg = "Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+            get_install_instructions = getattr(self.backend, "get_cli_install_instructions", None)
+            install_instructions = None
+            if callable(get_install_instructions):
+                install_instructions = get_install_instructions()
+
+            error_msg = (
+                f"CLI not found. {install_instructions}"
+                if install_instructions
+                else "CLI not found. Install the backend CLI and try again."
+            )
             logger.error(error_msg)
             return SummaryResult(success=False, error=error_msg)
         except Exception as e:

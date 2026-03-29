@@ -458,6 +458,26 @@ class TestSummarizer:
 
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_summarize_reports_backend_specific_cli_install_instructions(
+        self, mock_backend, mock_session
+    ):
+        """Missing CLI errors should point to the active backend's install instructions."""
+        mock_backend.get_cli_install_instructions.return_value = "Install Pi with npm install -g @mariozechner/pi-coding-agent"
+        mock_backend.cli_command = "pi"
+        mock_session.tailer.get_first_timestamp.return_value = "2026-01-15T12:00:00"
+
+        summarizer = Summarizer(backend=mock_backend)
+
+        async def _raise_file_not_found(*args, **kwargs):
+            raise FileNotFoundError
+
+        with patch("asyncio.create_subprocess_exec", _raise_file_not_found):
+            result = await summarizer.summarize(mock_session)
+
+        assert result.success is False
+        assert result.error == "CLI not found. Install Pi with npm install -g @mariozechner/pi-coding-agent"
+
     def test_write_summary_json(self, mock_backend, mock_session, tmp_path):
         """_write_summary_json writes summary to file."""
         summarizer = Summarizer(backend=mock_backend)
