@@ -65,17 +65,24 @@
 
     <!-- Main content -->
     <div class="main-content" id="main-content">
-        <div class="container">
-            <div class="project-header-bar">
-                <h1 id="project-title">VibeDeck</h1>
-                <button class="copy-icon-btn" id="copy-path-btn" title="Copy project path" style="display: none;"></button>
+        <!-- Transcript view (primary) -->
+        <div class="transcript-view" id="transcript-view">
+            <div class="container">
+                <div class="project-header-bar">
+                    <h1 id="project-title">VibeDeck</h1>
+                    <button class="copy-icon-btn" id="copy-path-btn" title="Copy project path" style="display: none;"></button>
+                </div>
+                <div class="session-id-bar" id="session-id-bar" style="display: none;">
+                    <span class="session-id-label">Session:</span>
+                    <code class="session-id-value" id="session-id-value"></code>
+                    <button class="copy-icon-btn copy-icon-btn-small" id="copy-session-btn" title="Copy session ID"></button>
+                </div>
+                <div id="sessions"></div>
             </div>
-            <div class="session-id-bar" id="session-id-bar" style="display: none;">
-                <span class="session-id-label">Session:</span>
-                <code class="session-id-value" id="session-id-value"></code>
-                <button class="copy-icon-btn copy-icon-btn-small" id="copy-session-btn" title="Copy session ID"></button>
-            </div>
-            <div id="sessions"></div>
+        </div>
+        <!-- Terminal view (shown when terminal toggle is active) -->
+        <div class="terminal-view" id="terminal-view">
+            <div class="terminal-container" id="terminal-container"></div>
         </div>
     </div>
 
@@ -133,11 +140,7 @@
                 </div>
             </div>
 
-            <!-- Terminal resize handle + panel (full width, below file view row) -->
-            <div class="terminal-resize-handle" id="terminal-resize-handle"></div>
-            <div class="terminal-panel" id="terminal-panel">
-                <div class="terminal-container" id="terminal-container"></div>
-            </div>
+
         </div>
         
         <div class="preview-resize-handle" id="preview-resize-handle"></div>

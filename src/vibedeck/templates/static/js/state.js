@@ -89,9 +89,9 @@ export const dom = {
     diffModeToggle: null,
     // Terminal elements
     terminalToggleBtn: null,
-    terminalPanel: null,
+    terminalView: null,
     terminalContainer: null,
-    terminalResizeHandle: null
+    transcriptView: null
 };
 
 // Initialize DOM elements
@@ -173,9 +173,9 @@ export function initDom() {
     dom.diffModeToggle = document.getElementById('diff-mode-toggle');
     // Terminal elements
     dom.terminalToggleBtn = document.getElementById('terminal-toggle-btn');
-    dom.terminalPanel = document.getElementById('terminal-panel');
+    dom.terminalView = document.getElementById('terminal-view');
     dom.terminalContainer = document.getElementById('terminal-container');
-    dom.terminalResizeHandle = document.getElementById('terminal-resize-handle');
+    dom.transcriptView = document.getElementById('transcript-view');
 }
 
 const initialConfig = window.VIBEDECK_CONFIG || {};
@@ -270,7 +270,7 @@ export const state = {
     // Terminal state
     terminalOpen: false,           // Is terminal panel visible?
     terminalOnly: false,           // Is terminal in full-pane mode?
-    terminalHeight: parseInt(localStorage.getItem('terminalHeight')) || 200
+    terminalHeight: parseInt(localStorage.getItem('terminalHeight')) || 200  // Legacy, unused
 };
 
 // Initialize status colors based on URL param

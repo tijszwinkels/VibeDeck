@@ -1,18 +1,15 @@
 /**
  * Terminal integration using xterm.js
  *
- * Supports two modes:
- *   - **Session terminal**: Runs an interactive CLI session (e.g. `claude --resume`)
- *     via the /ws/terminal/session/{id} endpoint. Activated when toggling terminal
- *     on a session whose backend supports it.
- *   - **Plain shell**: A regular shell PTY via /ws/terminal. Used as fallback when
- *     the backend doesn't support session terminals, or when no session is active.
+ * Supports two modes that swap what's shown in the main content area:
+ *   - **Transcript mode** (default): session messages/transcript
+ *   - **Terminal mode**: interactive CLI session (e.g. `claude --resume`)
+ *     or a plain shell fallback
  *
- * The terminal toggle works independently from the file view toggle (folder button):
- *   - File view only: right pane shows file tree + preview
- *   - Terminal only: right pane shows terminal filling the pane
- *   - Both: split view with file tree/preview on top, terminal on bottom
- *   - Neither: right pane is closed
+ * The terminal toggle replaces the transcript view with a full-size terminal.
+ * The file tree in the right pane remains available in both modes.
+ * The input bar is hidden when the terminal is active (you type directly
+ * into the terminal).
  */
 
 import { dom, state } from './state.js';
@@ -63,12 +60,6 @@ export async function initTerminal() {
         toggleBtn.addEventListener('click', toggleTerminal);
     }
 
-    // Set up resize handle
-    const resizeHandle = document.getElementById('terminal-resize-handle');
-    if (resizeHandle) {
-        initResizeHandle(resizeHandle);
-    }
-
     // Load xterm.js dynamically
     await loadXterm();
 }
@@ -103,7 +94,7 @@ function loadScript(src) {
 }
 
 /**
- * Toggle terminal on/off independently from file view.
+ * Toggle between transcript mode and terminal mode.
  */
 export function toggleTerminal() {
     if (!terminalEnabled) return;
@@ -113,63 +104,39 @@ export function toggleTerminal() {
     const toggleBtn = document.getElementById('terminal-toggle-btn');
     if (state.terminalOpen) {
         toggleBtn?.classList.add('active');
-        openTerminal();
+        showTerminalView();
     } else {
         toggleBtn?.classList.remove('active');
-        closeTerminal();
+        showTranscriptView();
     }
-
-    updateRightPaneLayout();
 }
 
 /**
- * Update the right pane layout based on which toggles are active.
- *
- * Central layout manager called by both file view toggle (folder button)
- * and terminal toggle. Determines:
- *   - Whether the right pane is open or closed
- *   - Which layout mode: file-only (default), terminal-only, or split
+ * Switch to terminal view: hide transcript, show terminal, hide input bar.
  */
-export function updateRightPaneLayout() {
-    const pane = dom.previewPane;
-    if (!pane) return;
+function showTerminalView() {
+    dom.mainContent?.classList.add('terminal-active');
+    dom.inputBar?.classList.add('hidden');
+    dom.floatingControls?.style.setProperty('display', 'none');
 
-    const fileViewActive = state.previewPaneOpen;
-    const terminalActive = state.terminalOpen;
+    openTerminal();
+}
 
-    // Remove all layout mode classes
-    pane.classList.remove('terminal-only', 'split-mode');
-
-    if (!fileViewActive && !terminalActive) {
-        // Neither active - close the right pane
-        pane.classList.remove('open');
-        dom.mainContent?.classList.remove('preview-open');
-        dom.inputBar?.classList.remove('preview-open');
-        dom.floatingControls?.classList.remove('preview-open');
-    } else {
-        // At least one is active - open the pane
-        pane.classList.add('open');
-        dom.mainContent?.classList.add('preview-open');
-        dom.inputBar?.classList.add('preview-open');
-        dom.floatingControls?.classList.add('preview-open');
-
-        if (terminalActive && !fileViewActive) {
-            pane.classList.add('terminal-only');
-        } else if (terminalActive && fileViewActive) {
-            pane.classList.add('split-mode');
-        }
-        // else: only fileView - default layout (no extra class needed)
+/**
+ * Switch to transcript view: show transcript, hide terminal, show input bar.
+ */
+function showTranscriptView() {
+    dom.mainContent?.classList.remove('terminal-active');
+    if (state.sendEnabled) {
+        dom.inputBar?.classList.remove('hidden');
     }
+    dom.floatingControls?.style.removeProperty('display');
 
-    // Refit terminal if visible
-    if (terminalActive && terminal && fitAddon) {
-        setTimeout(() => fitAddon.fit(), 100);
-    }
+    closeTerminal();
 }
 
 /**
  * Open terminal and connect to WebSocket.
- * If a session is active and supports terminal mode, connects as a session terminal.
  */
 async function openTerminal() {
     const container = document.getElementById('terminal-container');
@@ -192,7 +159,6 @@ async function openTerminal() {
         terminal.loadAddon(webLinksAddon);
 
         terminal.open(container);
-        fitAddon.fit();
 
         // Focus terminal when clicking on container
         container.addEventListener('click', () => terminal.focus());
@@ -238,17 +204,15 @@ async function openTerminal() {
         });
     }
 
-    // Apply persisted height
-    const panel = document.getElementById('terminal-panel');
-    if (panel && state.terminalHeight) {
-        panel.style.height = `${state.terminalHeight}px`;
-    }
-
     resetKittyKeyboardState(kittyKeyboardState);
-    connectWebSocket();
 
-    // Focus terminal after layout settles
-    setTimeout(() => terminal?.focus(), 100);
+    // Fit after layout settles (terminal view needs to be visible first)
+    setTimeout(() => {
+        if (fitAddon) fitAddon.fit();
+        terminal?.focus();
+    }, 50);
+
+    connectWebSocket();
 }
 
 /**
@@ -471,6 +435,8 @@ function closeTerminal() {
  * so the terminal doesn't show stale state. The session can always be
  * re-opened later via --resume.
  *
+ * Also switches back to transcript view.
+ *
  * @returns {Promise<boolean>} True if a terminal was killed.
  */
 export async function killSessionTerminal() {
@@ -488,15 +454,14 @@ export async function killSessionTerminal() {
             // Clean up local state
             activeTerminalSessionId = null;
             if (webSocket) {
-                // Don't try to close again - server already closed it
                 webSocket = null;
             }
 
-            // Close the terminal UI
+            // Switch back to transcript view
             state.terminalOpen = false;
             const toggleBtn = document.getElementById('terminal-toggle-btn');
             toggleBtn?.classList.remove('active');
-            updateRightPaneLayout();
+            showTranscriptView();
         }
 
         return data.killed;
@@ -514,49 +479,6 @@ export function hasActiveSessionTerminal(sessionId) {
 }
 
 /**
- * Initialize resize handle for terminal panel.
- */
-function initResizeHandle(handle) {
-    let startY = 0;
-    let startHeight = 0;
-
-    handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        startY = e.clientY;
-        const panel = document.getElementById('terminal-panel');
-        startHeight = panel?.offsetHeight || 200;
-
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-        document.body.style.cursor = 'ns-resize';
-        document.body.style.userSelect = 'none';
-    });
-
-    function onMouseMove(e) {
-        const delta = startY - e.clientY;
-        const newHeight = Math.max(100, Math.min(window.innerHeight * 0.8, startHeight + delta));
-
-        const panel = document.getElementById('terminal-panel');
-        if (panel) {
-            panel.style.height = `${newHeight}px`;
-            state.terminalHeight = newHeight;
-        }
-
-        if (fitAddon) {
-            fitAddon.fit();
-        }
-    }
-
-    function onMouseUp() {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        localStorage.setItem('terminalHeight', state.terminalHeight);
-    }
-}
-
-/**
  * Update terminal theme when page theme changes.
  */
 export function updateTerminalTheme() {
@@ -570,4 +492,13 @@ export function updateTerminalTheme() {
  */
 export function isTerminalEnabled() {
     return terminalEnabled;
+}
+
+/**
+ * No-op kept for API compatibility — the right pane layout is now
+ * independent of the terminal state.
+ */
+export function updateRightPaneLayout() {
+    // Terminal is in the main content area now, not the right pane.
+    // This function is retained in case other modules call it.
 }

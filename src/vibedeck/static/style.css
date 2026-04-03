@@ -1920,32 +1920,34 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
     line-height: 12px;
 }
 
-/* Terminal resize handle (between file view and terminal) */
-.terminal-resize-handle {
-    height: 4px;
-    background: transparent;
-    cursor: ns-resize;
-    flex-shrink: 0;
+/* Terminal view: replaces transcript in the main content area.
+ * Uses position:fixed anchored to the same edges as .main-content
+ * so it fills the available area between sidebar and preview pane. */
+.terminal-view {
     display: none;
-}
-.terminal-resize-handle:hover {
-    background: var(--accent-color);
-}
-
-/* Terminal panel */
-.terminal-panel {
-    display: none;
-    height: 200px;
-    min-height: 100px;
+    position: fixed;
+    top: 40px;  /* below status bar */
+    bottom: 0;
+    left: var(--sidebar-width);
+    right: 0;
     background: var(--bg-code);
-    border-top: 1px solid var(--border-color);
-    overflow: hidden;
+    z-index: 5;
+    transition: left 0.3s ease, right 0.3s ease;
+}
+.main-content.sidebar-closed .terminal-view { left: 0; }
+.main-content.preview-open .terminal-view { right: var(--preview-pane-width); }
+
+/* When terminal mode is active */
+.main-content.terminal-active .transcript-view { display: none; }
+.main-content.terminal-active .terminal-view {
+    display: flex;
+    flex-direction: column;
 }
 
-/* Terminal container */
-.terminal-container {
+/* Terminal container fills the terminal view */
+.terminal-view .terminal-container {
     flex: 1;
-    padding: 12px 4px;
+    padding: 4px;
     overflow: hidden;
     min-height: 0;
 }
@@ -1958,30 +1960,6 @@ body.hide-tools .message.assistant:not(:has(.assistant-text)):not(:has(.thinking
 }
 .terminal-container .xterm-screen {
     height: 100%;
-}
-
-/* Right pane layout modes controlled by CSS classes on .preview-pane */
-
-/* When only terminal is open (no file view): terminal fills the pane */
-.preview-pane.terminal-only .file-view-row,
-.preview-pane.terminal-only .terminal-resize-handle {
-    display: none;
-}
-.preview-pane.terminal-only .terminal-panel {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    height: auto;
-    border-top: none;
-}
-
-/* When both file view and terminal are open: split vertically */
-.preview-pane.split-mode .terminal-panel {
-    display: flex;
-    flex-direction: column;
-}
-.preview-pane.split-mode .terminal-resize-handle {
-    display: block;
 }
 
 /* Flex children within preview-main-area */
