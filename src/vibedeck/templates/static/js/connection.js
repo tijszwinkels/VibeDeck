@@ -1,12 +1,11 @@
 // Connection module - SSE event handling
 
-import { dom, state, MAX_TITLE_LENGTH } from './state.js';
-import { truncateTitle } from './utils.js';
+import { dom, state } from './state.js';
 import { updateStatus } from './ui.js';
 import { checkSendEnabled, checkForkEnabled, checkDefaultSendBackend, updateInputBarUI } from './messaging.js';
 import {
     createSession, removeSession, reorderSidebar, switchToSession,
-    appendMessage, updateSessionWaitingState, updateSidebarItemStatusClass
+    appendMessage, updateSessionWaitingState, refreshSessionTitle
 } from './sessions.js';
 import { showPermissionModal } from './permissions.js';
 import { parseAndExecuteCommands, initCommandButtons } from './commands.js';
@@ -176,31 +175,7 @@ export function connect() {
             session.summaryShort = data.summaryShort;
             session.summaryExecutive = data.summaryExecutive;
 
-            // Update display title if we have a summary title
-            if (data.summaryTitle) {
-                const newDisplayTitle = truncateTitle(data.summaryTitle, MAX_TITLE_LENGTH);
-                session.displayTitle = newDisplayTitle;
-
-                // Update sidebar item title
-                const titleSpan = session.sidebarItem.querySelector('.session-title');
-                if (titleSpan) {
-                    titleSpan.textContent = newDisplayTitle;
-                }
-
-                // Update status color based on title suffix (persisted status takes priority)
-                updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
-
-                // Update session header title
-                const headerTitleSpan = session.container.querySelector('.session-title-display');
-                if (headerTitleSpan) {
-                    headerTitleSpan.textContent = newDisplayTitle;
-                }
-
-                // Update title bar if this is the active session
-                if (state.activeSessionId === data.session_id) {
-                    dom.sessionTitleBar.textContent = newDisplayTitle;
-                }
-            }
+            refreshSessionTitle(data.session_id);
         }
     });
 

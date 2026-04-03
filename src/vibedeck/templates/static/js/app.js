@@ -8,7 +8,7 @@ import {
 } from './ui.js';
 import { initPreviewPane } from './preview.js';
 import { initFileTree } from './filetree.js';
-import { initGroupBySelect, initOrderBySelect, initCopyButtons, reorderSidebar, loadArchivedSessions, loadSessionStatuses, loadArchivedProjects } from './sessions.js';
+import { initGroupBySelect, initOrderBySelect, initCopyButtons, reorderSidebar, loadArchivedSessions, loadSessionStatuses, loadArchivedProjects, loadSessionTitles, initSessionTitleEditing } from './sessions.js';
 import { initMessaging } from './messaging.js';
 import { initModal } from './modal.js';
 import { connect, initVisibilityHandler } from './connection.js';
@@ -43,6 +43,7 @@ function init() {
     initGroupBySelect(reorderSidebar);
     initOrderBySelect(reorderSidebar);
     initCopyButtons();
+    initSessionTitleEditing();
     initSidebarContextMenu();
 
     // Initialize messaging (input bar)
@@ -101,7 +102,8 @@ function init() {
     Promise.all([
         loadArchivedSessions(),
         loadArchivedProjects(),
-        loadSessionStatuses()
+        loadSessionStatuses(),
+        loadSessionTitles()
     ]).then(() => {
         // Connect to SSE and start receiving events
         connect();

@@ -22,6 +22,7 @@ export const dom = {
     statusBar: null,
     statusText: null,
     sessionTitleBar: null,
+    sessionTitleBarInput: null,
     sidebar: null,
     sidebarOverlay: null,
     sidebarResizeHandle: null,
@@ -192,6 +193,7 @@ export const state = {
     archivedSessionIds: new Set(), // session_ids that are archived (loaded from server)
     archivedProjectPaths: new Set(), // project paths that are archived (loaded from server)
     sessionStatuses: new Map(), // session_id -> status string ("in_progress", "waiting", "done")
+    sessionCustomTitles: new Map(), // session_id -> custom title string
 
     // UI state
     activeSessionId: null,

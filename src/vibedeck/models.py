@@ -110,6 +110,19 @@ class SessionStatusesResponse(BaseModel):
     statuses: dict[str, str]
 
 
+class SessionTitlesResponse(BaseModel):
+    """Response for custom session titles."""
+
+    titles: dict[str, str]
+
+
+class SessionTitleRequest(BaseModel):
+    """Request body for setting or clearing a custom session title."""
+
+    session_id: str
+    title: str | None
+
+
 class SessionStatusRequest(BaseModel):
     """Request body for setting session status."""
 

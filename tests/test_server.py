@@ -2294,6 +2294,90 @@ class TestArchivedSessionsEndpoints:
         assert "persistent-session" in data["archived"]
 
 
+class TestSessionTitlesEndpoints:
+    """Tests for custom session title endpoints."""
+
+    @pytest.fixture(autouse=True)
+    def use_temp_config_dir(self, home_tmp_path, monkeypatch):
+        """Use a temporary config directory to avoid touching real config."""
+        from vibedeck.routes import titles
+
+        temp_config_dir = home_tmp_path / "config"
+        temp_config_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(titles, "CONFIG_DIR", temp_config_dir)
+        yield
+
+    def test_get_session_titles_empty(self):
+        client = TestClient(app)
+        response = client.get("/api/session-titles")
+        assert response.status_code == 200
+        assert response.json() == {"titles": {}}
+
+    def test_set_session_title(self):
+        client = TestClient(app)
+        response = client.post(
+            "/api/session-titles/set",
+            json={"session_id": "session-123", "title": "My Custom Title"},
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "updated"
+
+        response = client.get("/api/session-titles")
+        assert response.json() == {"titles": {"session-123": "My Custom Title"}}
+
+    def test_clear_session_title_with_null(self):
+        client = TestClient(app)
+        client.post(
+            "/api/session-titles/set",
+            json={"session_id": "session-123", "title": "My Custom Title"},
+        )
+
+        response = client.post(
+            "/api/session-titles/set",
+            json={"session_id": "session-123", "title": None},
+        )
+        assert response.status_code == 200
+        assert response.json()["new_title"] is None
+
+        response = client.get("/api/session-titles")
+        assert response.json() == {"titles": {}}
+
+    def test_blank_session_title_clears_entry(self):
+        client = TestClient(app)
+        client.post(
+            "/api/session-titles/set",
+            json={"session_id": "session-123", "title": "My Custom Title"},
+        )
+
+        response = client.post(
+            "/api/session-titles/set",
+            json={"session_id": "session-123", "title": "   "},
+        )
+        assert response.status_code == 200
+        assert response.json()["new_title"] is None
+
+        response = client.get("/api/session-titles")
+        assert response.json() == {"titles": {}}
+
+    def test_session_titles_persisted_to_file(self):
+        client = TestClient(app)
+        client.post(
+            "/api/session-titles/set",
+            json={"session_id": "persistent-session", "title": "Pinned name"},
+        )
+
+        from vibedeck.routes.titles import _get_session_titles_path
+
+        config_path = _get_session_titles_path()
+        assert config_path.exists()
+
+        import json
+
+        with open(config_path) as f:
+            data = json.load(f)
+        assert data == {"titles": {"persistent-session": "Pinned name"}}
+
+
 # Note: SSE endpoint streaming tests are skipped because TestClient
 # doesn't handle SSE event generators well. The endpoint is tested
 # manually and through integration tests.

@@ -17,6 +17,7 @@ import { loadFileTree, setProjectRoot } from './filetree.js';
 import { showProjectContextMenu, showSessionContextMenu } from './sidebar-context-menu.js';
 import { extractArtifactsFromElement, onSessionChanged } from './artifacts.js';
 import { parseAndExecuteCommands } from './commands.js';
+import { buildDraftSessionTitle, getEffectiveSessionTitle, getDisplayTitle, normalizeCustomTitle } from './session-title-utils.js';
 
 // Forward declarations for circular dependency - will be set by other modules
 let updateInputBarUI = () => {};
@@ -81,6 +82,202 @@ export function updateSidebarItemStatusClass(sidebarItem, title, sessionId = nul
     if (statusClass) {
         sidebarItem.classList.add(statusClass);
     }
+}
+
+function getSessionTitle(session) {
+    return getEffectiveSessionTitle(session);
+}
+
+function updateSessionTitleBarPreview(session, draftTitle = null) {
+    if (!session || state.activeSessionId !== session.id || dom.sessionTitleBarInput) return;
+
+    const titleSource = draftTitle == null
+        ? session
+        : buildDraftSessionTitle(session, draftTitle);
+    const fullTitle = getEffectiveSessionTitle(titleSource);
+    const displayTitle = getDisplayTitle(titleSource, MAX_TITLE_LENGTH);
+    dom.sessionTitleBar.textContent = displayTitle;
+    dom.sessionTitleBar.title = fullTitle;
+}
+
+function applyDraftSessionTitle(session, draftTitle, source = null) {
+    if (!session) return;
+
+    const titleSource = buildDraftSessionTitle(session, draftTitle);
+    const fullTitle = getEffectiveSessionTitle(titleSource);
+    const displayTitle = getDisplayTitle(titleSource, MAX_TITLE_LENGTH);
+
+    if (source !== 'sidebar') {
+        const titleSpan = session.sidebarItem.querySelector('.session-title');
+        if (titleSpan) {
+            titleSpan.textContent = displayTitle;
+            titleSpan.title = fullTitle;
+        }
+    }
+
+    const headerTitleSpan = session.container.querySelector('.session-title-display');
+    if (headerTitleSpan) {
+        headerTitleSpan.textContent = displayTitle;
+        headerTitleSpan.title = fullTitle;
+    }
+
+    if (source !== 'topbar') {
+        updateSessionTitleBarPreview(session, draftTitle);
+    }
+}
+
+function applySessionTitle(session) {
+    if (!session) return;
+
+    const fullTitle = getSessionTitle(session);
+    const displayTitle = getDisplayTitle(session, MAX_TITLE_LENGTH);
+    session.displayTitle = displayTitle;
+
+    if (!session.titleEditInput) {
+        const titleSpan = session.sidebarItem.querySelector('.session-title');
+        if (titleSpan) {
+            titleSpan.textContent = displayTitle;
+            titleSpan.title = fullTitle;
+        }
+    }
+
+    const headerTitleSpan = session.container.querySelector('.session-title-display');
+    if (headerTitleSpan) {
+        headerTitleSpan.textContent = displayTitle;
+        headerTitleSpan.title = fullTitle;
+    }
+
+    updateSidebarItemStatusClass(session.sidebarItem, fullTitle, session.id);
+
+    updateSessionTitleBarPreview(session);
+}
+
+export function refreshSessionTitle(sessionId) {
+    const session = state.sessions.get(sessionId);
+    if (!session) return;
+    applySessionTitle(session);
+}
+
+async function persistSessionTitle(sessionId, title) {
+    const session = state.sessions.get(sessionId);
+    const previousTitle = state.sessionCustomTitles.get(sessionId);
+    const normalizedTitle = normalizeCustomTitle(title);
+
+    if (normalizedTitle === null) {
+        state.sessionCustomTitles.delete(sessionId);
+    } else {
+        state.sessionCustomTitles.set(sessionId, normalizedTitle);
+    }
+
+    if (session) {
+        session.customTitle = normalizedTitle;
+        applySessionTitle(session);
+    }
+
+    try {
+        const response = await fetch('api/session-titles/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, title: normalizedTitle })
+        });
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+        }
+    } catch (err) {
+        console.error('Failed to persist session title:', err);
+        if (previousTitle === undefined) {
+            state.sessionCustomTitles.delete(sessionId);
+        } else {
+            state.sessionCustomTitles.set(sessionId, previousTitle);
+        }
+        if (session) {
+            session.customTitle = previousTitle ?? null;
+            applySessionTitle(session);
+        }
+    }
+}
+
+function beginSessionTitleEdit(sessionId, source = 'sidebar') {
+    const session = state.sessions.get(sessionId);
+    if (!session || session.pending || session.titleEditInput || dom.sessionTitleBarInput) return;
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = session.customTitle ?? getSessionTitle(session);
+    input.setAttribute('aria-label', 'Edit session title');
+
+    let restoreNode = null;
+    if (source === 'topbar') {
+        restoreNode = dom.sessionTitleBar;
+        input.className = 'session-title-bar-input';
+        dom.sessionTitleBarInput = input;
+        dom.sessionTitleBar.textContent = '';
+        dom.sessionTitleBar.appendChild(input);
+    } else {
+        const titleSpan = session.sidebarItem.querySelector('.session-title');
+        if (!titleSpan) return;
+        restoreNode = titleSpan;
+        input.className = 'session-title-input';
+        session.titleEditInput = input;
+        session.sidebarItem.classList.add('editing-title');
+        titleSpan.replaceWith(input);
+    }
+
+    input.focus();
+    input.select();
+
+    let finished = false;
+
+    const finish = async (save) => {
+        if (finished) return;
+        finished = true;
+
+        if (source === 'topbar') {
+            dom.sessionTitleBarInput = null;
+            dom.sessionTitleBar.textContent = '';
+        } else {
+            session.titleEditInput = null;
+            session.sidebarItem.classList.remove('editing-title');
+            input.replaceWith(restoreNode);
+        }
+
+        if (save) {
+            await persistSessionTitle(sessionId, input.value);
+        } else {
+            applySessionTitle(session);
+        }
+    };
+
+    input.addEventListener('click', function(e) {
+        e.stopPropagation();
+    });
+    input.addEventListener('input', function() {
+        applyDraftSessionTitle(session, input.value, source);
+    });
+    input.addEventListener('dblclick', function(e) {
+        e.stopPropagation();
+    });
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            finish(false);
+        }
+    });
+    input.addEventListener('blur', function() {
+        finish(true);
+    });
+}
+
+export function initSessionTitleEditing() {
+    dom.sessionTitleBar?.addEventListener('dblclick', function(e) {
+        if (e.target === dom.sessionTitleBarInput) return;
+        if (!state.activeSessionId) return;
+        e.preventDefault();
+        beginSessionTitleEdit(state.activeSessionId, 'topbar');
+    });
 }
 
 export function getOrCreateProject(projectName, projectPath) {
@@ -197,8 +394,8 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     container.dataset.session = sessionId;
     if (backend) container.dataset.backend = backend;
 
-    // Use summary title if available, otherwise fall back to firstMessage or name
-    const fullTitle = summaryTitle || firstMessage || name;
+    const customTitle = state.sessionCustomTitles.get(sessionId) || null;
+    const fullTitle = getEffectiveSessionTitle({ customTitle, summaryTitle, firstMessage, name });
     const displayTitle = truncateTitle(fullTitle, MAX_TITLE_LENGTH);
 
     // Add session header (title only - auto-scroll is in floating controls)
@@ -286,6 +483,16 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         }
     });
 
+    const titleSpan = sidebarItem.querySelector('.session-title');
+    if (titleSpan) {
+        titleSpan.title = fullTitle;
+        titleSpan.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            beginSessionTitleEdit(sessionId);
+        });
+    }
+
     // Tooltip handlers
     sidebarItem.addEventListener('mouseenter', function(e) {
         showTooltip(sessionId, e);
@@ -337,12 +544,14 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         backend: backend || null,
         contextLimitTokens: contextLimitTokens,
         model: model || null,
+        customTitle: customTitle,
         // Summary data (may be null if no summary file exists yet)
         summaryTitle: summaryTitle || null,
         summaryShort: summaryShort || null,
         summaryExecutive: summaryExecutive || null,
         summaryBranch: summaryBranch || null,
         archived: isArchived,
+        titleEditInput: null,
         // Lazy loading state
         loaded: false,
         loading: false,
@@ -502,6 +711,25 @@ export async function loadArchivedSessions() {
     }
 }
 
+// Load custom session titles from server on init
+export async function loadSessionTitles() {
+    try {
+        const response = await fetch('api/session-titles');
+        const data = await response.json();
+        state.sessionCustomTitles = new Map(Object.entries(data.titles || {}));
+
+        for (const [sessionId, customTitle] of state.sessionCustomTitles) {
+            const session = state.sessions.get(sessionId);
+            if (session) {
+                session.customTitle = customTitle;
+                applySessionTitle(session);
+            }
+        }
+    } catch (err) {
+        console.error('Failed to load session titles:', err);
+    }
+}
+
 // Load session statuses from server on init
 export async function loadSessionStatuses() {
     try {
@@ -542,8 +770,8 @@ export async function setSessionStatus(sessionId, status) {
     applyStatusToSidebarItem(session.sidebarItem, statusClass);
 
     // If clearing status, fall back to title-parsed status
-    if (!status && session.summaryTitle) {
-        updateSidebarItemStatusClass(session.sidebarItem, session.summaryTitle, sessionId);
+    if (!status) {
+        updateSidebarItemStatusClass(session.sidebarItem, getSessionTitle(session), sessionId);
     }
 
     // Persist to server
@@ -567,8 +795,8 @@ export async function setSessionStatus(sessionId, status) {
         // Rollback visual state
         const rollbackClass = previousStatus ? getStatusClassFromPersistedValue(previousStatus) : '';
         applyStatusToSidebarItem(session.sidebarItem, rollbackClass);
-        if (!previousStatus && session.summaryTitle) {
-            updateSidebarItemStatusClass(session.sidebarItem, session.summaryTitle, sessionId);
+        if (!previousStatus) {
+            updateSidebarItemStatusClass(session.sidebarItem, getSessionTitle(session), sessionId);
         }
     }
 }
@@ -1198,6 +1426,7 @@ export function switchToSession(sessionId, scrollToBottom = false) {
 
     // Update header title
     dom.sessionTitleBar.textContent = session.displayTitle || session.name;
+    dom.sessionTitleBar.title = getSessionTitle(session);
 
     // Update project title and session ID
     dom.projectTitle.textContent = session.projectName || 'Unknown Project';
