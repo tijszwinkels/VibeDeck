@@ -188,7 +188,7 @@ export function getOrCreateProject(projectName, projectPath) {
     return project;
 }
 
-export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch, contextLimitTokens = null, model = null) {
+export function createSession(sessionId, name, projectName, firstMessage, startedAt, lastUpdatedAt, projectPath, tokenUsage, backend, summaryTitle, summaryShort, summaryExecutive, summaryBranch, contextLimitTokens = null, model = null, sessionName = null) {
     if (state.sessions.has(sessionId)) return state.sessions.get(sessionId);
 
     // Create container with session header
@@ -197,9 +197,9 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     container.dataset.session = sessionId;
     if (backend) container.dataset.backend = backend;
 
-    // Use custom title if set, then summary title, then firstMessage or name
+    // Use custom title if set, then session name, then summary title, then firstMessage or name
     const customTitle = state.customTitles.get(sessionId);
-    const fullTitle = customTitle || summaryTitle || firstMessage || name;
+    const fullTitle = customTitle || sessionName || summaryTitle || firstMessage || name;
     const displayTitle = truncateTitle(fullTitle, MAX_TITLE_LENGTH);
 
     // Add session header (title only - auto-scroll is in floating controls)
@@ -347,6 +347,7 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
         backend: backend || null,
         contextLimitTokens: contextLimitTokens,
         model: model || null,
+        sessionName: sessionName || null,
         // Summary data (may be null if no summary file exists yet)
         summaryTitle: summaryTitle || null,
         summaryShort: summaryShort || null,
@@ -561,7 +562,7 @@ export async function setCustomTitle(sessionId, title) {
     if (title === null || title === undefined || title.trim() === '') {
         // Clear custom title - revert to auto-generated
         state.customTitles.delete(sessionId);
-        const autoTitle = session.summaryTitle || session.firstMessage || session.name;
+        const autoTitle = session.sessionName || session.summaryTitle || session.firstMessage || session.name;
         const autoDisplay = truncateTitle(autoTitle, MAX_TITLE_LENGTH);
         session.displayTitle = autoDisplay;
 
@@ -589,13 +590,24 @@ export async function setCustomTitle(sessionId, title) {
         }
     } catch (err) {
         console.error('Failed to save custom title:', err);
-        // Rollback
+        // Rollback state and all UI elements
         if (previousTitle !== undefined) {
             state.customTitles.set(sessionId, previousTitle);
             applyCustomTitle(sessionId, previousTitle);
         } else {
+            // No previous custom title — restore auto-generated title everywhere
             state.customTitles.delete(sessionId);
-            session.displayTitle = previousDisplay;
+            const autoTitle = session.sessionName || session.summaryTitle || session.firstMessage || session.name;
+            const autoDisplay = truncateTitle(autoTitle, MAX_TITLE_LENGTH);
+            session.displayTitle = autoDisplay;
+
+            const titleSpan = session.sidebarItem.querySelector('.session-title');
+            if (titleSpan) titleSpan.textContent = autoTitle;
+            const headerSpan = session.container.querySelector('.session-title-display');
+            if (headerSpan) headerSpan.textContent = autoDisplay;
+            if (state.activeSessionId === sessionId) {
+                dom.sessionTitleBar.textContent = autoDisplay;
+            }
         }
     }
 }
@@ -609,7 +621,7 @@ function startTitleEdit(sessionId, element) {
 
     // Get current full title (custom or auto)
     const currentTitle = state.customTitles.get(sessionId)
-        || session.summaryTitle || session.firstMessage || session.name || '';
+        || session.sessionName || session.summaryTitle || session.firstMessage || session.name || '';
 
     const input = document.createElement('input');
     input.type = 'text';

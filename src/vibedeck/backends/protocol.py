@@ -46,6 +46,9 @@ class SessionMetadata:
     started_at: str | None
     """ISO timestamp of session start."""
 
+    session_name: str | None = None
+    """User-assigned session name (e.g. from pi's name_session tool)."""
+
     backend_data: dict = field(default_factory=dict)
     """Backend-specific metadata (opaque to the explorer)."""
 

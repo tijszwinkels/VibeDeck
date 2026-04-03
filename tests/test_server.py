@@ -94,6 +94,21 @@ class TestServerEndpoints:
         assert 'type="module"' in response.text
         assert 'src="static/js/app.js"' in response.text
 
+    def test_index_bootstraps_home_dir_config(self, temp_jsonl_file):
+        """Initial HTML should include homeDir before SSE connect.
+
+        This prevents a startup race where users can create a new session with
+        ~/repo before the first sessions SSE event arrives.
+        """
+        add_session(temp_jsonl_file)
+        client = TestClient(app)
+
+        response = client.get("/")
+        assert response.status_code == 200
+        assert 'window.VIBEDECK_CONFIG' in response.text
+        assert 'homeDir' in response.text
+        assert str(Path.home()) in response.text
+
     def test_index_includes_sidebar(self, temp_jsonl_file):
         """Test that index includes sidebar elements."""
         add_session(temp_jsonl_file)

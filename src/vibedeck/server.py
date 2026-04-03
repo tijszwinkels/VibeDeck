@@ -871,6 +871,40 @@ async def run_cli_for_session(
 # Session message processing
 
 
+async def _check_session_name_update(info: SessionInfo) -> None:
+    """Check if a session's name (from session_info entries) has changed.
+
+    For backends that store user-assigned session names in the session file
+    (e.g. Pi's name_session tool), re-read the name and broadcast if changed.
+    Only runs for backends that provide a get_session_name discovery function.
+    """
+    backend = get_backend_for_session(info.path)
+
+    # Only check backends that support session names
+    get_name = getattr(backend, 'get_session_name_from_file', None)
+    if get_name is None:
+        return
+
+    try:
+        new_name = get_name(info.path)
+    except (OSError, IOError):
+        return
+
+    if new_name == info.session_name:
+        return
+
+    info.session_name = new_name
+    logger.info(
+        "Session name updated for %s: %s", info.session_id, new_name
+    )
+    data = {
+        "session_id": info.session_id,
+        "sessionName": new_name,
+    }
+    await broadcast_event("session_name_updated", data)
+    await broadcast_json_event("session_name_updated", data)
+
+
 async def process_session_messages(session_id: str) -> int:
     """Read new messages from a session and broadcast to clients."""
     info = get_session(session_id)
@@ -920,6 +954,13 @@ async def process_session_messages(session_id: str) -> int:
     if new_entries:
         await _broadcast_session_status(session_id)
         await _broadcast_session_token_usage_updated(session_id)
+
+    # Check for session name changes (e.g. Pi's name_session tool)
+    # Always check when called (file watcher only triggers on actual writes),
+    # because session_info entries are filtered by the tailer and won't
+    # appear in new_entries even though the file changed.
+    await _check_session_name_update(info)
+
     return len(new_entries)
 
 
@@ -1398,7 +1439,7 @@ async def index() -> HTMLResponse:
     from .rendering import get_template
 
     template = get_template("live.html")
-    html = template.render(css=_css)
+    html = template.render(css=_css, home_dir=str(Path.home()))
     return HTMLResponse(content=html)
 
 
@@ -1438,7 +1479,11 @@ async def event_generator(request: Request) -> AsyncGenerator[dict, None]:
         yield {
             "event": "sessions",
             "data": json.dumps(
-                {"sessions": sessions_data, "maxSessions": MAX_SESSIONS}
+                {
+                    "sessions": sessions_data,
+                    "maxSessions": MAX_SESSIONS,
+                    "homeDir": str(Path.home()),
+                }
             ),
         }
 
@@ -1490,7 +1535,11 @@ async def json_event_generator(request: Request) -> AsyncGenerator[dict, None]:
         yield {
             "event": "sessions",
             "data": json.dumps(
-                {"sessions": sessions_data, "maxSessions": MAX_SESSIONS}
+                {
+                    "sessions": sessions_data,
+                    "maxSessions": MAX_SESSIONS,
+                    "homeDir": str(Path.home()),
+                }
             ),
         }
 
