@@ -33,6 +33,7 @@ from .cli import (
     build_send_command,
     build_fork_command,
     build_new_session_command,
+    build_terminal_command,
     get_available_models,
     resolve_summary_model,
     CLI_INSTALL_INSTRUCTIONS,
@@ -208,8 +209,8 @@ class PiBackend:
         )
 
     def build_terminal_command(self, session_id: str, skip_permissions: bool = False):
-        """Not supported for Pi."""
-        return None
+        """Build CLI command for interactive Pi terminal session."""
+        return build_terminal_command(session_id, skip_permissions)
 
     def ensure_session_indexed(self, session_id: str) -> None:
         pass  # Not needed for Pi

@@ -131,6 +131,32 @@ def build_fork_command(
     return CommandSpec(args=cmd, stdin=message)
 
 
+def build_terminal_command(
+    session_id: str,
+    skip_permissions: bool = False,
+    sessions_dir: Path | None = None,
+) -> CommandSpec | None:
+    """Build CLI command for an interactive Pi terminal session.
+
+    Like build_send_command but without `-p`, so Pi runs interactively
+    inside a PTY.
+
+    Args:
+        session_id: Session UUID.
+        skip_permissions: Unused (Pi has no permission skip flag).
+        sessions_dir: Override sessions directory for file lookup.
+
+    Returns:
+        CommandSpec with args (no stdin), or None if session file not found.
+    """
+    session_file = find_session_file(session_id, sessions_dir)
+    if session_file is None:
+        logger.warning(f"Cannot find Pi session file for terminal: {session_id}")
+        return None
+
+    return CommandSpec(args=[CLI_COMMAND, "--session", str(session_file)])
+
+
 def build_new_session_command(
     message: str,
     skip_permissions: bool = False,
