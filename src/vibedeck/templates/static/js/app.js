@@ -8,7 +8,7 @@ import {
 } from './ui.js';
 import { initPreviewPane } from './preview.js';
 import { initFileTree } from './filetree.js';
-import { initGroupBySelect, initOrderBySelect, initCopyButtons, reorderSidebar, loadArchivedSessions, loadSessionStatuses, loadArchivedProjects } from './sessions.js';
+import { initGroupBySelect, initOrderBySelect, initCopyButtons, reorderSidebar, loadArchivedSessions, loadSessionStatuses, loadArchivedProjects, loadCustomTitles, initTitleBarEdit } from './sessions.js';
 import { initMessaging } from './messaging.js';
 import { initModal } from './modal.js';
 import { connect, initVisibilityHandler } from './connection.js';
@@ -97,11 +97,15 @@ function init() {
         }
     });
 
-    // Load archived sessions, projects, and statuses from server before connecting
+    // Initialize title bar double-click editing
+    initTitleBarEdit();
+
+    // Load archived sessions, projects, statuses, and custom titles from server before connecting
     Promise.all([
         loadArchivedSessions(),
         loadArchivedProjects(),
-        loadSessionStatuses()
+        loadSessionStatuses(),
+        loadCustomTitles()
     ]).then(() => {
         // Connect to SSE and start receiving events
         connect();

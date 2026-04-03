@@ -43,6 +43,7 @@ from .routes import (
     files_router,
     sessions_router,
     statuses_router,
+    titles_router,
 )
 from .routes.sessions import configure_session_routes
 from .sessions import (
@@ -1385,6 +1386,7 @@ app.include_router(files_router)
 app.include_router(archives_router)
 app.include_router(diff_router)
 app.include_router(statuses_router)
+app.include_router(titles_router)
 
 
 # Core routes (index, static, SSE events, health)

@@ -192,6 +192,7 @@ export const state = {
     archivedSessionIds: new Set(), // session_ids that are archived (loaded from server)
     archivedProjectPaths: new Set(), // project paths that are archived (loaded from server)
     sessionStatuses: new Map(), // session_id -> status string ("in_progress", "waiting", "done")
+    customTitles: new Map(), // session_id -> custom title string (user overrides)
 
     // UI state
     activeSessionId: null,

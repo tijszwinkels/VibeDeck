@@ -131,7 +131,13 @@ pre code { background: none; padding: 0; }
 .status-bar.disconnected .status-dot { background: white; }
 .status-bar.reconnecting .status-dot { background: white; animation: pulse 1s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-.session-title-bar { font-size: 0.85rem; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
+.session-title-bar { font-size: 0.85rem; opacity: 0.9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; cursor: default; }
+.session-title-bar:hover { opacity: 1; }
+
+/* Inline title editing */
+.title-edit-input { background: var(--bg-color); color: var(--text-color); border: 1px solid var(--accent-color); border-radius: 3px; font: inherit; font-size: inherit; padding: 1px 4px; width: 100%; min-width: 80px; box-sizing: border-box; outline: none; }
+.session-item .session-title .title-edit-input { font-size: 0.85rem; }
+.session-title-bar .title-edit-input { font-size: 0.85rem; opacity: 1; }
 
 /* Hamburger button */
 .hamburger-btn { background: none; border: none; color: white; font-size: 1.2rem; cursor: pointer; padding: 4px 8px; margin-right: 8px; display: flex; align-items: center; justify-content: center; border-radius: 4px; }

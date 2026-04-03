@@ -176,8 +176,8 @@ export function connect() {
             session.summaryShort = data.summaryShort;
             session.summaryExecutive = data.summaryExecutive;
 
-            // Update display title if we have a summary title
-            if (data.summaryTitle) {
+            // Update display title if we have a summary title AND no custom title override
+            if (data.summaryTitle && !state.customTitles.has(data.session_id)) {
                 const newDisplayTitle = truncateTitle(data.summaryTitle, MAX_TITLE_LENGTH);
                 session.displayTitle = newDisplayTitle;
 
@@ -186,9 +186,6 @@ export function connect() {
                 if (titleSpan) {
                     titleSpan.textContent = newDisplayTitle;
                 }
-
-                // Update status color based on title suffix (persisted status takes priority)
-                updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
 
                 // Update session header title
                 const headerTitleSpan = session.container.querySelector('.session-title-display');
@@ -200,6 +197,11 @@ export function connect() {
                 if (state.activeSessionId === data.session_id) {
                     dom.sessionTitleBar.textContent = newDisplayTitle;
                 }
+            }
+
+            // Always update status color based on summary title (persisted status takes priority)
+            if (data.summaryTitle) {
+                updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
             }
         }
     });

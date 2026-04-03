@@ -197,8 +197,9 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
     container.dataset.session = sessionId;
     if (backend) container.dataset.backend = backend;
 
-    // Use summary title if available, otherwise fall back to firstMessage or name
-    const fullTitle = summaryTitle || firstMessage || name;
+    // Use custom title if set, then summary title, then firstMessage or name
+    const customTitle = state.customTitles.get(sessionId);
+    const fullTitle = customTitle || summaryTitle || firstMessage || name;
     const displayTitle = truncateTitle(fullTitle, MAX_TITLE_LENGTH);
 
     // Add session header (title only - auto-scroll is in floating controls)
@@ -285,6 +286,15 @@ export function createSession(sessionId, name, projectName, firstMessage, starte
             }
         }
     });
+
+    // Double-click to edit title in sidebar
+    const sidebarTitleSpan = sidebarItem.querySelector('.session-title');
+    if (sidebarTitleSpan) {
+        sidebarTitleSpan.addEventListener('dblclick', function(e) {
+            e.stopPropagation();
+            startTitleEdit(sessionId, sidebarTitleSpan);
+        });
+    }
 
     // Tooltip handlers
     sidebarItem.addEventListener('mouseenter', function(e) {
@@ -500,6 +510,159 @@ export async function loadArchivedSessions() {
     } catch (err) {
         console.error('Failed to load archived sessions:', err);
     }
+}
+
+// Load custom session titles from server on init
+export async function loadCustomTitles() {
+    try {
+        const response = await fetch('api/session-titles');
+        const data = await response.json();
+        state.customTitles = new Map(Object.entries(data.titles || {}));
+
+        // Apply custom titles to already-loaded sessions
+        for (const [sessionId, title] of state.customTitles) {
+            applyCustomTitle(sessionId, title);
+        }
+    } catch (err) {
+        console.error('Failed to load custom titles:', err);
+    }
+}
+
+// Apply a custom title to a session's UI elements
+function applyCustomTitle(sessionId, title) {
+    const session = state.sessions.get(sessionId);
+    if (!session) return;
+
+    const displayTitle = truncateTitle(title, MAX_TITLE_LENGTH);
+    session.displayTitle = displayTitle;
+
+    // Update sidebar
+    const titleSpan = session.sidebarItem.querySelector('.session-title');
+    if (titleSpan) titleSpan.textContent = title;  // Full title in sidebar (CSS truncates)
+
+    // Update session header
+    const headerTitleSpan = session.container.querySelector('.session-title-display');
+    if (headerTitleSpan) headerTitleSpan.textContent = displayTitle;
+
+    // Update title bar if active
+    if (state.activeSessionId === sessionId) {
+        dom.sessionTitleBar.textContent = displayTitle;
+    }
+}
+
+// Set a custom title (with optimistic update and server persist)
+export async function setCustomTitle(sessionId, title) {
+    const session = state.sessions.get(sessionId);
+    if (!session) return;
+
+    const previousTitle = state.customTitles.get(sessionId);
+    const previousDisplay = session.displayTitle;
+
+    if (title === null || title === undefined || title.trim() === '') {
+        // Clear custom title - revert to auto-generated
+        state.customTitles.delete(sessionId);
+        const autoTitle = session.summaryTitle || session.firstMessage || session.name;
+        const autoDisplay = truncateTitle(autoTitle, MAX_TITLE_LENGTH);
+        session.displayTitle = autoDisplay;
+
+        const titleSpan = session.sidebarItem.querySelector('.session-title');
+        if (titleSpan) titleSpan.textContent = autoTitle;
+        const headerSpan = session.container.querySelector('.session-title-display');
+        if (headerSpan) headerSpan.textContent = autoDisplay;
+        if (state.activeSessionId === sessionId) {
+            dom.sessionTitleBar.textContent = autoDisplay;
+        }
+    } else {
+        state.customTitles.set(sessionId, title.trim());
+        applyCustomTitle(sessionId, title.trim());
+    }
+
+    // Persist to server
+    try {
+        const response = await fetch('api/session-titles/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, title: title && title.trim() ? title.trim() : null })
+        });
+        if (!response.ok) {
+            throw new Error(`Server returned ${response.status}`);
+        }
+    } catch (err) {
+        console.error('Failed to save custom title:', err);
+        // Rollback
+        if (previousTitle !== undefined) {
+            state.customTitles.set(sessionId, previousTitle);
+            applyCustomTitle(sessionId, previousTitle);
+        } else {
+            state.customTitles.delete(sessionId);
+            session.displayTitle = previousDisplay;
+        }
+    }
+}
+
+// Start inline editing of a session title
+function startTitleEdit(sessionId, element) {
+    if (element.querySelector('input')) return; // Already editing
+
+    const session = state.sessions.get(sessionId);
+    if (!session) return;
+
+    // Get current full title (custom or auto)
+    const currentTitle = state.customTitles.get(sessionId)
+        || session.summaryTitle || session.firstMessage || session.name || '';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'title-edit-input';
+    input.value = currentTitle;
+
+    // Store original content for cancel
+    const originalContent = element.textContent;
+    element.textContent = '';
+    element.appendChild(input);
+    input.focus();
+    input.select();
+
+    function commit() {
+        const newTitle = input.value.trim();
+        input.removeEventListener('blur', onBlur);
+        input.removeEventListener('keydown', onKeydown);
+
+        if (newTitle && newTitle !== currentTitle) {
+            element.textContent = newTitle;
+            setCustomTitle(sessionId, newTitle);
+        } else if (!newTitle) {
+            // Cleared - revert to auto title
+            element.textContent = originalContent;
+            setCustomTitle(sessionId, null);
+        } else {
+            element.textContent = originalContent;
+        }
+    }
+
+    function cancel() {
+        input.removeEventListener('blur', onBlur);
+        input.removeEventListener('keydown', onKeydown);
+        element.textContent = originalContent;
+    }
+
+    function onBlur() {
+        commit();
+    }
+
+    function onKeydown(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur(); // triggers commit via onBlur
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancel();
+        }
+        e.stopPropagation(); // Don't let keypresses bubble to app shortcuts
+    }
+
+    input.addEventListener('blur', onBlur);
+    input.addEventListener('keydown', onKeydown);
 }
 
 // Load session statuses from server on init
@@ -1550,6 +1713,14 @@ export function initOrderBySelect(onReorder) {
         state.sortBy = dom.orderBySelect.value;
         localStorage.setItem('sortBy', state.sortBy);
         onReorder();
+    });
+}
+
+// Initialize double-click editing on the session title bar (top of main content)
+export function initTitleBarEdit() {
+    dom.sessionTitleBar.addEventListener('dblclick', function(e) {
+        if (!state.activeSessionId) return;
+        startTitleEdit(state.activeSessionId, dom.sessionTitleBar);
     });
 }
 
