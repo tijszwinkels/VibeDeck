@@ -1624,3 +1624,102 @@ async def terminal_websocket(websocket: WebSocket, cwd: str | None = None) -> No
         return
 
     await terminal_manager.handle_websocket(websocket, cwd, motd_file=_terminal_motd_file)
+
+
+@app.websocket("/ws/session-terminal/{session_id}")
+async def session_terminal_websocket(websocket: WebSocket, session_id: str) -> None:
+    """WebSocket endpoint for session-specific interactive terminal.
+
+    Opens an interactive CLI session (e.g. `claude --resume SESSION_ID`) in a PTY
+    instead of a plain shell.  Used by the "terminal mode" in the frontend.
+    """
+    from .terminal import is_terminal_available, terminal_manager
+
+    logger.info(f"Session terminal WebSocket request for {session_id}")
+
+    # Pre-flight checks (before accepting the WebSocket).  Accept first
+    # so that a proper close code reaches the client instead of a bare 403.
+    error_msg = None
+    if not _terminal_enabled:
+        error_msg = "Terminal feature disabled"
+    elif not is_terminal_available():
+        error_msg = "ptyprocess not installed"
+
+    info = get_session(session_id) if not error_msg else None
+    if not error_msg and info is None:
+        error_msg = f"Session {session_id} not found"
+
+    backend = get_backend_for_session(info.path) if info else None
+    cmd_spec = None
+    if not error_msg and backend:
+        build_terminal_cmd = getattr(backend, "build_terminal_command", None)
+        if callable(build_terminal_cmd):
+            cmd_spec = build_terminal_cmd(session_id, _skip_permissions)
+        if cmd_spec is None:
+            error_msg = f"Backend {backend.name if backend else '?'} does not support terminal mode"
+
+    if error_msg:
+        logger.warning(f"Session terminal rejected: {error_msg}")
+        # Accept then immediately close so the close code reaches the client
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": error_msg})
+        await websocket.close(code=4005, reason=error_msg[:120])
+        return
+
+    cwd = (
+        info.project_path
+        if info.project_path and Path(info.project_path).is_dir()
+        else None
+    )
+
+    logger.info(f"Opening interactive terminal for session {session_id}: {cmd_spec.args}")
+    await terminal_manager.handle_websocket(
+        websocket, cwd=cwd, command=cmd_spec.args, session_id=session_id,
+    )
+
+
+@app.get("/api/terminal/session/{session_id}/supports-terminal")
+async def session_supports_terminal(session_id: str) -> dict:
+    """Check if a session's backend supports interactive terminal mode."""
+    if not _terminal_enabled:
+        return {"supported": False, "reason": "Terminal feature is disabled"}
+
+    from .terminal import is_terminal_available
+    if not is_terminal_available():
+        return {"supported": False, "reason": "ptyprocess not installed"}
+
+    info = get_session(session_id)
+    if info is None:
+        return {"supported": False, "reason": "Session not found"}
+
+    backend = get_backend_for_session(info.path)
+    build_terminal_cmd = getattr(backend, "build_terminal_command", None)
+    if not callable(build_terminal_cmd):
+        return {"supported": False, "reason": f"{backend.name} does not support terminal mode"}
+
+    cmd_spec = build_terminal_cmd(session_id, _skip_permissions)
+    if cmd_spec is None:
+        return {"supported": False, "reason": f"{backend.name} does not support terminal mode"}
+
+    return {"supported": True}
+
+
+@app.post("/api/terminal/session/{session_id}/kill")
+async def kill_session_terminal(session_id: str) -> dict:
+    """Kill the interactive terminal for a session.
+
+    Called when switching back to transcript mode so the terminal
+    doesn't show stale state.  The session can always be resumed later.
+    """
+    from .terminal import terminal_manager
+
+    killed = await terminal_manager.kill_session_terminal(session_id)
+    return {"killed": killed}
+
+
+@app.get("/api/terminal/session/{session_id}/status")
+async def session_terminal_status(session_id: str) -> dict:
+    """Check if there's an active interactive terminal for a session."""
+    from .terminal import terminal_manager
+
+    return {"active": terminal_manager.has_session_terminal(session_id)}

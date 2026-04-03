@@ -112,6 +112,28 @@ def build_fork_command(
     return CommandSpec(args=cmd, stdin=message)
 
 
+def build_terminal_command(
+    session_id: str,
+    skip_permissions: bool = False,
+) -> CommandSpec | None:
+    """Build the CLI command for an interactive terminal session.
+
+    Unlike build_send_command (which uses -p for pipe mode), this starts
+    Claude in interactive mode inside a PTY, suitable for xterm.js.
+
+    Args:
+        session_id: Session to resume interactively.
+        skip_permissions: Skip permission prompts if supported.
+
+    Returns:
+        CommandSpec with args (no stdin).
+    """
+    cmd = [CLI_COMMAND, "--resume", session_id]
+    if skip_permissions:
+        cmd.append("--dangerously-skip-permissions")
+    return CommandSpec(args=cmd)
+
+
 def build_new_session_command(
     message: str,
     skip_permissions: bool = False,

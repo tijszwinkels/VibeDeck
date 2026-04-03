@@ -311,3 +311,94 @@ class TestTerminalEndpoints:
         server.set_terminal_enabled(False)
         resp = client.get("/api/terminal/shells")
         assert resp.status_code == 403
+
+    def test_supports_terminal_no_session(self):
+        """Supports-terminal endpoint returns supported=False for nonexistent session."""
+        client = TestClient(app)
+        resp = client.get("/api/terminal/session/nonexistent-session/supports-terminal")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["supported"] is False
+        assert "not found" in data["reason"].lower()
+
+    def test_kill_session_terminal_no_active(self):
+        """Kill endpoint returns killed=False when no terminal is active."""
+        client = TestClient(app)
+        resp = client.post("/api/terminal/session/nonexistent-session/kill")
+        assert resp.status_code == 200
+        assert resp.json()["killed"] is False
+
+    def test_session_terminal_status_no_active(self):
+        """Status endpoint returns active=False when no terminal is active."""
+        client = TestClient(app)
+        resp = client.get("/api/terminal/session/nonexistent-session/status")
+        assert resp.status_code == 200
+        assert resp.json()["active"] is False
+
+
+# ---------------------------------------------------------------------------
+# TerminalManager.kill_session_terminal / has_session_terminal
+# ---------------------------------------------------------------------------
+
+
+class TestSessionTerminal:
+    def test_has_session_terminal_false_when_empty(self):
+        mgr = TerminalManager()
+        assert mgr.has_session_terminal("some-session") is False
+
+    def test_has_session_terminal_true_when_active(self):
+        mgr = TerminalManager()
+        session = TerminalSession(
+            websocket=AsyncMock(), session_id="ses-123"
+        )
+        mgr.sessions[42] = session
+        assert mgr.has_session_terminal("ses-123") is True
+        assert mgr.has_session_terminal("other") is False
+
+    def test_has_session_terminal_false_when_closing(self):
+        mgr = TerminalManager()
+        session = TerminalSession(
+            websocket=AsyncMock(), session_id="ses-123", closing=True
+        )
+        mgr.sessions[42] = session
+        assert mgr.has_session_terminal("ses-123") is False
+
+    @pytest.mark.asyncio
+    async def test_kill_session_terminal(self):
+        mgr = TerminalManager()
+        mock_ws = AsyncMock()
+        mock_proc = MagicMock()
+        mock_proc.isalive.return_value = True
+
+        session = TerminalSession(
+            websocket=mock_ws, session_id="ses-456", process=mock_proc
+        )
+        ws_id = id(mock_ws)
+        mgr.sessions[ws_id] = session
+
+        killed = await mgr.kill_session_terminal("ses-456")
+        assert killed is True
+        assert ws_id not in mgr.sessions
+
+    @pytest.mark.asyncio
+    async def test_kill_session_terminal_no_match(self):
+        mgr = TerminalManager()
+        killed = await mgr.kill_session_terminal("no-such-session")
+        assert killed is False
+
+    @pytest.mark.asyncio
+    async def test_spawn_with_custom_command(self, tmp_path):
+        """spawn_pty uses explicit command when provided."""
+        mgr = TerminalManager()
+        session = TerminalSession(websocket=AsyncMock(), cwd=str(tmp_path))
+
+        mock_proc = MagicMock()
+        with patch("vibedeck.terminal.PTYPROCESS_AVAILABLE", True):
+            with patch("vibedeck.terminal.ptyprocess") as mock_pty:
+                mock_pty.PtyProcess.spawn.return_value = mock_proc
+                result = await mgr.spawn_pty(
+                    session, command=["claude", "--resume", "ses-789"]
+                )
+                assert result is True
+                call_args = mock_pty.PtyProcess.spawn.call_args.args[0]
+                assert call_args == ["claude", "--resume", "ses-789"]

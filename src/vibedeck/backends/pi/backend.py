@@ -207,6 +207,10 @@ class PiBackend:
             message, skip_permissions, model=model,
         )
 
+    def build_terminal_command(self, session_id: str, skip_permissions: bool = False):
+        """Not supported for Pi."""
+        return None
+
     def ensure_session_indexed(self, session_id: str) -> None:
         pass  # Not needed for Pi
 

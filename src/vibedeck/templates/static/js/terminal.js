@@ -1,9 +1,14 @@
 /**
  * Terminal integration using xterm.js
  *
- * Provides an embedded terminal in the right pane with WebSocket connection
- * to a server-side PTY. The terminal toggle works independently from the
- * file view toggle (folder button):
+ * Supports two modes:
+ *   - **Session terminal**: Runs an interactive CLI session (e.g. `claude --resume`)
+ *     via the /ws/terminal/session/{id} endpoint. Activated when toggling terminal
+ *     on a session whose backend supports it.
+ *   - **Plain shell**: A regular shell PTY via /ws/terminal. Used as fallback when
+ *     the backend doesn't support session terminals, or when no session is active.
+ *
+ * The terminal toggle works independently from the file view toggle (folder button):
  *   - File view only: right pane shows file tree + preview
  *   - Terminal only: right pane shows terminal filling the pane
  *   - Both: split view with file tree/preview on top, terminal on bottom
@@ -25,6 +30,9 @@ let fitAddon = null;
 let webSocket = null;
 let terminalEnabled = false;
 const kittyKeyboardState = createKittyKeyboardState();
+
+// Track which session the current terminal connection belongs to
+let activeTerminalSessionId = null;
 
 /**
  * Initialize the terminal module.
@@ -161,6 +169,7 @@ export function updateRightPaneLayout() {
 
 /**
  * Open terminal and connect to WebSocket.
+ * If a session is active and supports terminal mode, connects as a session terminal.
  */
 async function openTerminal() {
     const container = document.getElementById('terminal-container');
@@ -268,19 +277,111 @@ function getTerminalTheme() {
 
 /**
  * Connect to terminal WebSocket.
+ *
+ * Checks if the active session supports terminal mode, and connects
+ * as a session terminal if so. Falls back to a plain shell otherwise.
  */
-function connectWebSocket() {
+async function connectWebSocket() {
     if (webSocket && webSocket.readyState === WebSocket.OPEN) {
         return;
     }
 
-    // Get working directory from active session if available
-    let cwd = null;
-    if (state.activeSessionId) {
-        const session = state.sessions?.get(state.activeSessionId);
-        if (session?.cwd) {
-            cwd = session.cwd;
+    const sessionId = state.activeSessionId;
+    const session = sessionId ? state.sessions?.get(sessionId) : null;
+
+    // Don't try session terminal for pending sessions
+    if (session && !session.pending && sessionId) {
+        // Check if backend supports terminal mode before connecting
+        try {
+            const resp = await fetch('api/terminal/session/' + encodeURIComponent(sessionId) + '/supports-terminal');
+            const data = await resp.json();
+            if (data.supported) {
+                connectSessionTerminal(sessionId, session);
+                return;
+            }
+        } catch (e) {
+            console.warn('Failed to check session terminal support:', e);
         }
+    }
+
+    // Fallback to plain shell
+    connectPlainShell(session);
+}
+
+/**
+ * Connect as a session-specific interactive terminal.
+ */
+function connectSessionTerminal(sessionId, session) {
+    const wsUrl = new URL('ws/session-terminal/' + encodeURIComponent(sessionId), window.location.href);
+    wsUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    activeTerminalSessionId = sessionId;
+    resetKittyKeyboardState(kittyKeyboardState);
+
+    // Clear terminal and show connecting message
+    if (terminal) {
+        terminal.clear();
+        terminal.write('\x1b[2m[Connecting to session terminal...]\x1b[0m\r\n');
+    }
+
+    webSocket = new WebSocket(wsUrl.href);
+
+    webSocket.onopen = () => {
+        if (terminal) {
+            terminal.clear();
+        }
+        // Send initial resize
+        if (terminal && fitAddon) {
+            fitAddon.fit();
+            const { cols, rows } = terminal;
+            webSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
+        }
+    };
+
+    webSocket.onmessage = handleWebSocketMessage;
+
+    webSocket.onclose = (event) => {
+        // Code 4005 = backend doesn't support terminal mode, fall back to shell
+        if (event.code === 4005) {
+            if (terminal) {
+                terminal.clear();
+            }
+            connectPlainShell(session);
+            return;
+        }
+
+        // Code 4001 = killed for transcript send, don't reconnect
+        if (event.code === 4001) {
+            activeTerminalSessionId = null;
+            return;
+        }
+
+        if (state.terminalOpen && event.code !== 1000) {
+            // Unexpected close - try to reconnect
+            activeTerminalSessionId = null;
+            setTimeout(() => {
+                if (state.terminalOpen) {
+                    terminal?.write('\r\n[Reconnecting...]\r\n');
+                    connectWebSocket();
+                }
+            }, 2000);
+        } else {
+            activeTerminalSessionId = null;
+        }
+    };
+
+    webSocket.onerror = (error) => {
+        console.error('Session terminal WebSocket error:', error);
+    };
+}
+
+/**
+ * Connect as a plain shell terminal (fallback).
+ */
+function connectPlainShell(session) {
+    let cwd = null;
+    if (session?.cwd) {
+        cwd = session.cwd;
     }
 
     const wsUrl = new URL('ws/terminal', window.location.href);
@@ -288,10 +389,10 @@ function connectWebSocket() {
     if (cwd) {
         wsUrl.searchParams.set('cwd', cwd);
     }
-    let url = wsUrl.href;
 
+    activeTerminalSessionId = null;
     resetKittyKeyboardState(kittyKeyboardState);
-    webSocket = new WebSocket(url);
+    webSocket = new WebSocket(wsUrl.href);
 
     webSocket.onopen = () => {
         // Send initial resize
@@ -302,34 +403,10 @@ function connectWebSocket() {
         }
     };
 
-    webSocket.onmessage = (event) => {
-        try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'output' && terminal) {
-                const { output, responses } = processKittyKeyboardProtocolOutput(kittyKeyboardState, msg.data);
-                for (const response of responses) {
-                    if (webSocket && webSocket.readyState === WebSocket.OPEN) {
-                        webSocket.send(JSON.stringify({ type: 'input', data: response }));
-                    }
-                }
-                if (output) {
-                    terminal.write(output);
-                }
-            } else if (msg.type === 'exit') {
-                resetKittyKeyboardState(kittyKeyboardState);
-                terminal?.write('\r\n[Process exited]\r\n');
-            } else if (msg.type === 'error') {
-                console.error('Terminal error:', msg.message);
-                terminal?.write(`\r\n[Error: ${msg.message}]\r\n`);
-            }
-        } catch (e) {
-            console.error('Failed to parse terminal message:', e);
-        }
-    };
+    webSocket.onmessage = handleWebSocketMessage;
 
     webSocket.onclose = (event) => {
         if (state.terminalOpen && event.code !== 1000) {
-            // Unexpected close - try to reconnect
             setTimeout(() => {
                 if (state.terminalOpen) {
                     terminal?.write('\r\n[Reconnecting...]\r\n');
@@ -345,14 +422,95 @@ function connectWebSocket() {
 }
 
 /**
+ * Shared WebSocket message handler for both terminal modes.
+ */
+function handleWebSocketMessage(event) {
+    try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'output' && terminal) {
+            const { output, responses } = processKittyKeyboardProtocolOutput(kittyKeyboardState, msg.data);
+            for (const response of responses) {
+                if (webSocket && webSocket.readyState === WebSocket.OPEN) {
+                    webSocket.send(JSON.stringify({ type: 'input', data: response }));
+                }
+            }
+            if (output) {
+                terminal.write(output);
+            }
+        } else if (msg.type === 'exit') {
+            resetKittyKeyboardState(kittyKeyboardState);
+            terminal?.write('\r\n[Process exited]\r\n');
+        } else if (msg.type === 'killed') {
+            resetKittyKeyboardState(kittyKeyboardState);
+            terminal?.write('\r\n\x1b[2m[Terminal closed — switched to transcript mode]\x1b[0m\r\n');
+        } else if (msg.type === 'error') {
+            console.error('Terminal error:', msg.message);
+            terminal?.write(`\r\n[Error: ${msg.message}]\r\n`);
+        }
+    } catch (e) {
+        console.error('Failed to parse terminal message:', e);
+    }
+}
+
+/**
  * Close terminal and disconnect WebSocket.
  */
 function closeTerminal() {
+    activeTerminalSessionId = null;
     resetKittyKeyboardState(kittyKeyboardState);
     if (webSocket) {
         webSocket.close(1000, 'User closed terminal');
         webSocket = null;
     }
+}
+
+/**
+ * Kill the session terminal for the active session.
+ *
+ * Called by the messaging module before sending a message via transcript mode
+ * so the terminal doesn't show stale state. The session can always be
+ * re-opened later via --resume.
+ *
+ * @returns {Promise<boolean>} True if a terminal was killed.
+ */
+export async function killSessionTerminal() {
+    const sessionId = activeTerminalSessionId;
+    if (!sessionId) return false;
+
+    try {
+        const response = await fetch(
+            'api/terminal/session/' + encodeURIComponent(sessionId) + '/kill',
+            { method: 'POST' }
+        );
+        const data = await response.json();
+
+        if (data.killed) {
+            // Clean up local state
+            activeTerminalSessionId = null;
+            if (webSocket) {
+                // Don't try to close again - server already closed it
+                webSocket = null;
+            }
+
+            // Close the terminal UI
+            state.terminalOpen = false;
+            const toggleBtn = document.getElementById('terminal-toggle-btn');
+            toggleBtn?.classList.remove('active');
+            updateRightPaneLayout();
+        }
+
+        return data.killed;
+    } catch (e) {
+        console.error('Failed to kill session terminal:', e);
+        return false;
+    }
+}
+
+/**
+ * Check if a session terminal is currently active for the given session.
+ */
+export function hasActiveSessionTerminal(sessionId) {
+    return activeTerminalSessionId === sessionId;
 }
 
 /**

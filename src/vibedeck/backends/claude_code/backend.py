@@ -42,6 +42,7 @@ from .cli import (
     build_send_command,
     build_fork_command,
     build_new_session_command,
+    build_terminal_command,
 )
 from .renderer import ClaudeCodeRenderer
 
@@ -326,6 +327,14 @@ class ClaudeCodeBackend:
             CommandSpec with args and stdin content.
         """
         return build_new_session_command(message, skip_permissions, model=model, output_format=output_format, add_dirs=add_dirs)
+
+    def build_terminal_command(
+        self,
+        session_id: str,
+        skip_permissions: bool = False,
+    ):
+        """Build CLI command for interactive terminal session."""
+        return build_terminal_command(session_id, skip_permissions)
 
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.

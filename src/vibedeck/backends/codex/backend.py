@@ -209,6 +209,10 @@ class CodexBackend:
             add_dirs=add_dirs,
         )
 
+    def build_terminal_command(self, session_id: str, skip_permissions: bool = False):
+        """Not supported for Codex."""
+        return None
+
     def ensure_session_indexed(self, session_id: str) -> None:
         ensure_session_indexed(session_id)
 

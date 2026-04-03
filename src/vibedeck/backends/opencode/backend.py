@@ -296,6 +296,10 @@ class OpenCodeBackend:
         """
         return get_available_models()
 
+    def build_terminal_command(self, session_id: str, skip_permissions: bool = False):
+        """Not supported for OpenCode."""
+        return None
+
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.
 

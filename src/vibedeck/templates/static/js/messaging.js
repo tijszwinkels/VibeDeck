@@ -12,6 +12,7 @@ import {
     expandTilde
 } from './utils.js';
 import { showFlash, updateSidebarState } from './ui.js';
+import { killSessionTerminal, hasActiveSessionTerminal } from './terminal.js';
 import { createPlaceholderMessage, switchToSession, setUpdateInputBarUI, setCreatePendingSession } from './sessions.js';
 
 // Check if send is enabled
@@ -324,6 +325,12 @@ async function sendMessage() {
     if (session.pending) {
         await startPendingSession(session, message);
         return;
+    }
+
+    // Kill any active session terminal before sending via transcript mode.
+    // The terminal would show stale state; it can always be re-opened via --resume.
+    if (hasActiveSessionTerminal(state.activeSessionId)) {
+        await killSessionTerminal();
     }
 
     const placeholder = createPlaceholderMessage(state.activeSessionId, message);

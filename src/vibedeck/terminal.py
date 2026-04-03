@@ -34,6 +34,7 @@ class TerminalSession:
     process: "ptyprocess.PtyProcess | None" = None
     read_task: asyncio.Task | None = None
     cwd: str | None = None
+    session_id: str | None = None  # Coding session ID (for session-specific terminals)
 
     # Track if we're shutting down to avoid sending after close
     closing: bool = False
@@ -101,9 +102,16 @@ class TerminalManager:
         return env
 
     async def spawn_pty(
-        self, session: TerminalSession, rows: int = 24, cols: int = 80
+        self, session: TerminalSession, rows: int = 24, cols: int = 80,
+        command: list[str] | None = None,
     ) -> bool:
         """Spawn a PTY process for a terminal session.
+
+        Args:
+            session: The terminal session to spawn the process for.
+            rows: Initial terminal rows.
+            cols: Initial terminal columns.
+            command: Explicit command to run. If None, starts a shell.
 
         Returns True if successful, False otherwise.
         """
@@ -111,7 +119,6 @@ class TerminalManager:
             logger.error("Cannot spawn PTY: ptyprocess not installed")
             return False
 
-        shell = self._get_shell()
         cwd = session.cwd
 
         # Validate cwd exists
@@ -119,10 +126,12 @@ class TerminalManager:
             logger.warning(f"Terminal cwd does not exist: {cwd}, using home")
             cwd = str(Path.home())
 
+        argv = command if command else [self._get_shell()]
+
         try:
-            logger.info(f"Spawning shell: {shell} in {cwd or 'home'}")
+            logger.info(f"Spawning: {argv} in {cwd or 'home'}")
             proc = ptyprocess.PtyProcess.spawn(
-                [shell],  # Interactive PTY shell without login/profile side effects (e.g. auto-tmux)
+                argv,
                 cwd=cwd,
                 dimensions=(rows, cols),
                 env=self._build_terminal_env(),
@@ -194,8 +203,47 @@ class TerminalManager:
                     pass
             logger.debug(f"PTY read loop ended, exit status: {proc.exitstatus}")
 
+    async def kill_session_terminal(self, session_id: str) -> bool:
+        """Kill any terminal PTY running for a given coding session.
+
+        Returns True if a terminal was found and killed.
+        """
+        killed = False
+        to_cleanup = []
+        for ws_id, session in self.sessions.items():
+            if session.session_id == session_id and not session.closing:
+                to_cleanup.append(ws_id)
+
+        for ws_id in to_cleanup:
+            session = self.sessions.get(ws_id)
+            if session:
+                logger.info(f"Killing terminal for coding session {session_id} (ws={ws_id})")
+                session.closing = True
+                # Send exit message before closing
+                try:
+                    await session.websocket.send_json({"type": "killed", "reason": "transcript_send"})
+                except Exception:
+                    pass
+                # Close websocket (triggers cleanup in handle_websocket)
+                try:
+                    await session.websocket.close(code=4001, reason="Killed for transcript send")
+                except Exception:
+                    pass
+                await self._cleanup_session(ws_id)
+                killed = True
+
+        return killed
+
+    def has_session_terminal(self, session_id: str) -> bool:
+        """Check if there's an active terminal for a given coding session."""
+        for session in self.sessions.values():
+            if session.session_id == session_id and not session.closing:
+                return True
+        return False
+
     async def handle_websocket(
-        self, websocket: WebSocket, cwd: str | None = None, motd_file: str | None = None
+        self, websocket: WebSocket, cwd: str | None = None, motd_file: str | None = None,
+        command: list[str] | None = None, session_id: str | None = None,
     ) -> None:
         """Handle a WebSocket connection for terminal I/O.
 
@@ -209,13 +257,13 @@ class TerminalManager:
         await websocket.accept()
         ws_id = id(websocket)
 
-        session = TerminalSession(websocket=websocket, cwd=cwd)
+        session = TerminalSession(websocket=websocket, cwd=cwd, session_id=session_id)
         self.sessions[ws_id] = session
 
-        logger.info(f"Terminal WebSocket connected: {ws_id}")
+        logger.info(f"Terminal WebSocket connected: {ws_id}" + (f" (session={session_id})" if session_id else ""))
 
-        # Spawn PTY
-        if not await self.spawn_pty(session):
+        # Spawn PTY (with optional explicit command)
+        if not await self.spawn_pty(session, command=command):
             await websocket.send_json(
                 {"type": "error", "message": "Failed to spawn terminal"}
             )

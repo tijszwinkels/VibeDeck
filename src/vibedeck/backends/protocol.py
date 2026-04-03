@@ -411,6 +411,26 @@ class CodingToolBackend(Protocol):
         """
         ...
 
+    def build_terminal_command(
+        self,
+        session_id: str,
+        skip_permissions: bool = False,
+    ) -> CommandSpec | None:
+        """Build the CLI command to open an interactive terminal session.
+
+        Returns the command to resume a session in interactive (non-pipe) mode,
+        suitable for running inside a PTY. Returns None if the backend does not
+        support interactive terminal sessions.
+
+        Args:
+            session_id: Session to resume interactively.
+            skip_permissions: Skip permission prompts if supported.
+
+        Returns:
+            CommandSpec with args (no stdin), or None if not supported.
+        """
+        ...
+
     def ensure_session_indexed(self, session_id: str) -> None:
         """Ensure a session is indexed/known to the CLI tool.
 
