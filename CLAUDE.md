@@ -47,6 +47,16 @@ See `src/vibedeck/`:
 1. Create `backends/newbackend/` implementing `CodingToolBackend` protocol
 2. Register in `backends/registry.py`
 
+## Setting the Session Title
+
+You can set a custom title for the current session by emitting a `vibedeck` command block in your output. The VibeDeck frontend intercepts this on render and POSTs to `/api/session-titles/set`, persisting to `~/.config/vibedeck/session-titles.json`.
+
+```vibedeck
+<setTitle title="Investigating channel rename flow" />
+```
+
+Emit a new block whenever the session's focus changes — it auto-fires on every render (including catchup replay), and last write wins. Pass an empty string to clear and revert to the default title.
+
 ## Commit Transcripts
 
 On every commit, publish a gist of the conversation transcript and add the preview URL to the commit message.

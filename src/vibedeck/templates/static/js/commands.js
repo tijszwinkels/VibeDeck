@@ -43,10 +43,10 @@ export function parseAndExecuteCommands(html, sessionId, isLiveStreaming = true)
         // Store command data for later execution
         pendingCommands.set(commandId, { block: commandBlock, sessionId });
 
-        // Only auto-execute if:
-        // 1. We're in live streaming mode (catchup complete), AND
-        // 2. The command has follow="true" attribute
-        if (isLiveStreaming && commandHasFollow(commandBlock)) {
+        // Auto-execute rules:
+        // - setTitle is idempotent (last write wins), always fire.
+        // - Others fire only when live-streaming AND tagged follow="true".
+        if (commandIsSetTitle(commandBlock) || (isLiveStreaming && commandHasFollow(commandBlock))) {
             executeCommandBlock(commandBlock, sessionId);
         }
 
@@ -65,6 +65,13 @@ export function parseAndExecuteCommands(html, sessionId, isLiveStreaming = true)
 function commandHasFollow(block) {
     // Match follow="true" in any command
     return /follow="true"/i.test(block);
+}
+
+/**
+ * Check if a command block is a setTitle command.
+ */
+function commandIsSetTitle(block) {
+    return /<setTitle\s+[^>]*\/>/i.test(block);
 }
 
 // Store pending commands for manual execution
@@ -122,6 +129,13 @@ function executeCommandBlock(block, sessionId) {
     if (openUrlMatch) {
         const attrs = parseAttributes(openUrlMatch[1]);
         executeOpenUrl(attrs);
+        return;
+    }
+
+    const setTitleMatch = block.match(/<setTitle\s+([^>]*)\/>/i);
+    if (setTitleMatch) {
+        const attrs = parseAttributes(setTitleMatch[1]);
+        executeSetTitle(attrs, sessionId);
         return;
     }
 
@@ -197,6 +211,34 @@ async function executeOpenUrl(attrs) {
         openUrlPane(url);
     } catch (err) {
         console.error('openUrl: error executing command', err);
+    }
+}
+
+/**
+ * Execute a setTitle command: persist a custom title for the session.
+ */
+async function executeSetTitle(attrs, sessionId) {
+    const { title } = attrs;
+    if (title === undefined) {
+        console.warn('setTitle: missing title attribute');
+        return;
+    }
+    if (!sessionId) {
+        console.warn('setTitle: no sessionId in render context');
+        return;
+    }
+
+    try {
+        const response = await fetch('api/session-titles/set', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, title: title || null }),
+        });
+        if (!response.ok) {
+            console.error('setTitle: server returned', response.status);
+        }
+    } catch (err) {
+        console.error('setTitle: fetch error', err);
     }
 }
 

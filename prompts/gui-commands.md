@@ -33,3 +33,13 @@ Opens a URL in a sandboxed iframe.
 ```vibedeck
 <openUrl url="http://localhost:3000" />
 ```
+
+### setTitle
+
+Sets a custom title for the current session (persisted in `~/.config/vibedeck/session-titles.json`). Auto-fires on render — last occurrence wins, so emit a new `setTitle` block whenever the session's focus changes. Pass an empty string to clear the custom title and revert to the default.
+
+- `title` (required): Short human-readable name for the session. Empty string clears.
+
+```vibedeck
+<setTitle title="Debugging channel rename flow" />
+```
