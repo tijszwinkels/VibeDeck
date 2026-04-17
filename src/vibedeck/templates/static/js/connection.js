@@ -6,7 +6,8 @@ import { updateStatus } from './ui.js';
 import { checkSendEnabled, checkForkEnabled, checkDefaultSendBackend, updateInputBarUI } from './messaging.js';
 import {
     createSession, removeSession, reorderSidebar, switchToSession,
-    appendMessage, updateSessionWaitingState, updateSidebarItemStatusClass
+    appendMessage, updateSessionWaitingState, updateSidebarItemStatusClass,
+    applyCustomTitle
 } from './sessions.js';
 import { showPermissionModal } from './permissions.js';
 import { parseAndExecuteCommands, initCommandButtons } from './commands.js';
@@ -211,6 +212,29 @@ export function connect() {
             // Always update status color based on summary title (persisted status takes priority)
             if (data.summaryTitle) {
                 updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
+            }
+        }
+    });
+
+    state.eventSource.addEventListener('session_title_updated', function(e) {
+        const data = JSON.parse(e.data);
+        const session = state.sessions.get(data.session_id);
+        if (!session) return;
+
+        if (data.title) {
+            state.customTitles.set(data.session_id, data.title);
+            applyCustomTitle(data.session_id, data.title);
+        } else {
+            state.customTitles.delete(data.session_id);
+            const autoTitle = session.sessionName || session.summaryTitle || session.firstMessage || session.name;
+            const autoDisplay = truncateTitle(autoTitle, MAX_TITLE_LENGTH);
+            session.displayTitle = autoDisplay;
+            const titleSpan = session.sidebarItem.querySelector('.session-title');
+            if (titleSpan) titleSpan.textContent = autoTitle;
+            const headerSpan = session.container.querySelector('.session-title-display');
+            if (headerSpan) headerSpan.textContent = autoDisplay;
+            if (state.activeSessionId === data.session_id) {
+                dom.sessionTitleBar.textContent = autoDisplay;
             }
         }
     });

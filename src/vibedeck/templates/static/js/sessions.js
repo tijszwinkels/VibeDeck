@@ -530,7 +530,7 @@ export async function loadCustomTitles() {
 }
 
 // Apply a custom title to a session's UI elements
-function applyCustomTitle(sessionId, title) {
+export function applyCustomTitle(sessionId, title) {
     const session = state.sessions.get(sessionId);
     if (!session) return;
 

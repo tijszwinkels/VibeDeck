@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from vibedeck.broadcasting import broadcast_event, broadcast_json_event
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
@@ -87,6 +89,9 @@ async def set_session_title(request: SessionTitleRequest) -> dict:
 
     if _save_session_titles(titles):
         logger.info(f"Set custom title for session {session_id}: {title}")
+        payload = {"session_id": session_id, "title": title}
+        await broadcast_event("session_title_updated", payload)
+        await broadcast_json_event("session_title_updated", payload)
         return {"status": "updated", "session_id": session_id, "title": title}
     else:
         raise HTTPException(status_code=500, detail="Failed to save session title")
