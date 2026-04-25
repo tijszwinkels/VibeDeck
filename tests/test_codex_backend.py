@@ -222,6 +222,22 @@ class TestCodexTailer:
 class TestCodexUsage:
     """Tests for Codex token usage extraction."""
 
+    def test_gpt_5_5_pricing_is_configured(self):
+        """GPT-5.5 should use OpenAI's standard per-million token prices."""
+        from vibedeck.backends.codex.pricing import calculate_session_cost, get_model_pricing
+
+        assert get_model_pricing("gpt-5.5") == {
+            "input": 5.00,
+            "cached_input": 0.50,
+            "output": 30.00,
+        }
+        assert calculate_session_cost(
+            input_tokens=1_000_000,
+            cache_read_tokens=100_000,
+            output_tokens=1_000_000,
+            model="gpt-5.5",
+        ) == pytest.approx(34.55)
+
     def test_get_session_token_usage(self, codex_storage_dir):
         """Use the latest token_count totals and discovered models."""
         from vibedeck.backends.codex.pricing import get_session_token_usage
