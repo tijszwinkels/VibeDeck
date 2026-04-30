@@ -691,6 +691,55 @@ class TestGetLatestSessionModel:
         model = get_latest_session_model(path)
         assert model == "claude-sonnet-4-6"
 
+    def test_skips_synthetic_model_marker(self):
+        """Skip Claude Code's <synthetic> placeholder.
+
+        Claude Code uses model="<synthetic>" to mark assistant messages it
+        synthesizes locally (e.g. for API-error replies). If get_latest_session_model
+        returns "<synthetic>", VibeDeck would invoke `claude --resume --model <synthetic>`,
+        which the API rejects 404 — wedging the session permanently across resumes.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Real reply"}],
+                    "model": "claude-opus-4-7"
+                }
+            }) + "\n")
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "API Error: 403 ..."}],
+                    "model": "<synthetic>"
+                },
+                "isApiErrorMessage": True,
+                "apiErrorStatus": 403,
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        model = get_latest_session_model(path)
+        assert model == "claude-opus-4-7", (
+            f"Expected real model, got {model!r} — VibeDeck must not return Claude "
+            "Code's <synthetic> placeholder as a resume model."
+        )
+
+    def test_returns_none_when_only_synthetic_models_present(self):
+        """If every assistant message is synthetic, return None (no real model seen)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "API Error"}],
+                    "model": "<synthetic>"
+                }
+            }) + "\n")
+            f.flush()
+            path = Path(f.name)
+
+        assert get_latest_session_model(path) is None
+
 
 class TestClaudeCodeCLI:
     """Tests for Claude Code CLI utilities."""
