@@ -89,12 +89,22 @@ export function connect() {
 
         let mergedPendingId = null;
         const MERGE_WINDOW_MS = 30000;
+        const incomingCwd = data.projectPath ? String(data.projectPath).replace(/\/+$/, '') : null;
+        const incomingBackend = data.backend || null;
         for (const [sessionId, session] of state.sessions) {
-            if (session.pending && session.starting &&
-                (Date.now() - session.startedAt) < MERGE_WINDOW_MS) {
-                mergedPendingId = sessionId;
-                break;  // Stop after first match
-            }
+            if (!session.pending || !session.starting) continue;
+            if ((Date.now() - session.startedAt) >= MERGE_WINDOW_MS) continue;
+
+            // Match on cwd (required) — both must be set and equal
+            const pendingCwd = session.cwd ? String(session.cwd).replace(/\/+$/, '') : null;
+            if (!pendingCwd || !incomingCwd || pendingCwd !== incomingCwd) continue;
+
+            // Match on backend if both are known
+            if (session.selectedBackend && incomingBackend &&
+                session.selectedBackend !== incomingBackend) continue;
+
+            mergedPendingId = sessionId;
+            break;
         }
 
         if (mergedPendingId) {

@@ -18,11 +18,19 @@ CHARS_PER_TOKEN = 3.5
 
 
 def _normalize_model_id(model: str | None) -> str | None:
-    """Normalize provider-prefixed model IDs for CLI reuse."""
+    """Normalize provider-prefixed model IDs for CLI reuse.
+
+    Claude Code marks locally-synthesized assistant messages (API error replies,
+    "no response requested" placeholders) with model="<synthetic>". Treat any
+    angle-bracket sentinel as "no real model observed" so callers don't pass it
+    back into `claude --resume --model <synthetic>` and wedge the session.
+    """
     if not model:
         return None
     if "/" in model:
-        return model.split("/", 1)[1]
+        model = model.split("/", 1)[1]
+    if model.startswith("<") and model.endswith(">"):
+        return None
     return model
 
 
