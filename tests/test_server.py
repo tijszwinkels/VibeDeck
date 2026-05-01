@@ -852,6 +852,200 @@ class TestSendFeature:
         assert response.json()["status"] == "started"
         assert calls == [("codex", "gpt-5-codex")]
 
+    def test_new_session_multi_backend_default_fallback_resolves_concrete_for_env_scrub(
+        self, monkeypatch, tmp_path
+    ):
+        """In multi-backend mode with no explicit backend / source / default,
+        ``target_backend`` stays as the multi-backend wrapper. Env scrubbing
+        must resolve to the concrete sub-backend that build_new_session_command
+        dispatches to (otherwise MultiBackend.normalizer_key raises and the
+        endpoint returns 500). Verifies the fix for codex review #2.
+        """
+        server.set_send_enabled(True)
+
+        captured_env: dict = {}
+
+        class _FakeStdin:
+            def write(self, data):
+                return len(data)
+
+            async def drain(self):
+                return None
+
+            def close(self):
+                return None
+
+            async def wait_closed(self):
+                return None
+
+        class _FakeProcess:
+            def __init__(self):
+                self.returncode = None
+                self.stdin = _FakeStdin()
+                self.stderr = MagicMock()
+
+        class _FakeClaudeCodeBackend:
+            name = "Claude Code"
+            normalizer_key = "claude_code"
+
+            def is_cli_available(self):
+                return True
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_cli_install_instructions(self):
+                return "install"
+
+            def build_new_session_command(self, message, skip_permissions=False, model=None, output_format=None, add_dirs=None):
+                return CommandSpec(args=["claude"], stdin=message)
+
+        class _FakeOpenCodeBackend:
+            name = "OpenCode"
+            normalizer_key = "opencode"
+
+            def is_cli_available(self):
+                return True
+
+            def supports_permission_detection(self):
+                return False
+
+            def get_cli_install_instructions(self):
+                return "install"
+
+            def build_new_session_command(self, message, skip_permissions=False, model=None, output_format=None, add_dirs=None):
+                return CommandSpec(args=["opencode"], stdin=message)
+
+        class _FakeMultiBackendWithGetBackends:
+            """Mimics the real MultiBackend's surface used by the route + resolver."""
+
+            name = "Multi-Backend"
+
+            def __init__(self, ordered_backends):
+                self._ordered = list(ordered_backends)
+                self._by_name = {
+                    b.name.lower().replace(" ", "-"): b for b in self._ordered
+                }
+
+            @property
+            def normalizer_key(self):  # mirrors real MultiBackend behaviour
+                raise NotImplementedError(
+                    "Use get_backend_for_session() to get specific backend"
+                )
+
+            def get_backend_by_name(self, backend_name):
+                return self._by_name.get(backend_name.lower().replace(" ", "-"))
+
+            def get_backends(self):
+                return list(self._ordered)
+
+            def is_cli_available(self):
+                return any(b.is_cli_available() for b in self._ordered)
+
+            def get_cli_install_instructions(self):
+                return "install"
+
+            # The route checks supports_permission_detection on target_backend
+            # before dispatching; multi-backend wrapper here returns False.
+            def supports_permission_detection(self):
+                return False
+
+            def build_new_session_command(self, *args, **kwargs):
+                # Mirror MultiBackend's first-available dispatch.
+                for sub in self._ordered:
+                    if sub.is_cli_available():
+                        return sub.build_new_session_command(*args, **kwargs)
+                raise RuntimeError("No backend CLI available")
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            captured_env["env"] = kwargs.get("env")
+            return _FakeProcess()
+
+        original_sleep = asyncio.sleep
+        monkeypatch.setattr(
+            server.asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+        )
+        monkeypatch.setattr(server.asyncio, "sleep", lambda _: original_sleep(0))
+
+        # Make ANTHROPIC_* visible in the parent env, then point the OAuth
+        # credentials sentinel at an existing file so the scrub triggers.
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok-from-parent")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "key-from-parent")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://example.invalid")
+        creds = tmp_path / ".credentials.json"
+        creds.write_text("{}")
+        monkeypatch.setattr(
+            "vibedeck.backends.claude_code.env.CLAUDE_OAUTH_CREDENTIALS_PATH",
+            creds,
+        )
+
+        # ----- Variant 1: claude-code first → scrub fires -----
+        claude_first = _FakeMultiBackendWithGetBackends(
+            [_FakeClaudeCodeBackend(), _FakeOpenCodeBackend()]
+        )
+        configure_session_routes(
+            get_server_backend=lambda: claude_first,
+            get_backend_for_session=lambda path: claude_first,
+            is_send_enabled=server.is_send_enabled,
+            is_fork_enabled=server.is_fork_enabled,
+            is_skip_permissions=server.is_skip_permissions,
+            get_default_send_backend=lambda: None,
+            get_allowed_directories=server.get_allowed_directories,
+            add_allowed_directory=server.add_allowed_directory,
+            run_cli_for_session=server.run_cli_for_session,
+            broadcast_session_status=server._broadcast_session_status,
+            summarize_session_async=server._summarize_session_async,
+            get_summarizer=server.get_summarizer,
+            get_idle_summary_model=server.get_idle_summary_model,
+            cached_models=server._cached_models,
+        )
+
+        client = TestClient(app)
+        response = client.post(
+            "/sessions/new",
+            json={"message": "Hello", "cwd": str(tmp_path)},
+            # no backend, no source_session_id — exercises the fallback path
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "started"
+        env_v1 = captured_env["env"]
+        assert env_v1 is not None
+        assert "ANTHROPIC_AUTH_TOKEN" not in env_v1
+        assert "ANTHROPIC_API_KEY" not in env_v1
+        assert "ANTHROPIC_BASE_URL" not in env_v1
+
+        # ----- Variant 2: opencode first → scrub does NOT fire -----
+        captured_env.clear()
+        opencode_first = _FakeMultiBackendWithGetBackends(
+            [_FakeOpenCodeBackend(), _FakeClaudeCodeBackend()]
+        )
+        configure_session_routes(
+            get_server_backend=lambda: opencode_first,
+            get_backend_for_session=lambda path: opencode_first,
+            is_send_enabled=server.is_send_enabled,
+            is_fork_enabled=server.is_fork_enabled,
+            is_skip_permissions=server.is_skip_permissions,
+            get_default_send_backend=lambda: None,
+            get_allowed_directories=server.get_allowed_directories,
+            add_allowed_directory=server.add_allowed_directory,
+            run_cli_for_session=server.run_cli_for_session,
+            broadcast_session_status=server._broadcast_session_status,
+            summarize_session_async=server._summarize_session_async,
+            get_summarizer=server.get_summarizer,
+            get_idle_summary_model=server.get_idle_summary_model,
+            cached_models=server._cached_models,
+        )
+        response = client.post(
+            "/sessions/new",
+            json={"message": "Hello", "cwd": str(tmp_path)},
+        )
+        assert response.status_code == 200, response.text
+        env_v2 = captured_env["env"]
+        assert env_v2 is not None
+        assert env_v2.get("ANTHROPIC_AUTH_TOKEN") == "tok-from-parent"
+        assert env_v2.get("ANTHROPIC_API_KEY") == "key-from-parent"
+        assert env_v2.get("ANTHROPIC_BASE_URL") == "https://example.invalid"
+
 
 class TestDefaultSendBackend:
     """Tests for the default send backend feature."""

@@ -68,6 +68,30 @@ def _normalize_backend_name(name: str) -> str:
     return name.lower().replace(" ", "-")
 
 
+def _resolve_concrete_backend(backend):
+    """Return the concrete backend whose CLI ``build_new_session_command`` will spawn.
+
+    For a multi-backend wrapper, this mirrors
+    ``MultiBackend.build_new_session_command`` — which dispatches to the first
+    sub-backend with an available CLI. For single backends, the input is
+    returned unchanged.
+
+    The result is suitable for passing to ``scrub_anthropic_env(backend=...)``.
+    Without this resolution, a multi-backend wrapper's ``normalizer_key`` would
+    raise ``NotImplementedError`` when the env scrub inspects it.
+    """
+    get_backends = getattr(backend, "get_backends", None)
+    if get_backends is None:
+        return backend
+    for sub in get_backends():
+        if sub.is_cli_available():
+            return sub
+    # Fallback: return the wrapper unchanged. The caller's prior CLI-availability
+    # check should make this unreachable; if it ever fires, downstream failures
+    # are loud and traceable rather than silently scrubbing the wrong env.
+    return backend
+
+
 def _get_target_backend(backend_name: str):
     """Get target backend by name, returns (backend, normalized_name) or raises 404."""
     backend = _server_state["get_server_backend"]()
@@ -677,10 +701,14 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         # credentials, drop ANTHROPIC_* from the child env so a parent-process
         # default (e.g. OpenRouter) does not override the user's account.
         # Other backends keep their inherited ANTHROPIC_* untouched.
+        # ``target_backend`` may be a multi-backend wrapper; resolve to the
+        # concrete sub-backend that build_new_session_command actually picked,
+        # otherwise scrubbing would fail on MultiBackend.normalizer_key.
+        spawning_backend = _resolve_concrete_backend(target_backend)
         proc = await asyncio.create_subprocess_exec(
             *cmd_spec.args,
             cwd=cwd,
-            env=scrub_anthropic_env(backend=target_backend),
+            env=scrub_anthropic_env(backend=spawning_backend),
             stdin=stdin_pipe,
             stdout=stdout_pipe,
             stderr=asyncio.subprocess.PIPE,
