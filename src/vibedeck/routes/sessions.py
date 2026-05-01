@@ -673,13 +673,14 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         stdin_pipe = asyncio.subprocess.PIPE if cmd_spec.stdin else asyncio.subprocess.DEVNULL
 
         # Start CLI in the working directory.
-        # Drop ANTHROPIC_* vars from child env when the user has Claude Code
-        # OAuth credentials, so a parent-process default (e.g. OpenRouter) does
-        # not override the user's own account on the next-spawned session.
+        # When the spawned backend is Claude Code and the user has OAuth
+        # credentials, drop ANTHROPIC_* from the child env so a parent-process
+        # default (e.g. OpenRouter) does not override the user's account.
+        # Other backends keep their inherited ANTHROPIC_* untouched.
         proc = await asyncio.create_subprocess_exec(
             *cmd_spec.args,
             cwd=cwd,
-            env=scrub_anthropic_env(),
+            env=scrub_anthropic_env(backend=target_backend),
             stdin=stdin_pipe,
             stdout=stdout_pipe,
             stderr=asyncio.subprocess.PIPE,

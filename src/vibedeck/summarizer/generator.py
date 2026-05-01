@@ -224,10 +224,12 @@ class Summarizer:
             # Claude CLI requires being in the project directory to find sessions
             cwd = session.project_path if session.project_path else None
 
-            # Build child env, dropping ANTHROPIC_* vars when the user has
-            # Claude Code OAuth credentials configured (avoids parent-process
-            # defaults overriding the user's account in the spawned CLI).
-            env = scrub_anthropic_env()
+            # Build child env. For Claude Code summaries, drop ANTHROPIC_*
+            # vars when the user has OAuth credentials so the spawned CLI
+            # uses their account rather than a parent-process default. For
+            # other backends (Codex, OpenCode, Pi) the env is left untouched
+            # — those CLIs may rely on inherited ANTHROPIC_* legitimately.
+            env = scrub_anthropic_env(backend=self.backend)
             if self.thinking_budget is not None:
                 env["MAX_THINKING_TOKENS"] = str(self.thinking_budget)
                 logger.debug(f"Using thinking budget: {self.thinking_budget}")

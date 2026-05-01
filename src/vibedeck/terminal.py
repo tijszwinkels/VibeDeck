@@ -82,9 +82,16 @@ class TerminalManager:
     def _build_terminal_env(self) -> dict[str, str]:
         """Build a clean environment for the embedded terminal PTY.
 
-        Drops ANTHROPIC_* vars when the user has Claude Code OAuth credentials
-        so a `claude` invocation in the embedded terminal picks up their
-        account rather than a parent-process default (e.g. OpenRouter).
+        Drops ANTHROPIC_* vars unconditionally (no ``backend=`` passed) when
+        the user has Claude Code OAuth credentials, so a ``claude`` invocation
+        in the embedded terminal picks up their account rather than a parent-
+        process default (e.g. OpenRouter). The trade-off: a user who runs a
+        non-Claude CLI in this terminal (e.g. ``opencode``) and has Claude
+        OAuth credentials configured will lose inherited ANTHROPIC_* in that
+        subshell. This is an accepted trade-off — the seamless OAuth handoff
+        for the supported ``claude`` workflow takes priority over an edge
+        case where ANTHROPIC_* was set for a different CLI in a generic
+        shell. If that ever bites, set ANTHROPIC_* explicitly in the shell.
         """
         env = scrub_anthropic_env()
         removed_keys = []

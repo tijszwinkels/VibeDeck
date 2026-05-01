@@ -741,10 +741,12 @@ async def run_cli_for_session(
             else None
         )
 
-        # Build child env, dropping ANTHROPIC_* vars when the user has Claude
-        # Code OAuth credentials so the next spawn picks up their account
-        # rather than a parent-process default (e.g. OpenRouter).
-        env = scrub_anthropic_env()
+        # Build child env. For Claude Code, drop ANTHROPIC_* vars when the
+        # user has OAuth credentials so the spawn picks up their account
+        # rather than a parent-process default (e.g. OpenRouter). Other
+        # backends keep inherited ANTHROPIC_* (they may use those creds
+        # legitimately, e.g. OpenCode talking to an Anthropic provider).
+        env = scrub_anthropic_env(backend=backend)
 
         # Get thinking token budget: fixed budget > keyword detection > disabled
         if _thinking_budget is not None:
