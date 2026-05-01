@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..backends.claude_code.env import scrub_anthropic_env
 from .config import format_prompt, get_prompt_template
 from .output import LogWriter
 
@@ -223,10 +224,12 @@ class Summarizer:
             # Claude CLI requires being in the project directory to find sessions
             cwd = session.project_path if session.project_path else None
 
-            # Set up environment with thinking budget if configured
-            env = None
+            # Build child env, dropping ANTHROPIC_* vars when the user has
+            # Claude Code OAuth credentials configured (avoids parent-process
+            # defaults overriding the user's account in the spawned CLI).
+            env = scrub_anthropic_env()
             if self.thinking_budget is not None:
-                env = {**os.environ, "MAX_THINKING_TOKENS": str(self.thinking_budget)}
+                env["MAX_THINKING_TOKENS"] = str(self.thinking_budget)
                 logger.debug(f"Using thinking budget: {self.thinking_budget}")
 
             # Use PIPE for stdin if we need to pass message content

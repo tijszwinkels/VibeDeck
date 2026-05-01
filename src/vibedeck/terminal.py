@@ -14,6 +14,8 @@ from pathlib import Path
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from .backends.claude_code.env import scrub_anthropic_env
+
 logger = logging.getLogger(__name__)
 
 # Try to import ptyprocess - it's optional
@@ -78,8 +80,13 @@ class TerminalManager:
         return shells
 
     def _build_terminal_env(self) -> dict[str, str]:
-        """Build a clean environment for the embedded terminal PTY."""
-        env = dict(os.environ)
+        """Build a clean environment for the embedded terminal PTY.
+
+        Drops ANTHROPIC_* vars when the user has Claude Code OAuth credentials
+        so a `claude` invocation in the embedded terminal picks up their
+        account rather than a parent-process default (e.g. OpenRouter).
+        """
+        env = scrub_anthropic_env()
         removed_keys = []
 
         for key in ("TMUX", "TMUX_PANE", "TERM_PROGRAM"):

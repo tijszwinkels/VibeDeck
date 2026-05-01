@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from .backends import CodingToolBackend, get_backend, get_multi_backend
+from .backends.claude_code.env import scrub_anthropic_env
 from .backends.thinking import detect_thinking_level
 from .broadcasting import (
     add_client,
@@ -740,11 +741,15 @@ async def run_cli_for_session(
             else None
         )
 
+        # Build child env, dropping ANTHROPIC_* vars when the user has Claude
+        # Code OAuth credentials so the next spawn picks up their account
+        # rather than a parent-process default (e.g. OpenRouter).
+        env = scrub_anthropic_env()
+
         # Get thinking token budget: fixed budget > keyword detection > disabled
         if _thinking_budget is not None:
             # Fixed budget takes precedence
-            thinking_env = {"MAX_THINKING_TOKENS": str(_thinking_budget)}
-            env = {**os.environ, **thinking_env}
+            env["MAX_THINKING_TOKENS"] = str(_thinking_budget)
             logger.info(
                 f"Sending message to {session_id} with fixed thinking budget "
                 f"({_thinking_budget} tokens)"
@@ -752,14 +757,12 @@ async def run_cli_for_session(
         elif _enable_thinking:
             # Keyword-based detection
             thinking_level = detect_thinking_level(message)
-            thinking_env = {"MAX_THINKING_TOKENS": str(thinking_level.budget_tokens)}
-            env = {**os.environ, **thinking_env}
+            env["MAX_THINKING_TOKENS"] = str(thinking_level.budget_tokens)
             logger.info(
                 f"Sending message to {session_id} with thinking level "
                 f"'{thinking_level.name}' ({thinking_level.budget_tokens} tokens)"
             )
         else:
-            env = os.environ.copy()
             logger.info(
                 f"Sending message to {session_id} (thinking disabled by default)"
             )

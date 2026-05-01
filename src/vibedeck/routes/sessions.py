@@ -664,6 +664,7 @@ async def create_new_session(request: NewSessionRequest) -> dict:
 
     # Import here to access pending processes dict
     from ..server import _pending_new_session_processes
+    from ..backends.claude_code.env import scrub_anthropic_env
 
     try:
         # Capture stdout if using permission detection
@@ -671,10 +672,14 @@ async def create_new_session(request: NewSessionRequest) -> dict:
         # Use PIPE for stdin if we need to pass message content
         stdin_pipe = asyncio.subprocess.PIPE if cmd_spec.stdin else asyncio.subprocess.DEVNULL
 
-        # Start CLI in the working directory
+        # Start CLI in the working directory.
+        # Drop ANTHROPIC_* vars from child env when the user has Claude Code
+        # OAuth credentials, so a parent-process default (e.g. OpenRouter) does
+        # not override the user's own account on the next-spawned session.
         proc = await asyncio.create_subprocess_exec(
             *cmd_spec.args,
             cwd=cwd,
+            env=scrub_anthropic_env(),
             stdin=stdin_pipe,
             stdout=stdout_pipe,
             stderr=asyncio.subprocess.PIPE,
