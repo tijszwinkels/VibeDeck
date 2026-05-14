@@ -67,10 +67,17 @@ export function connect() {
                 session.summaryExecutive,
                 session.summaryBranch,
                 session.contextLimitTokens,
-                session.model
+                session.model,
+                session.sessionName
             );
         });
         reorderSidebar();
+
+        // Use server-provided homeDir for ~ expansion in pending session matching
+        if (data.homeDir) {
+            state.homeDir = data.homeDir;
+        }
+
         const count = data.sessions.length;
         const maxSessions = data.maxSessions || 100;
         const countText = count >= maxSessions ? 'last ' + maxSessions + ' sessions' : count + ' session' + (count !== 1 ? 's' : '');
@@ -129,7 +136,8 @@ export function connect() {
                 data.summaryExecutive,
                 data.summaryBranch,
                 data.contextLimitTokens,
-                data.model
+                data.model,
+                data.sessionName
             );
             reorderSidebar();
 
@@ -152,7 +160,8 @@ export function connect() {
                 data.summaryExecutive,
                 data.summaryBranch,
                 data.contextLimitTokens,
-                data.model
+                data.model,
+                data.sessionName
             );
             reorderSidebar();
 
@@ -176,8 +185,8 @@ export function connect() {
             session.summaryShort = data.summaryShort;
             session.summaryExecutive = data.summaryExecutive;
 
-            // Update display title if we have a summary title
-            if (data.summaryTitle) {
+            // Update display title if we have a summary title AND no custom/session name override
+            if (data.summaryTitle && !state.customTitles.has(data.session_id) && !session.sessionName) {
                 const newDisplayTitle = truncateTitle(data.summaryTitle, MAX_TITLE_LENGTH);
                 session.displayTitle = newDisplayTitle;
 
@@ -186,9 +195,6 @@ export function connect() {
                 if (titleSpan) {
                     titleSpan.textContent = newDisplayTitle;
                 }
-
-                // Update status color based on title suffix (persisted status takes priority)
-                updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
 
                 // Update session header title
                 const headerTitleSpan = session.container.querySelector('.session-title-display');
@@ -199,6 +205,34 @@ export function connect() {
                 // Update title bar if this is the active session
                 if (state.activeSessionId === data.session_id) {
                     dom.sessionTitleBar.textContent = newDisplayTitle;
+                }
+            }
+
+            // Always update status color based on summary title (persisted status takes priority)
+            if (data.summaryTitle) {
+                updateSidebarItemStatusClass(session.sidebarItem, data.summaryTitle, data.session_id);
+            }
+        }
+    });
+
+    state.eventSource.addEventListener('session_name_updated', function(e) {
+        const data = JSON.parse(e.data);
+        const session = state.sessions.get(data.session_id);
+        if (session) {
+            session.sessionName = data.sessionName || null;
+
+            // Update display title if no custom title override
+            if (!state.customTitles.has(data.session_id)) {
+                const newTitle = data.sessionName || session.summaryTitle || session.firstMessage || session.name;
+                const newDisplay = truncateTitle(newTitle, MAX_TITLE_LENGTH);
+                session.displayTitle = newDisplay;
+
+                const titleSpan = session.sidebarItem.querySelector('.session-title');
+                if (titleSpan) titleSpan.textContent = newTitle;
+                const headerSpan = session.container.querySelector('.session-title-display');
+                if (headerSpan) headerSpan.textContent = newDisplay;
+                if (state.activeSessionId === data.session_id) {
+                    dom.sessionTitleBar.textContent = newDisplay;
                 }
             }
         }

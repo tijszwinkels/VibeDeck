@@ -250,6 +250,12 @@
         <button class="scroll-btn scroll-btn-end" id="scroll-bottom-btn" title="Scroll to bottom">⤓</button>
     </div>
 
+    <script>
+        window.VIBEDECK_CONFIG = {
+            homeDir: {{ home_dir|tojson }}
+        };
+    </script>
+
     <!-- Load application JavaScript as ES module -->
     <script type="module" src="static/js/app.js"></script>
 </body>

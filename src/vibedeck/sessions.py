@@ -42,6 +42,7 @@ class SessionInfo:
     project_name: str = ""
     project_path: str = ""
     first_message: str | None = None
+    session_name: str | None = None  # User-assigned name (e.g. from pi's name_session)
     backend_name: str = ""  # Name of the backend this session belongs to
     model: str | None = None  # Model used in this session
     # Process management for sending messages
@@ -81,6 +82,8 @@ class SessionInfo:
                     self.project_path = metadata.project_path or ""
                 if self.first_message is None:
                     self.first_message = metadata.first_message
+                if self.session_name is None:
+                    self.session_name = metadata.session_name
             except (OSError, IOError) as e:
                 # File may have been deleted or become unreadable
                 logger.warning(f"Failed to read session metadata for {self.path}: {e}")
@@ -188,6 +191,7 @@ class SessionInfo:
             "projectName": self.project_name,
             "projectPath": self.project_path,
             "firstMessage": self.first_message,
+            "sessionName": self.session_name,
             "startedAt": started_at,
             "lastUpdatedAt": last_updated,
             "tokenUsage": token_usage,

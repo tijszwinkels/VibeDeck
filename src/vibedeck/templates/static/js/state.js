@@ -178,10 +178,13 @@ export function initDom() {
     dom.terminalResizeHandle = document.getElementById('terminal-resize-handle');
 }
 
+const initialConfig = window.VIBEDECK_CONFIG || {};
+
 // Application state
 export const state = {
     currentProjectPath: null,
     currentSessionId: null,
+    homeDir: initialConfig.homeDir || null, // absolute home dir for ~/... expansion
     eventSource: null,
 
     // Data stores
@@ -192,6 +195,7 @@ export const state = {
     archivedSessionIds: new Set(), // session_ids that are archived (loaded from server)
     archivedProjectPaths: new Set(), // project paths that are archived (loaded from server)
     sessionStatuses: new Map(), // session_id -> status string ("in_progress", "waiting", "done")
+    customTitles: new Map(), // session_id -> custom title string (user overrides)
 
     // UI state
     activeSessionId: null,

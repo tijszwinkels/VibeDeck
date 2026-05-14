@@ -109,6 +109,69 @@ def has_messages(session_path: Path) -> bool:
     return False
 
 
+def get_session_name(session_path: Path) -> str | None:
+    """Read the user-assigned session name from the last session_info entry.
+
+    Pi stores session names as {"type": "session_info", "name": "..."}
+    entries in the JSONL file, written by the name_session tool.
+    The last such entry wins (empty name clears the title).
+
+    Scans from the end of the file for efficiency on large sessions.
+
+    Returns:
+        The session name string, or None if not set.
+    """
+    try:
+        with open(session_path, "rb") as f:
+            f.seek(0, 2)
+            file_size = f.tell()
+            if file_size == 0:
+                return None
+
+            # Read in chunks from the end
+            chunk_size = 65536
+            remaining = file_size
+            lines_reversed: list[str] = []
+            leftover = b""
+
+            while remaining > 0:
+                read_size = min(chunk_size, remaining)
+                remaining -= read_size
+                f.seek(remaining)
+                chunk = f.read(read_size) + leftover
+                parts = chunk.split(b"\n")
+                # First part may be partial — save as leftover for next chunk
+                leftover = parts[0]
+                # Rest are complete lines (reversed)
+                for part in reversed(parts[1:]):
+                    line = part.decode("utf-8", errors="ignore").strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("type") == "session_info":
+                            entry_name = entry.get("name", "").strip()
+                            return entry_name if entry_name else None
+                    except json.JSONDecodeError:
+                        continue
+
+            # Check leftover (first line of file)
+            if leftover:
+                line = leftover.decode("utf-8", errors="ignore").strip()
+                if line:
+                    try:
+                        entry = json.loads(line)
+                        if entry.get("type") == "session_info":
+                            entry_name = entry.get("name", "").strip()
+                            return entry_name if entry_name else None
+                    except json.JSONDecodeError:
+                        pass
+
+    except (FileNotFoundError, IOError) as e:
+        logger.debug(f"Failed to read session name from {session_path}: {e}")
+    return None
+
+
 def get_first_user_message(session_path: Path, max_length: int = 200) -> str | None:
     """Read the first user message text from a session file."""
     try:

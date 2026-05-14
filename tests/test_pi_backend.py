@@ -16,6 +16,47 @@ TOOLS_SESSION = FIXTURES_DIR / "pi_session_tools.jsonl"
 # ===== Discovery Tests =====
 
 
+class TestSessionName:
+    """Test get_session_name extraction from session_info entries."""
+
+    def test_no_session_info(self, tmp_path):
+        from vibedeck.backends.pi.discovery import get_session_name
+        f = tmp_path / "test.jsonl"
+        f.write_text(json.dumps({"type": "session", "id": "s1"}) + "\n")
+        assert get_session_name(f) is None
+
+    def test_single_session_info(self, tmp_path):
+        from vibedeck.backends.pi.discovery import get_session_name
+        f = tmp_path / "test.jsonl"
+        f.write_text(
+            json.dumps({"type": "session", "id": "s1"}) + "\n"
+            + json.dumps({"type": "session_info", "id": "i1", "parentId": "s1", "name": "My Title"}) + "\n"
+        )
+        assert get_session_name(f) == "My Title"
+
+    def test_last_session_info_wins(self, tmp_path):
+        from vibedeck.backends.pi.discovery import get_session_name
+        f = tmp_path / "test.jsonl"
+        f.write_text(
+            json.dumps({"type": "session_info", "id": "i1", "name": "First"}) + "\n"
+            + json.dumps({"type": "session_info", "id": "i2", "name": "Second"}) + "\n"
+        )
+        assert get_session_name(f) == "Second"
+
+    def test_empty_name_clears(self, tmp_path):
+        from vibedeck.backends.pi.discovery import get_session_name
+        f = tmp_path / "test.jsonl"
+        f.write_text(
+            json.dumps({"type": "session_info", "id": "i1", "name": "Title"}) + "\n"
+            + json.dumps({"type": "session_info", "id": "i2", "name": ""}) + "\n"
+        )
+        assert get_session_name(f) is None
+
+    def test_missing_file(self, tmp_path):
+        from vibedeck.backends.pi.discovery import get_session_name
+        assert get_session_name(tmp_path / "nonexistent.jsonl") is None
+
+
 class TestDiscovery:
     """Test session discovery and metadata extraction."""
 

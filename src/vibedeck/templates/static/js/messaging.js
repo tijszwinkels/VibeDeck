@@ -8,7 +8,8 @@ import {
     formatTokenCount,
     formatModelName,
     getSessionContextUsageTokens,
-    getSessionTotalUsedTokens
+    getSessionTotalUsedTokens,
+    expandTilde
 } from './utils.js';
 import { showFlash, updateSidebarState } from './ui.js';
 import { createPlaceholderMessage, switchToSession, setUpdateInputBarUI, setCreatePendingSession } from './sessions.js';
@@ -285,6 +286,11 @@ async function startPendingSession(pendingSession, message) {
             } else {
                 dom.messageInput.value = '';
                 autoResizeTextarea();
+                // Update pending session's cwd with server-resolved path
+                // (e.g., ~/project -> /home/user/project) so merge matching works
+                if (data.cwd) {
+                    pendingSession.cwd = data.cwd;
+                }
                 // starting flag already set above
             }
         } else {
@@ -441,6 +447,9 @@ export function createPendingSession(cwd, projectName, backend, modelIndex, mode
                 projectName = projectName || activeSession.projectName;
             }
         }
+
+        // Expand ~/... so pending cwd matches server-resolved paths for merge
+        cwd = expandTilde(cwd);
 
         const displayProjectName = projectName || 'New Session';
         const session = createSession(pendingId, 'New Session', displayProjectName, null, null, null, cwd, null, null, null, null, null, null, null);

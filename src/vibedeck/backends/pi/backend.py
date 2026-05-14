@@ -24,6 +24,7 @@ from .discovery import (
     get_session_id_from_header,
     has_messages,
     get_first_user_message,
+    get_session_name,
     should_watch_file,
     get_session_id_from_changed_file,
 )
@@ -98,11 +99,14 @@ class PiBackend:
         if not started_at:
             started_at = tailer.get_first_timestamp()
 
+        session_name = get_session_name(session_path)
+
         return SessionMetadata(
             session_id=session_id,
             project_name=project_name,
             project_path=project_path,
             first_message=first_message,
+            session_name=session_name,
             started_at=started_at,
             backend_data={"file_path": str(session_path)},
         )
@@ -112,6 +116,10 @@ class PiBackend:
 
     def has_messages(self, session_path: Path) -> bool:
         return has_messages(session_path)
+
+    def get_session_name_from_file(self, session_path: Path) -> str | None:
+        """Read the user-assigned session name from the session file."""
+        return get_session_name(session_path)
 
     # ===== Session Reading =====
 

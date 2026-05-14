@@ -1,6 +1,6 @@
 // Utility functions module
 
-import { dateCategoryLabels, dateCategoryOrder } from './state.js';
+import { dateCategoryLabels, dateCategoryOrder, state } from './state.js';
 
 // Check if mobile viewport
 export function isMobile() {
@@ -270,4 +270,13 @@ function showCopySuccess(btn) {
 export function isNearBottom() {
     const threshold = 150;
     return (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - threshold);
+}
+
+// Expand ~/... paths using state.homeDir (derived from session cwd paths)
+export function expandTilde(path) {
+    if (!path || !path.startsWith('~/')) return path;
+    if (state.homeDir) {
+        return state.homeDir + path.substring(1);
+    }
+    return path;
 }
